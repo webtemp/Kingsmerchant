@@ -1,0 +1,16 @@
+[package]
+name = "poe2-pricer"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "poe2-pricer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+platform-linux = { path = "../crates/platform-linux" }

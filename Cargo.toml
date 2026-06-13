@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "app",
+    "crates/platform-linux",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR GPL-3.0-or-later"
+rust-version = "1.96"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
