@@ -220,9 +220,16 @@ fn query_name_and_type(
 
 /// Derive the exact-match `(name, type)` pair for the query.
 fn name_and_type(item: &Item, items: &ItemDefinitions) -> (Option<String>, Option<String>) {
+    // The parsed base line can carry a display-tier prefix GGG's trade `type`
+    // omits ("Exceptional Crude Bow" → "Crude Bow"); resolve it to a known base.
+    let resolved_base = || {
+        item.base_type
+            .as_deref()
+            .and_then(|b| items.resolve_base(b))
+    };
     match item.rarity {
         Rarity::Unique => {
-            let base = item.base_type.clone().or_else(|| {
+            let base = resolved_base().or_else(|| {
                 item.name
                     .as_deref()
                     .and_then(|n| items.unique_base(n))
@@ -232,13 +239,11 @@ fn name_and_type(item: &Item, items: &ItemDefinitions) -> (Option<String>, Optio
         }
         // The parser leaves a magic item's base fused in `name`; split it out.
         Rarity::Magic => {
-            let base = item
-                .base_type
-                .clone()
-                .or_else(|| item.name.as_deref().and_then(|n| items.split_magic_base(n)));
+            let base =
+                resolved_base().or_else(|| item.name.as_deref().and_then(|n| items.split_magic_base(n)));
             (None, base)
         }
-        Rarity::Rare | Rarity::Normal => (None, item.base_type.clone()),
+        Rarity::Rare | Rarity::Normal => (None, resolved_base()),
         // Gems / currency: the single name line *is* the trade `type`.
         Rarity::Gem | Rarity::Currency | Rarity::Other(_) => (None, item.name.clone()),
     }

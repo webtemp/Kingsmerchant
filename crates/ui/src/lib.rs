@@ -363,6 +363,10 @@ impl QuickModeApp {
                 client.price_check(&item, QueryOptions::default(), SAMPLE).await
             }
             .map_err(|e| e.to_string());
+            if let Err(ref e) = result {
+                // Log so it's easy to copy out of the terminal, not just the popup.
+                tracing::error!(error = %e, detailed, "price check failed");
+            }
             let _ = tx.send(Msg::Result(Box::new(result)));
             ctx.request_repaint();
         });

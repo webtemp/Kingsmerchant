@@ -254,6 +254,21 @@ impl ItemDefinitions {
         self.unique_base.get(name).map(String::as_str)
     }
 
+    /// Resolve a raw base-type line to a base GGG's trade API recognises.
+    ///
+    /// POE2 shows higher-tier weapon/armour bases with a display prefix the
+    /// trade `type` omits — e.g. the clipboard says `Exceptional Crude Bow` but
+    /// GGG only knows `Crude Bow`. An exact known base wins (so `Runeforged
+    /// Crude Bow` stays intact); otherwise we strip the prefix by finding the
+    /// longest known base that appears as a whole-word run. `None` if nothing
+    /// matches (the caller then falls back to the category filter).
+    pub fn resolve_base(&self, raw: &str) -> Option<String> {
+        if self.bases.iter().any(|b| b == raw) {
+            return Some(raw.to_string());
+        }
+        self.split_magic_base(raw)
+    }
+
     /// Split a magic item's fused name (`Professor's Volatile Wand of
     /// Expertise`) into its base type (`Volatile Wand`) by finding the longest
     /// known base that appears as a whole-word run inside the name.

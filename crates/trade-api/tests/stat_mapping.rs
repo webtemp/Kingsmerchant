@@ -177,6 +177,25 @@ fn magic_base_split_returns_none_when_unknown() {
 }
 
 #[test]
+fn resolve_base_strips_display_tier_prefix() {
+    // POE2 shows "Exceptional Crude Bow" but GGG's trade type is "Crude Bow".
+    let json = r#"{"result":[{"id":"weapon","entries":[
+        {"type":"Crude Bow"},{"type":"Runeforged Crude Bow"},{"type":"Heavy Bow"}
+    ]}]}"#;
+    let defs = ItemDefinitions::from_json(json).unwrap();
+
+    assert_eq!(defs.resolve_base("Exceptional Crude Bow").as_deref(), Some("Crude Bow"));
+    // An exact known base (even a longer one) is kept intact.
+    assert_eq!(
+        defs.resolve_base("Runeforged Crude Bow").as_deref(),
+        Some("Runeforged Crude Bow")
+    );
+    assert_eq!(defs.resolve_base("Crude Bow").as_deref(), Some("Crude Bow"));
+    // Nothing known → None (caller falls back to the category filter).
+    assert_eq!(defs.resolve_base("Totally Made Up Base"), None);
+}
+
+#[test]
 fn unique_name_resolves_to_base_type() {
     let defs = items();
     assert_eq!(defs.unique_base("Mageblood"), Some("Utility Belt"));
