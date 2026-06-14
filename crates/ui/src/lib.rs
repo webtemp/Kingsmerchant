@@ -70,6 +70,8 @@ pub enum Hotkey {
     /// Ctrl / Alt held-state changed (from evdev, since the overlay has no
     /// keyboard focus).
     Mods { ctrl: bool, alt: bool },
+    /// F5 — run the configured chat macro (e.g. `/hideout`).
+    Macro,
 }
 
 #[derive(Default)]
@@ -561,6 +563,18 @@ impl QuickModeApp {
                 Hotkey::Mods { ctrl, alt } => {
                     self.ctrl_held = ctrl;
                     self.alt_held = alt;
+                }
+                Hotkey::Macro => {
+                    // F5 chat macro (e.g. /hideout), injected via uinput into the
+                    // focused window (POE2). Runs off-thread — it blocks ~½s.
+                    if let Some(cmd) = self.config.f5_command.clone() {
+                        tracing::info!(command = %cmd, "running chat macro");
+                        std::thread::spawn(move || {
+                            if let Err(e) = platform_linux::send_chat_command(&cmd) {
+                                tracing::warn!(error = %format!("{e:#}"), "chat macro failed");
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -1304,6 +1318,8 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
             let outcome = match event {
                 // Escape dismisses — no clipboard involved.
                 HotkeyEvent::Close => Hotkey::Close,
+                // F5 chat macro.
+                HotkeyEvent::Macro => Hotkey::Macro,
                 // Ctrl/Alt state forwarded straight through.
                 HotkeyEvent::Modifiers { ctrl, alt } => Hotkey::Mods { ctrl, alt },
                 // A copy combo: wait for POE2 to write the item. Both Ctrl+C and

@@ -28,6 +28,10 @@ pub struct Config {
     /// Filter mins are seeded at this percentage of the item's rolled value
     /// (100 = exact roll; 90 = 10% below, a looser default search). 1..=100.
     pub filter_min_percent: u32,
+    /// Chat command typed into POE2 when F5 is pressed (via a uinput virtual
+    /// keyboard: opens chat, types this, sends). `null` disables it. Injection
+    /// steps past the clipboard-only design (PRD App. B) — opt-in.
+    pub f5_command: Option<String>,
 }
 
 impl Default for Config {
@@ -41,6 +45,7 @@ impl Default for Config {
                 "Light Radius".to_string(),
             ],
             filter_min_percent: 100,
+            f5_command: Some("/hideout".to_string()),
         }
     }
 }

@@ -37,6 +37,8 @@ pub enum HotkeyEvent {
     /// and drags on Ctrl+Alt — but with no keyboard focus it can't read
     /// modifiers from Wayland, so we report them from evdev.
     Modifiers { ctrl: bool, alt: bool },
+    /// F5 — run the configured chat macro (e.g. `/hideout`) via uinput.
+    Macro,
 }
 
 /// Start watching every connected keyboard for the price-check hotkeys.
@@ -138,6 +140,11 @@ fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>) {
                 }
                 Key::KEY_ESC if event.value() == 1 => {
                     if tx.send(HotkeyEvent::Close).is_err() {
+                        return;
+                    }
+                }
+                Key::KEY_F5 if event.value() == 1 => {
+                    if tx.send(HotkeyEvent::Macro).is_err() {
                         return;
                     }
                 }
