@@ -32,12 +32,13 @@ use raw_window_handle::{
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, Region},
-    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
-    delegate_relative_pointer, delegate_seat,
+    delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
+    delegate_registry, delegate_relative_pointer, delegate_seat,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers as SctkModifiers},
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
         relative_pointer::{RelativeMotionEvent, RelativePointerHandler, RelativePointerState},
         Capability, SeatHandler, SeatState,
@@ -52,7 +53,7 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{wl_output, wl_pointer, wl_seat, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
     Connection, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1;
@@ -116,6 +117,9 @@ pub fn run() -> Result<()> {
         Some("poe2ddd"),
         None,
     );
+    // Keyboard focus is taken on-demand: the surface only grabs the keyboard
+    // when the (shown) popup is clicked, so a text field can be typed into.
+    // While hidden it's set back to None so POE2 keeps focus (see draw()).
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     // Anchor to the top-left corner; we center by computing margins from the
     // output size (KWin doesn't reliably center an unanchored surface). Margins
@@ -134,6 +138,10 @@ pub fn run() -> Result<()> {
         layer,
         pointer: None,
         relative_pointer: None,
+        keyboard: None,
+        kbd_modifiers: egui::Modifiers::default(),
+        kbd_focus: false,
+        applied_kbd: None,
         gl: None,
         egui_ctx,
         quick,
@@ -178,6 +186,14 @@ struct App {
     layer: LayerSurface,
     pointer: Option<wl_pointer::WlPointer>,
     relative_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
+    /// Keyboard, bound so text fields in the (pinned) popup are editable.
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// Current modifier state from Wayland (for egui key events).
+    kbd_modifiers: egui::Modifiers,
+    /// Whether the surface currently holds keyboard focus.
+    kbd_focus: bool,
+    /// Last applied keyboard-interactivity `shown` state (toggle on change).
+    applied_kbd: Option<bool>,
     gl: Option<Gl>,
     egui_ctx: egui::Context,
     quick: QuickModeApp,
@@ -296,6 +312,7 @@ impl App {
             self.dragged = false;
             self.dragging = false;
         }
+        self.apply_keyboard_interactivity();
 
         // Lay the content out in a tall space so we can measure its natural
         // height, then shrink the surface to fit (PRD §4.5 "small popup").
@@ -305,7 +322,8 @@ impl App {
                 egui::vec2(self.width as f32, LAYOUT_HEIGHT),
             )),
             events: std::mem::take(&mut self.events),
-            focused: false,
+            focused: self.kbd_focus,
+            modifiers: self.kbd_modifiers,
             ..Default::default()
         };
 
@@ -384,6 +402,24 @@ impl App {
         let surface = self.layer.wl_surface().clone();
         surface.frame(qh, surface.clone());
         self.layer.commit();
+    }
+
+    /// Take keyboard focus on-demand while the popup is shown (so its text
+    /// fields are editable), and drop it when hidden so POE2 gets the keyboard
+    /// back. Only re-applied when `shown` changes.
+    fn apply_keyboard_interactivity(&mut self) {
+        if self.applied_kbd == Some(self.shown) {
+            return;
+        }
+        self.layer.set_keyboard_interactivity(if self.shown {
+            KeyboardInteractivity::OnDemand
+        } else {
+            KeyboardInteractivity::None
+        });
+        if !self.shown {
+            self.kbd_focus = false;
+        }
+        self.applied_kbd = Some(self.shown);
     }
 
     /// Set the surface input region to the popup bounds when visible (so it
@@ -495,9 +531,21 @@ impl SeatHandler for App {
                 self.pointer = Some(pointer);
             }
         }
-        // Deliberately never grab the keyboard — POE2 must keep focus.
+        // Keyboard: bound so the popup's text fields can receive input. Focus is
+        // only actually granted on-demand (when the shown popup is clicked); see
+        // the keyboard-interactivity toggle in `draw`.
+        if capability == Capability::Keyboard && self.keyboard.is_none() {
+            if let Ok(kbd) = self.seat_state.get_keyboard(qh, &seat, None) {
+                self.keyboard = Some(kbd);
+            }
+        }
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
+        if capability == Capability::Keyboard {
+            if let Some(k) = self.keyboard.take() {
+                k.release();
+            }
+        }
         if capability == Capability::Pointer {
             self.relative_pointer = None;
             if let Some(p) = self.pointer.take() {
@@ -588,6 +636,136 @@ impl RelativePointerHandler for App {
     }
 }
 
+impl KeyboardHandler for App {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+        _: &[u32],
+        _: &[Keysym],
+    ) {
+        self.kbd_focus = true;
+    }
+    fn leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        self.kbd_focus = false;
+    }
+    fn press_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
+    ) {
+        let modifiers = self.kbd_modifiers;
+        if let Some(key) = map_keysym(event.keysym) {
+            self.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            });
+        }
+        // Printable text — but not while Ctrl/Alt are held (those are shortcuts),
+        // and not control chars (Backspace etc. arrive as utf8 too).
+        if !modifiers.ctrl && !modifiers.alt {
+            if let Some(text) = event.utf8 {
+                if !text.is_empty() && !text.chars().any(|c| c.is_control()) {
+                    self.events.push(egui::Event::Text(text));
+                }
+            }
+        }
+    }
+    fn release_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
+    ) {
+        if let Some(key) = map_keysym(event.keysym) {
+            self.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: self.kbd_modifiers,
+            });
+        }
+    }
+    fn update_modifiers(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        modifiers: SctkModifiers,
+        _: u32,
+    ) {
+        self.kbd_modifiers = egui::Modifiers {
+            alt: modifiers.alt,
+            ctrl: modifiers.ctrl,
+            shift: modifiers.shift,
+            mac_cmd: false,
+            command: modifiers.ctrl,
+        };
+    }
+}
+
+/// Map a keysym to an egui [`Key`] for the editing/navigation keys a text field
+/// needs (printable characters go through `Event::Text` instead).
+fn map_keysym(k: Keysym) -> Option<egui::Key> {
+    use egui::Key;
+    let key = if k == Keysym::BackSpace {
+        Key::Backspace
+    } else if k == Keysym::Return || k == Keysym::KP_Enter {
+        Key::Enter
+    } else if k == Keysym::Tab {
+        Key::Tab
+    } else if k == Keysym::Escape {
+        Key::Escape
+    } else if k == Keysym::Delete {
+        Key::Delete
+    } else if k == Keysym::Left {
+        Key::ArrowLeft
+    } else if k == Keysym::Right {
+        Key::ArrowRight
+    } else if k == Keysym::Up {
+        Key::ArrowUp
+    } else if k == Keysym::Down {
+        Key::ArrowDown
+    } else if k == Keysym::Home {
+        Key::Home
+    } else if k == Keysym::End {
+        Key::End
+    } else if k == Keysym::a || k == Keysym::A {
+        Key::A
+    } else if k == Keysym::c || k == Keysym::C {
+        Key::C
+    } else if k == Keysym::v || k == Keysym::V {
+        Key::V
+    } else if k == Keysym::x || k == Keysym::X {
+        Key::X
+    } else if k == Keysym::z || k == Keysym::Z {
+        Key::Z
+    } else {
+        return None;
+    };
+    Some(key)
+}
+
 /// Linux evdev left-button code (the drag button).
 const BTN_LEFT: u32 = 0x110;
 
@@ -622,5 +800,6 @@ delegate_output!(App);
 delegate_seat!(App);
 delegate_pointer!(App);
 delegate_relative_pointer!(App);
+delegate_keyboard!(App);
 delegate_layer!(App);
 delegate_registry!(App);

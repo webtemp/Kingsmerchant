@@ -833,7 +833,7 @@ impl QuickModeApp {
                 // built from the item's stats block, not its affix mods.
                 if !self.equipment.is_empty() {
                     ui.add_space(4.0);
-                    ui.label(RichText::new("Defences").strong().small());
+                    ui.label(RichText::new("Defences").strong());
                     egui::Grid::new("equip-filters")
                         .num_columns(4)
                         .spacing([6.0, 6.0])
@@ -841,7 +841,7 @@ impl QuickModeApp {
                         .show(ui, |ui| {
                             for row in &mut self.equipment {
                                 changed |= ui.checkbox(&mut row.enabled, "").changed();
-                                ui.label(RichText::new(&row.label).strong().small());
+                                ui.label(RichText::new(&row.label).strong());
                                 changed |= ui
                                     .add(
                                         egui::TextEdit::singleline(&mut row.min)
@@ -863,7 +863,7 @@ impl QuickModeApp {
 
                 ui.add_space(4.0);
                 if !self.equipment.is_empty() {
-                    ui.label(RichText::new("Modifiers").strong().small());
+                    ui.label(RichText::new("Modifiers").strong());
                 }
                 if self.filters.is_empty() {
                     ui.label(
@@ -886,11 +886,7 @@ impl QuickModeApp {
                                             if row.is_implicit {
                                                 implicit_pill(ui);
                                             }
-                                            ui.label(
-                                                RichText::new(&row.label)
-                                                    .color(AFFIX_BLUE)
-                                                    .small(),
-                                            );
+                                            ui.label(RichText::new(&row.label).color(AFFIX_BLUE));
                                         });
                                         changed |= ui
                                             .add(
