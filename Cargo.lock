@@ -2264,7 +2264,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "poe2-pricer"
+name = "poe2ddd"
 version = "0.0.0"
 dependencies = [
  "anyhow",

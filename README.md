@@ -1,26 +1,31 @@
-# poe2-pricer
+# poe2ddd
 
 A native, lightweight POE2 price-check overlay for KDE Plasma 6 Wayland.
 See [PRD.md](PRD.md) for the full spec and phasing.
 
-## Status: Phase 0 (spike)
+## Status: Phase 3 (quick-mode window)
 
-Detect a global Ctrl+C / Ctrl+Alt+C, read the clipboard the game just wrote,
-print the item text to stdout. No parsing, trade API, or UI yet.
+Phases 0–2 done (hotkey→clipboard spike, item parser, trade-API client). Phase 3
+is a plain egui window showing quick-mode results: press **Ctrl+C** on an item
+in game and the window pops with the median asking price and the cheapest
+listings, each with Whisper / Invite / Hideout / Trade buttons. Phase 4 turns
+this into a `wlr-layer-shell` overlay at the cursor.
 
-## Running the spike
+## Running
 
 Requires the Rust toolchain and membership in the `input` group (to read the
 keyboard event devices).
 
 ```sh
-cargo run
+POE_LEAGUE="Runes of Aldur" cargo run -p ui
 ```
 
-Then alt-tab into POE2, hover an item, and press **Ctrl+C** (quick) or
-**Ctrl+Alt+C** (detailed). The copied item text prints to the terminal.
+Then alt-tab into POE2, hover an item, and press **Ctrl+C**. The window raises
+and prices the item. You can also paste an item or use **Read clipboard**, then
+**Price check**. `POE_REALM` (pc/sony/xbox) is optional. Set `RUST_LOG=debug`
+for detail.
 
-Set `RUST_LOG=debug` for per-copy timing.
+The Phase 0 stdout spike still lives in `app/` (`cargo run -p poe2ddd`).
 
 ## Platform notes
 

@@ -1,4 +1,4 @@
-//! poe2-pricer — Phase 0 spike.
+//! poe2ddd — Phase 0 spike.
 //!
 //! Wires the two platform primitives end to end: detect a global Ctrl+C /
 //! Ctrl+Alt+C, read the clipboard the game just wrote, print the item text to

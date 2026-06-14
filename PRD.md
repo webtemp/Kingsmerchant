@@ -1,4 +1,4 @@
-# PRD: poe2-pricer (working name)
+# PRD: poe2ddd
 
 A native, lightweight POE2 price-check overlay for KDE Plasma 6 Wayland.
 Windows support is a future phase. POE1 support is a future phase.
@@ -201,7 +201,7 @@ Single Rust binary. Three async tasks talking over `tokio::mpsc` channels.
 ### Project layout (Cargo workspace)
 
 ```
-poe2-pricer/
+poe2ddd/
 ├── Cargo.toml                  # workspace
 ├── crates/
 │   ├── parser/                 # pure logic: item-text → struct

@@ -1,12 +1,12 @@
 [package]
-name = "poe2-pricer"
+name = "poe2ddd"
 version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "poe2-pricer"
+name = "poe2ddd"
 path = "src/main.rs"
 
 [dependencies]

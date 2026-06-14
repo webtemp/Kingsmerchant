@@ -20,7 +20,7 @@ use trade_api::{
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
-const USER_AGENT: &str = "poe2-pricer/0.1 (+phase3 ui)";
+const USER_AGENT: &str = "poe2ddd/0.1 (+phase3 ui)";
 /// Fetch a sample of this many so the median is meaningful; show the cheapest N.
 const SAMPLE: usize = 10;
 const SHOWN: usize = 7;
@@ -179,7 +179,7 @@ impl eframe::App for QuickModeApp {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.heading("poe2-pricer");
+                ui.heading("poe2ddd");
                 ui.label(RichText::new("· quick mode").weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(RichText::new(format!("league: {}", self.league)).weak());
@@ -556,12 +556,12 @@ pub fn run() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 720.0])
             .with_min_inner_size([440.0, 380.0])
-            .with_title("poe2-pricer"),
+            .with_title("poe2ddd"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "poe2-pricer",
+        "poe2ddd",
         options,
         Box::new(move |cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
