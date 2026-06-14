@@ -165,7 +165,7 @@ fn first_number(s: &str) -> Option<f64> {
 /// Build equipment-property filter rows from the item's defences (PRD §4.7),
 /// prefilled with the item's value and ticked — the key thing you search armour
 /// by, but absent before because they're properties, not affix mods.
-fn build_equipment_rows(item: &Item) -> Vec<EquipmentRow> {
+fn build_equipment_rows(item: &Item, percent: u32) -> Vec<EquipmentRow> {
     item.properties
         .iter()
         .filter_map(|prop| {
@@ -175,7 +175,7 @@ fn build_equipment_rows(item: &Item) -> Vec<EquipmentRow> {
                 key: key.to_string(),
                 label: prop.name.clone(),
                 enabled: true,
-                min: fmt_amount(value),
+                min: fmt_amount(scaled_min(value, percent)),
                 max: String::new(),
             })
         })
@@ -409,7 +409,7 @@ impl QuickModeApp {
         self.estimate = None;
         self.estimate_loading = false;
         self.filters = self.build_filter_rows(&item);
-        self.equipment = build_equipment_rows(&item);
+        self.equipment = build_equipment_rows(&item, self.config.filter_min_percent);
         self.price_filter = PriceFilterState::default();
         self.filter_dirty = false; // no stale debounce from the previous item
         // poeprices ML estimate is rares-only and doesn't depend on the
@@ -495,11 +495,14 @@ impl QuickModeApp {
             let rolled = mapped.filter_value();
             let is_implicit = mapped.stat_type == "implicit";
             let off = self.config.filter_off_by_default(&mapped.template, is_implicit);
+            let pct = self.config.filter_min_percent;
             rows.push(StatFilterRow {
                 id: mapped.id,
                 label: mapped.template,
                 enabled: !off,
-                min: rolled.map(fmt_amount).unwrap_or_default(),
+                min: rolled
+                    .map(|v| fmt_amount(scaled_min(v, pct)))
+                    .unwrap_or_default(),
                 max: String::new(),
                 rolled,
                 is_implicit,
@@ -924,7 +927,7 @@ impl QuickModeApp {
                             row.enabled = true;
                             row.min = row
                                 .rolled
-                                .map(|v| fmt_amount((v * 0.8).floor()))
+                                .map(|v| fmt_amount(scaled_min(v, 80)))
                                 .unwrap_or_default();
                             row.max.clear();
                         }
@@ -1259,7 +1262,25 @@ fn fmt_amount(amount: f64) -> String {
     if amount.fract() == 0.0 {
         format!("{}", amount as i64)
     } else {
-        format!("{amount:.1}")
+        // Up to 3 decimals, trailing zeros trimmed — so 0.17 stays "0.17", not
+        // "0.2" (the old {:.1} rounded a 0.17 roll up and over-tightened the
+        // search below the item itself), and 2.5 stays "2.5".
+        format!("{amount:.3}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
+/// Scale a rolled value to the configured filter-min percentage (PRD §4.7).
+/// Integer rolls floor (so 90% of 132 → 118, a clean buffer); fractional rolls
+/// keep their precision.
+fn scaled_min(rolled: f64, percent: u32) -> f64 {
+    let scaled = rolled * percent as f64 / 100.0;
+    if rolled.fract() == 0.0 {
+        scaled.floor()
+    } else {
+        scaled
     }
 }
 

@@ -25,6 +25,9 @@ pub struct Config {
     /// Stat filters whose label contains any of these (case-insensitive)
     /// substrings start unticked — low-value "noise" mods. Hand-editable list.
     pub filters_off_by_default: Vec<String>,
+    /// Filter mins are seeded at this percentage of the item's rolled value
+    /// (100 = exact roll; 90 = 10% below, a looser default search). 1..=100.
+    pub filter_min_percent: u32,
 }
 
 impl Default for Config {
@@ -37,6 +40,7 @@ impl Default for Config {
                 "Life Regeneration per second".to_string(),
                 "Light Radius".to_string(),
             ],
+            filter_min_percent: 100,
         }
     }
 }
