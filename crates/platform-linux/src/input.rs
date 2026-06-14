@@ -29,6 +29,10 @@ pub enum HotkeyEvent {
     QuickCopy,
     /// Ctrl+Alt+C — detailed price check.
     DetailedCopy,
+    /// Escape — dismiss the popup. Detected globally because the overlay takes
+    /// no keyboard focus (so Wayland never delivers it the key). Observe-only:
+    /// POE2 still sees Escape too.
+    Close,
 }
 
 /// Start watching every connected keyboard for the price-check hotkeys.
@@ -118,6 +122,11 @@ fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>) {
             match key {
                 Key::KEY_LEFTCTRL | Key::KEY_RIGHTCTRL => ctrl = pressed,
                 Key::KEY_LEFTALT | Key::KEY_RIGHTALT => alt = pressed,
+                Key::KEY_ESC if event.value() == 1 => {
+                    if tx.send(HotkeyEvent::Close).is_err() {
+                        return;
+                    }
+                }
                 Key::KEY_C if event.value() == 1 && ctrl => {
                     let hotkey = if alt {
                         HotkeyEvent::DetailedCopy

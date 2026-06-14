@@ -43,13 +43,15 @@ enum Msg {
     Result(Box<Result<PriceCheck, String>>),
 }
 
-/// What the global-hotkey watcher observed after a Ctrl+C.
+/// What the global-hotkey watcher observed.
 pub enum Hotkey {
     /// A new item landed on the clipboard.
     Item(String),
     /// The clipboard never produced an item before the timeout — usually POE2
     /// skipping the copy on a static cursor (PRD §9.3).
     Missed,
+    /// Escape was pressed — dismiss the popup.
+    Close,
 }
 
 #[derive(Default)]
@@ -93,6 +95,8 @@ pub struct QuickModeApp {
     /// Set when a Ctrl+C produced a fresh item — the overlay loop reads this
     /// (via [`take_pop_request`](Self::take_pop_request)) to show the popup.
     pop_requested: bool,
+    /// Set when Escape was pressed — the overlay reads this to hide the popup.
+    close_requested: bool,
 }
 
 impl QuickModeApp {
@@ -120,12 +124,18 @@ impl QuickModeApp {
             copy_status: None,
             hint: None,
             pop_requested: false,
+            close_requested: false,
         }
     }
 
     /// Consume a pending "pop the overlay" request raised by the last Ctrl+C.
     pub fn take_pop_request(&mut self) -> bool {
         std::mem::take(&mut self.pop_requested)
+    }
+
+    /// Consume a pending "close the overlay" request raised by Escape.
+    pub fn take_close_request(&mut self) -> bool {
+        std::mem::take(&mut self.close_requested)
     }
 
     fn start_price_check(&mut self, ctx: &egui::Context) {
@@ -189,6 +199,9 @@ impl QuickModeApp {
                          Ctrl+C again. (POE2 skips the copy when the cursor is still.)"
                             .to_string(),
                     );
+                }
+                Hotkey::Close => {
+                    self.close_requested = true;
                 }
             }
         }
@@ -614,6 +627,7 @@ fn fmt_amount(amount: f64) -> String {
 /// If the watcher can't start (e.g. not in the `input` group), we log and carry
 /// on — the window still works manually (PRD §4.1).
 pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
+    use platform_linux::HotkeyEvent;
     std::thread::spawn(move || {
         let hotkeys = match platform_linux::watch_hotkeys() {
             Ok(rx) => rx,
@@ -622,19 +636,26 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                 return;
             }
         };
-        tracing::info!("listening for Ctrl+C / Ctrl+Alt+C in game");
+        tracing::info!("listening for Ctrl+C / Ctrl+Alt+C / Esc in game");
         let mut last_seen = platform_linux::read_clipboard_text().unwrap_or(None);
-        for _event in hotkeys {
-            let start = Instant::now();
-            let outcome = match wait_for_new_item(&last_seen) {
-                Some(text) => {
-                    tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "item copied");
-                    last_seen = Some(text.clone());
-                    Hotkey::Item(text)
-                }
-                None => {
-                    tracing::debug!("Ctrl+C produced no new item (cursor static?)");
-                    Hotkey::Missed
+        for event in hotkeys {
+            let outcome = match event {
+                // Escape dismisses — no clipboard involved.
+                HotkeyEvent::Close => Hotkey::Close,
+                // A copy combo: wait for POE2 to write the item.
+                HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
+                    let start = Instant::now();
+                    match wait_for_new_item(&last_seen) {
+                        Some(text) => {
+                            tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "item copied");
+                            last_seen = Some(text.clone());
+                            Hotkey::Item(text)
+                        }
+                        None => {
+                            tracing::debug!("Ctrl+C produced no new item (cursor static?)");
+                            Hotkey::Missed
+                        }
+                    }
                 }
             };
             if tx.send(outcome).is_err() {

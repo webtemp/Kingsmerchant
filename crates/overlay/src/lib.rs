@@ -67,10 +67,10 @@ const MIN_HEIGHT: u32 = 80;
 const MAX_HEIGHT: u32 = 1300;
 /// Corner radius of the popup card.
 const CORNER_RADIUS: f32 = 14.0;
-/// Popup backing: a solid grey card, slightly translucent so the game is just
-/// visible behind it. Text/widgets paint opaque on top.
-const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(32, 33, 38, 240);
-const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x4a, 0x4b, 0x55);
+/// Popup backing: a solid (opaque) grey card. Only the rounded corners let the
+/// game show through.
+const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2c, 0x2e, 0x36);
+const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x50, 0x52, 0x5e);
 
 /// Launch the price-check overlay: build the egui app, bind the layer surface,
 /// and run the Wayland event loop until the popup is closed.
@@ -111,10 +111,10 @@ pub fn run() -> Result<()> {
         None,
     );
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-    // No anchored edges → the compositor centers the surface on the output, and
-    // re-centers as the height changes (PRD §4.5: pop near the action; centered
-    // reads cleanly until cursor-relative placement lands).
-    layer.set_anchor(Anchor::empty());
+    // Anchor to the top-left corner; we center by computing margins from the
+    // output size (KWin doesn't reliably center an unanchored surface). Margins
+    // are (re)applied per frame while visible — see `App::draw`.
+    layer.set_anchor(Anchor::TOP | Anchor::LEFT);
     layer.set_size(WIDTH, INITIAL_HEIGHT);
     layer.commit();
 
@@ -133,6 +133,8 @@ pub fn run() -> Result<()> {
         pointer_pos: egui::pos2(-1.0, -1.0),
         width: WIDTH,
         height: INITIAL_HEIGHT,
+        desired_height: INITIAL_HEIGHT,
+        current_output: None,
         shown: false,
         input_region: None,
         applied_input: None,
@@ -169,8 +171,12 @@ struct App {
     pointer_pos: egui::Pos2,
     width: u32,
     height: u32,
+    /// Height we last asked the surface to be (auto-height target).
+    desired_height: u32,
+    /// The output the surface is on (from `surface_enter`), used to center it.
+    current_output: Option<wl_output::WlOutput>,
     /// Whether the popup is visible. Starts hidden; a valid Ctrl+C shows it,
-    /// Esc/✕ hides it (Esc lands in a later increment).
+    /// Escape hides it.
     shown: bool,
     /// Kept alive until the next commit so the compositor reads the region
     /// before it's destroyed.
@@ -253,10 +259,13 @@ impl App {
         }
 
         // Drain hotkeys + results every frame, even while hidden, so a fresh
-        // Ctrl+C is noticed. A valid item flips us visible.
+        // Ctrl+C is noticed. A valid item flips us visible; Escape hides it.
         self.quick.pump(&self.egui_ctx);
         if self.quick.take_pop_request() {
             self.shown = true;
+        }
+        if self.quick.take_close_request() {
+            self.shown = false;
         }
 
         // Lay the content out in a tall space so we can measure its natural
@@ -297,13 +306,15 @@ impl App {
         });
 
         // Auto-height: resize the surface to the measured content (one-frame
-        // settle). The configure that follows resizes the GL surface.
+        // settle; the configure that follows resizes the GL surface), and keep
+        // it centered on the output for the size we're asking for.
         if shown && measured > 0.0 {
             let want = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
-            if want != self.height {
+            if want != self.desired_height {
+                self.desired_height = want;
                 self.layer.set_size(self.width, want);
-                self.layer.commit();
             }
+            self.center(self.width, self.desired_height);
         }
 
         self.apply_input_region();
@@ -348,6 +359,34 @@ impl App {
             self.applied_input = Some(state);
         }
     }
+
+    /// Center a `w`×`h` surface on its output by setting top/left margins.
+    fn center(&mut self, w: u32, h: u32) {
+        let (ow, oh) = self.output_size();
+        let left = ((ow - w as i32) / 2).max(0);
+        let top = ((oh - h as i32) / 2).max(0);
+        self.layer.set_margin(top, 0, 0, left);
+    }
+
+    /// Logical size of the output the surface is on (falls back to the first
+    /// output, then to a 1080p guess if nothing is known yet).
+    fn output_size(&self) -> (i32, i32) {
+        let output = self
+            .current_output
+            .clone()
+            .or_else(|| self.output_state.outputs().next());
+        if let Some(output) = output {
+            if let Some(info) = self.output_state.info(&output) {
+                if let Some(size) = info.logical_size {
+                    return size;
+                }
+                if let Some(mode) = info.modes.iter().find(|m| m.current) {
+                    return mode.dimensions;
+                }
+            }
+        }
+        (1920, 1080)
+    }
 }
 
 impl CompositorHandler for App {
@@ -356,7 +395,9 @@ impl CompositorHandler for App {
     fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {
         self.draw(qh);
     }
-    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, output: &wl_output::WlOutput) {
+        self.current_output = Some(output.clone());
+    }
     fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
 }
 
