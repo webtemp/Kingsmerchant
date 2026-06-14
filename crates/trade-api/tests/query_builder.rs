@@ -61,12 +61,13 @@ fn category_mapping_covers_common_classes() {
 }
 
 #[test]
-fn rare_ring_query_has_base_type_category_and_disabled_stat_filters() {
+fn rare_ring_query_searches_by_category_not_base_type() {
     let item = parse_item(RARE_RING).unwrap();
     let req = build_search_query(&item, &stats(), &items(), QueryOptions::default());
 
     let query = &req.query;
-    assert_eq!(query.type_.as_deref(), Some("Topaz Ring"));
+    // Rares search the whole category, not the exact base type (Topaz Ring).
+    assert_eq!(query.type_, None);
     assert_eq!(query.name, None);
     let category = &query.filters.type_filters.as_ref().unwrap().filters.category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
@@ -175,8 +176,9 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
         &PriceFilter::default(),
     );
 
-    // Exact name/type/category match carries over from the quick query.
-    assert_eq!(req.query.type_.as_deref(), Some("Topaz Ring"));
+    // Category-based search (no exact base type) carries over from the quick
+    // query.
+    assert_eq!(req.query.type_, None);
     let category = &req.query.filters.type_filters.as_ref().unwrap().filters.category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
 
@@ -242,7 +244,9 @@ fn detailed_query_with_nothing_active_is_a_bare_base_search() {
     );
     assert!(req.query.stats.is_empty());
     assert!(req.query.filters.trade_filters.is_none());
-    assert_eq!(req.query.type_.as_deref(), Some("Topaz Ring"));
+    assert_eq!(req.query.type_, None);
+    let category = &req.query.filters.type_filters.as_ref().unwrap().filters.category;
+    assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
 }
 
 #[test]

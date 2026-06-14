@@ -7,7 +7,6 @@ expression: req
     "status": {
       "option": "online"
     },
-    "type": "Topaz Ring",
     "stats": [
       {
         "type": "and",

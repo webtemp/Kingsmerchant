@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !item.modifiers.is_empty() {
         println!("── stat mapping ──");
         for m in &item.modifiers {
-            for mapped in stats.map_modifier(m) {
+            for mapped in stats.map_modifier(m, false) {
                 println!(
                     "  {:?}{:<10} {} → {}  (value {:?})",
                     m.kind,

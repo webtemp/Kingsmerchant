@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use parser::{ModKind, ModSource, Modifier};
+use parser::{Item, ModKind, ModSource, Modifier};
 use serde::Deserialize;
 
 use crate::error::Error;
@@ -97,52 +97,94 @@ impl StatDefinitions {
         self.by_type_text.is_empty()
     }
 
+    /// Map all of an item's modifiers to GGG stat filters, deciding the
+    /// local-vs-global stat variant from the item's category (PRD §4.4).
+    ///
+    /// On armour/weapons, GGG suffixes the *local* variant's text with
+    /// ` (Local)` — e.g. `#% increased Evasion Rating (Local)` is the armour
+    /// mod, `#% increased Evasion Rating` is the global passive-tree one. They
+    /// share display text but have different stat ids, so a search built from
+    /// the wrong one returns nothing. We prefer the local variant on gear.
+    pub fn map_item(&self, item: &Item) -> Vec<MappedStat> {
+        let local = item_has_local_stats(&item.item_class);
+        item.modifiers
+            .iter()
+            .flat_map(|m| self.map_modifier(m, local))
+            .collect()
+    }
+
     /// Resolve one parsed [`Modifier`]'s stat lines to GGG stat filters.
     ///
     /// A descriptor can grant several stat lines (a hybrid prefix), so this
     /// returns one [`MappedStat`] per line it could map; unmappable lines are
     /// silently skipped (mirroring the parser's best-effort stance).
-    pub fn map_modifier(&self, modifier: &Modifier) -> Vec<MappedStat> {
+    /// `prefer_local` selects the `(Local)` stat variant when one exists.
+    pub fn map_modifier(&self, modifier: &Modifier, prefer_local: bool) -> Vec<MappedStat> {
         modifier
             .stats
             .iter()
-            .filter_map(|line| self.map_stat_line(&modifier.kind, modifier.source.as_ref(), line))
+            .filter_map(|line| {
+                self.map_stat_line(&modifier.kind, modifier.source.as_ref(), line, prefer_local)
+            })
             .collect()
     }
 
-    /// Resolve a single stat line for a given affix slot/source.
+    /// Resolve a single stat line for a given affix slot/source. When
+    /// `prefer_local` is set, the `(Local)` variant of the stat is tried first.
     pub fn map_stat_line(
         &self,
         kind: &ModKind,
         source: Option<&ModSource>,
         line: &str,
+        prefer_local: bool,
     ) -> Option<MappedStat> {
         let types = preferred_types(kind, source);
         for cand in stat_text::candidates(line) {
-            for ty in &types {
-                if let Some(id) = self.by_type_text.get(&(ty.to_string(), cand.template.clone())) {
-                    return Some(MappedStat {
-                        id: id.clone(),
-                        stat_type: ty.to_string(),
-                        values: cand.values,
-                        template: cand.template,
-                    });
+            if prefer_local {
+                let local = format!("{} (Local)", cand.template);
+                if let Some(mapped) = self.lookup(&types, &local, &cand.values) {
+                    return Some(mapped);
                 }
             }
-            // Type-agnostic fallback: the template exists but not under a type
-            // we expected (e.g. an enchant on a slot we mapped as explicit).
-            if let Some(id) = self.by_text.get(&cand.template) {
-                let stat_type = id.split('.').next().unwrap_or("explicit").to_string();
-                return Some(MappedStat {
-                    id: id.clone(),
-                    stat_type,
-                    values: cand.values,
-                    template: cand.template,
-                });
+            if let Some(mapped) = self.lookup(&types, &cand.template, &cand.values) {
+                return Some(mapped);
             }
         }
         None
     }
+
+    /// Look a canonical `template` up under the preferred stat types, then
+    /// type-agnostically (e.g. an enchant on a slot we mapped as explicit).
+    fn lookup(&self, types: &[&str], template: &str, values: &[f64]) -> Option<MappedStat> {
+        for ty in types {
+            if let Some(id) = self.by_type_text.get(&(ty.to_string(), template.to_string())) {
+                return Some(MappedStat {
+                    id: id.clone(),
+                    stat_type: ty.to_string(),
+                    values: values.to_vec(),
+                    template: template.to_string(),
+                });
+            }
+        }
+        if let Some(id) = self.by_text.get(template) {
+            let stat_type = id.split('.').next().unwrap_or("explicit").to_string();
+            return Some(MappedStat {
+                id: id.clone(),
+                stat_type,
+                values: values.to_vec(),
+                template: template.to_string(),
+            });
+        }
+        None
+    }
+}
+
+/// Whether an item class can carry *local* stats (armour defences, weapon
+/// damage/speed/crit). Used to prefer the `(Local)` stat variant.
+fn item_has_local_stats(item_class: &str) -> bool {
+    crate::query::category_for(item_class)
+        .map(|c| c.starts_with("armour.") || c.starts_with("weapon."))
+        .unwrap_or(false)
 }
 
 /// The GGG stat-id prefixes to try for a parsed affix, most-specific first.

@@ -69,6 +69,9 @@ const INITIAL_HEIGHT: u32 = 200;
 const LAYOUT_HEIGHT: f32 = 1600.0;
 const MIN_HEIGHT: u32 = 80;
 const MAX_HEIGHT: u32 = 1300;
+/// Don't shrink the surface for height drops smaller than this — a deadband that
+/// stops measurement jitter from thrashing `set_size` (see `App::draw`).
+const HEIGHT_DEADBAND: u32 = 8;
 /// Corner radius of the popup card.
 const CORNER_RADIUS: f32 = 14.0;
 /// Popup backing: a solid (opaque) grey card. Only the rounded corners let the
@@ -335,21 +338,28 @@ impl App {
             measured = resp.response.rect.height();
         });
 
-        // Auto-height: resize the surface to the measured content (one-frame
-        // settle; the configure that follows resizes the GL surface), then place
-        // it: follow a Ctrl+Alt drag, else stay where dragged, else center.
-        if shown && measured > 0.0 {
+        // Auto-height: resize the surface to the measured content. Crucially NOT
+        // while dragging, and with a deadband on shrink: every `set_size`
+        // triggers a configure → draw → maybe set_size again, an UN-throttled
+        // loop (configure isn't vsync-gated). Letting a 1px measurement jitter
+        // fire it pegs a core and makes the whole UI — and Alt-drag — lag.
+        if shown && measured > 0.0 && !self.dragging {
             let want_h = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
             // Width is mode-dependent (detailed mode is wider for the filters).
             let want_w = self.quick.surface_width();
-            if want_h != self.desired_height || want_w != self.desired_width {
+            let grow = want_h > self.desired_height; // grow at once (no clipping)
+            let shrink = self.desired_height.saturating_sub(want_h) > HEIGHT_DEADBAND;
+            if want_w != self.desired_width || grow || shrink {
                 self.desired_height = want_h;
                 self.desired_width = want_w;
                 self.layer.set_size(want_w, want_h);
             }
+        }
+        // Placement every visible frame (incl. during a drag, so the surface
+        // tracks the cursor): follow a drag, else keep dragged position, else
+        // center.
+        if shown {
             if self.dragged {
-                // Margins are updated by the relative-pointer handler; just keep
-                // them applied (also re-applies after an auto-height resize).
                 self.apply_margin();
             } else {
                 self.center(self.desired_width, self.desired_height);

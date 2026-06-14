@@ -371,24 +371,24 @@ impl QuickModeApp {
     /// Enumerate the item's mapped stats into toggleable filter rows, deduped by
     /// stat id, with the rolled value pre-filled as the min (blank max).
     fn build_filter_rows(&self, item: &Item) -> Vec<StatFilterRow> {
-        let stats = self.client.stats();
         let mut rows = Vec::new();
         let mut seen = HashSet::new();
-        for modifier in &item.modifiers {
-            for mapped in stats.map_modifier(modifier) {
-                if !seen.insert(mapped.id.clone()) {
-                    continue;
-                }
-                let rolled = mapped.filter_value();
-                rows.push(StatFilterRow {
-                    id: mapped.id,
-                    label: mapped.template,
-                    enabled: false,
-                    min: rolled.map(fmt_amount).unwrap_or_default(),
-                    max: String::new(),
-                    rolled,
-                });
+        // Mapped with the item's local/global context (e.g. local evasion on
+        // body armour). Enabled by default so the first detailed search matches
+        // the item's own mods; the user toggles off what they don't care about.
+        for mapped in self.client.stats().map_item(item) {
+            if !seen.insert(mapped.id.clone()) {
+                continue;
             }
+            let rolled = mapped.filter_value();
+            rows.push(StatFilterRow {
+                id: mapped.id,
+                label: mapped.template,
+                enabled: true,
+                min: rolled.map(fmt_amount).unwrap_or_default(),
+                max: String::new(),
+                rolled,
+            });
         }
         rows
     }
@@ -484,7 +484,10 @@ impl QuickModeApp {
             ui.label(RichText::new(mode_label).weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.mode == Mode::Detailed
-                    && ui.button("✕").on_hover_text("Close (Esc)").clicked()
+                    && ui
+                        .button(RichText::new("X").strong())
+                        .on_hover_text("Close (Esc)")
+                        .clicked()
                 {
                     self.close_requested = true;
                 }

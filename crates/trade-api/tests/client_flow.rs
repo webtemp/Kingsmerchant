@@ -101,7 +101,10 @@ async fn price_check_searches_then_fetches_and_aggregates() {
 
     assert_eq!(reqs[0].method, Method::Post);
     assert!(reqs[0].url.ends_with("/api/trade2/search/Mirage"));
-    assert!(reqs[0].body.as_ref().unwrap().contains("Topaz Ring"));
+    // Rares search by category, not the exact base type.
+    let body = reqs[0].body.as_ref().unwrap();
+    assert!(body.contains("accessory.ring"));
+    assert!(!body.contains("Topaz Ring"));
 
     assert_eq!(reqs[1].method, Method::Get);
     assert!(reqs[1].url.contains("/api/trade2/fetch/"));

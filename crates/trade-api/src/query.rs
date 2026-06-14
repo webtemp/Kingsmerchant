@@ -68,13 +68,13 @@ pub fn build_search_query(
     items: &ItemDefinitions,
     opts: QueryOptions,
 ) -> SearchRequest {
-    let (name, type_) = name_and_type(item, items);
+    let category_opt = category_for(&item.item_class);
+    let (name, type_) = query_name_and_type(item, items, category_opt);
 
-    let category = category_for(&item.item_class).map(OptionFilter::new);
     let filters = Filters {
-        type_filters: category.map(|category| TypeFilters {
+        type_filters: category_opt.map(|c| TypeFilters {
             filters: TypeFilterFields {
-                category: Some(category),
+                category: Some(OptionFilter::new(c)),
                 rarity: None,
             },
         }),
@@ -82,9 +82,9 @@ pub fn build_search_query(
     };
 
     let stat_filters = if opts.include_stats {
-        item.modifiers
-            .iter()
-            .flat_map(|m| stats.map_modifier(m))
+        stats
+            .map_item(item)
+            .into_iter()
             .map(|mapped| StatFilter {
                 value: mapped.filter_value().map(StatValue::min),
                 id: mapped.id,
@@ -164,8 +164,8 @@ pub fn build_detailed_query(
     selections: &[StatSelection],
     price: &PriceFilter,
 ) -> SearchRequest {
-    let (name, type_) = name_and_type(item, items);
-    let category = category_for(&item.item_class).map(OptionFilter::new);
+    let category_opt = category_for(&item.item_class);
+    let (name, type_) = query_name_and_type(item, items, category_opt);
 
     let trade_filters = PriceRange::new(price.min, price.max, price.currency.clone())
         .map(|price| TradeFilters {
@@ -173,9 +173,9 @@ pub fn build_detailed_query(
         });
 
     let filters = Filters {
-        type_filters: category.map(|category| TypeFilters {
+        type_filters: category_opt.map(|c| TypeFilters {
             filters: TypeFilterFields {
-                category: Some(category),
+                category: Some(OptionFilter::new(c)),
                 rarity: None,
             },
         }),
@@ -198,6 +198,23 @@ pub fn build_detailed_query(
             filters,
         },
         sort: Some(Sort::price_asc()),
+    }
+}
+
+/// Name/type for the query. For rares/normals with a known category we drop the
+/// exact base type and search the whole *category* instead (e.g. "body armour",
+/// not "Corsair Coat") — we want comparable items across bases, not just the
+/// same base. Uniques/magic keep their type (the base is the point there).
+fn query_name_and_type(
+    item: &Item,
+    items: &ItemDefinitions,
+    category: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let (name, type_) = name_and_type(item, items);
+    if category.is_some() && matches!(item.rarity, Rarity::Rare | Rarity::Normal) {
+        (name, None)
+    } else {
+        (name, type_)
     }
 }
 

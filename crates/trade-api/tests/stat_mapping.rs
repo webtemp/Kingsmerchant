@@ -29,7 +29,7 @@ fn modifier(kind: ModKind, source: Option<ModSource>, stat: &str) -> Modifier {
 fn implicit_resistance_maps_to_implicit_id() {
     let defs = stats();
     let m = defs
-        .map_stat_line(&ModKind::Implicit, None, "+30(20-30)% to Lightning Resistance")
+        .map_stat_line(&ModKind::Implicit, None, "+30(20-30)% to Lightning Resistance", false)
         .expect("lightning resistance maps");
     assert_eq!(m.id, "implicit.stat_1671376347");
     assert_eq!(m.stat_type, "implicit");
@@ -41,7 +41,7 @@ fn implicit_resistance_maps_to_implicit_id() {
 fn explicit_prefix_evasion_maps_to_explicit_id() {
     let defs = stats();
     let m = defs
-        .map_stat_line(&ModKind::Prefix, None, "+221(203-233) to Evasion Rating")
+        .map_stat_line(&ModKind::Prefix, None, "+221(203-233) to Evasion Rating", false)
         .expect("evasion maps");
     assert_eq!(m.id, "explicit.stat_2144192055");
     assert_eq!(m.values, [221.0]);
@@ -53,10 +53,10 @@ fn same_text_resolves_to_different_id_by_affix_type() {
     // The exact same template, mapped as an implicit vs a normal explicit,
     // must resolve to the implicit. and explicit. ids respectively.
     let implicit = defs
-        .map_stat_line(&ModKind::Implicit, None, "+30% to Lightning Resistance")
+        .map_stat_line(&ModKind::Implicit, None, "+30% to Lightning Resistance", false)
         .unwrap();
     let explicit = defs
-        .map_stat_line(&ModKind::Suffix, None, "+23(21-25)% to Lightning Resistance")
+        .map_stat_line(&ModKind::Suffix, None, "+23(21-25)% to Lightning Resistance", false)
         .unwrap();
     assert_eq!(implicit.id, "implicit.stat_1671376347");
     assert_eq!(explicit.id, "explicit.stat_1671376347");
@@ -70,6 +70,7 @@ fn fractured_source_prefers_fractured_id() {
             &ModKind::Prefix,
             Some(&ModSource::Fractured),
             "+45(40-50)% increased maximum Life",
+            false,
         )
         .unwrap();
     assert_eq!(m.id, "fractured.stat_983749596");
@@ -80,10 +81,10 @@ fn fractured_source_prefers_fractured_id() {
 fn spell_damage_and_cast_speed_map() {
     let defs = stats();
     let sd = defs
-        .map_stat_line(&ModKind::Prefix, None, "63(55-64)% increased Spell Damage")
+        .map_stat_line(&ModKind::Prefix, None, "63(55-64)% increased Spell Damage", false)
         .unwrap();
     let cs = defs
-        .map_stat_line(&ModKind::Suffix, None, "17(17-20)% increased Cast Speed")
+        .map_stat_line(&ModKind::Suffix, None, "17(17-20)% increased Cast Speed", false)
         .unwrap();
     assert_eq!(sd.id, "explicit.stat_2974417149");
     assert_eq!(cs.id, "explicit.stat_2891184298");
@@ -99,7 +100,7 @@ fn hybrid_modifier_maps_each_stat_line() {
         ],
         ..modifier(ModKind::Prefix, None, "")
     };
-    let mapped = defs.map_modifier(&m);
+    let mapped = defs.map_modifier(&m, false);
     assert_eq!(mapped.len(), 2);
     assert_eq!(mapped[0].id, "explicit.stat_3299347043"); // flat life
     assert_eq!(mapped[0].values, [118.0]);
@@ -107,10 +108,33 @@ fn hybrid_modifier_maps_each_stat_line() {
 }
 
 #[test]
+fn prefer_local_picks_the_local_stat_variant() {
+    // GGG ships two entries sharing display text: the local armour mod (with a
+    // " (Local)" text suffix) and the global passive-tree one. On gear we must
+    // map to the local id or the search returns nothing.
+    let json = r##"{"result":[{"id":"explicit","label":"Explicit","entries":[
+        {"id":"explicit.stat_124859000","text":"#% increased Evasion Rating (Local)","type":"explicit"},
+        {"id":"explicit.stat_2106365538","text":"#% increased Evasion Rating","type":"explicit"}
+    ]}]}"##;
+    let defs = StatDefinitions::from_json(json).unwrap();
+
+    let local = defs
+        .map_stat_line(&ModKind::Prefix, None, "103(101-110)% increased Evasion Rating", true)
+        .unwrap();
+    assert_eq!(local.id, "explicit.stat_124859000");
+
+    // Without the local preference (e.g. on a ring) we get the global id.
+    let global = defs
+        .map_stat_line(&ModKind::Prefix, None, "103(101-110)% increased Evasion Rating", false)
+        .unwrap();
+    assert_eq!(global.id, "explicit.stat_2106365538");
+}
+
+#[test]
 fn unmappable_stat_line_is_dropped_not_panicking() {
     let defs = stats();
     assert!(defs
-        .map_stat_line(&ModKind::Prefix, None, "Grants Eternal Youth and Free Snacks")
+        .map_stat_line(&ModKind::Prefix, None, "Grants Eternal Youth and Free Snacks", false)
         .is_none());
 }
 
