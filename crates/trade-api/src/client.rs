@@ -222,6 +222,16 @@ impl<T: HttpTransport> TradeClient<T> {
         })
     }
 
+    /// Secondary ML price estimate from poeprices.info (PRD §4.4, detailed mode
+    /// only). Takes the raw clipboard `item_text`. Not run through the GGG rate
+    /// limiter — it's a different service with its own limits, handled inside.
+    pub async fn price_estimate(
+        &self,
+        item_text: &str,
+    ) -> Result<Option<crate::poeprices::PriceEstimate>, Error> {
+        crate::poeprices::price_estimate(&self.transport, &self.league(), item_text).await
+    }
+
     fn with_realm(&self, mut url: String) -> String {
         if let Some(realm) = &self.config.realm {
             url.push_str(&format!("?realm={realm}"));

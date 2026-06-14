@@ -22,6 +22,7 @@ pub mod definitions;
 pub mod error;
 pub mod http;
 pub mod model;
+pub mod poeprices;
 pub mod price;
 pub mod query;
 pub mod rate_limit;
@@ -34,6 +35,7 @@ pub use definitions::{ItemDefinitions, MappedStat, StatDefinitions};
 pub use error::Error;
 pub use http::{HttpRequest, HttpResponse, HttpTransport, Method, ReqwestTransport};
 pub use model::{Price, ResultEntry, SearchRequest, SearchResponse};
+pub use poeprices::PriceEstimate;
 pub use query::{
     build_detailed_query, build_search_query, category_for, ListingStatus, PriceFilter,
     QueryOptions, StatSelection,

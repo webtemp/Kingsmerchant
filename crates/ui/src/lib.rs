@@ -19,8 +19,8 @@ use config::Config;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
-    fetch_definitions, fetch_leagues, ClientConfig, League, ListingStatus, PriceCheck, PriceFilter,
-    QueryOptions, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
+    fetch_definitions, fetch_leagues, ClientConfig, League, ListingStatus, PriceCheck, PriceEstimate,
+    PriceFilter, QueryOptions, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -51,6 +51,9 @@ pub type Client = TradeClient<ReqwestTransport>;
 /// Result of a background price check, sent back to the UI thread.
 enum Msg {
     Result(Box<Result<PriceCheck, String>>),
+    /// poeprices.info ML estimate (detailed mode, rares). `None` = poeprices
+    /// declined to price it; `Err` = it failed.
+    Estimate(Box<Result<Option<PriceEstimate>, String>>),
 }
 
 /// Quick (Ctrl+C) vs detailed (Ctrl+Alt+C) price check. Detailed mode pins the
@@ -188,6 +191,10 @@ pub struct QuickModeApp {
     filter_dirty: bool,
     /// When the last filter edit happened (debounce timer base).
     filter_changed_at: Instant,
+    /// poeprices.info ML estimate for the loaded rare (detailed mode).
+    estimate: Option<PriceEstimate>,
+    /// A poeprices request is in flight.
+    estimate_loading: bool,
     phase: Phase,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -231,6 +238,8 @@ impl QuickModeApp {
             price_filter: PriceFilterState::default(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),
+            estimate: None,
+            estimate_loading: false,
             phase: Phase::Idle,
             tx,
             rx,
@@ -294,12 +303,34 @@ impl QuickModeApp {
             }
         };
         self.icon_url = None;
+        self.estimate = None;
+        self.estimate_loading = false;
         if self.mode == Mode::Detailed {
             self.filters = self.build_filter_rows(&item);
             self.price_filter = PriceFilterState::default();
+            // poeprices ML estimate is rares-only and doesn't depend on the
+            // filters, so fetch it once per fresh detailed check (PRD §4.7).
+            if item.rarity == Rarity::Rare {
+                self.spawn_estimate(ctx);
+            }
         }
         self.item = Some(item.clone());
         self.spawn_query(ctx, item);
+    }
+
+    /// Fetch the poeprices.info ML estimate for the current `item_text` on a
+    /// background task (detailed mode, rares).
+    fn spawn_estimate(&mut self, ctx: &egui::Context) {
+        self.estimate_loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        let text = self.item_text.clone();
+        self.rt.spawn(async move {
+            let result = client.price_estimate(&text).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Estimate(Box::new(result)));
+            ctx.request_repaint();
+        });
     }
 
     /// Re-run the search for the already-loaded item, keeping the current filter
@@ -405,19 +436,30 @@ impl QuickModeApp {
             }
         }
 
-        while let Ok(Msg::Result(result)) = self.rx.try_recv() {
-            self.phase = match *result {
-                Ok(pc) => {
-                    self.icon_url = pc
-                        .listings
-                        .first()
-                        .and_then(|e| e.item.get("icon"))
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string);
-                    Phase::Done(pc)
+        while let Ok(msg) = self.rx.try_recv() {
+            match msg {
+                Msg::Result(result) => {
+                    self.phase = match *result {
+                        Ok(pc) => {
+                            self.icon_url = pc
+                                .listings
+                                .first()
+                                .and_then(|e| e.item.get("icon"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string);
+                            Phase::Done(pc)
+                        }
+                        Err(e) => Phase::Failed(e),
+                    };
                 }
-                Err(e) => Phase::Failed(e),
-            };
+                Msg::Estimate(result) => {
+                    self.estimate_loading = false;
+                    match *result {
+                        Ok(est) => self.estimate = est,
+                        Err(e) => tracing::debug!(error = %e, "poeprices estimate failed"),
+                    }
+                }
+            }
         }
     }
 
@@ -538,6 +580,12 @@ impl QuickModeApp {
                 ui.label("searching…");
             });
         }
+
+        // poeprices.info ML estimate badge (detailed mode, rares — PRD §4.7).
+        if self.mode == Mode::Detailed {
+            self.estimate_badge(ui);
+        }
+
         ui.separator();
 
         let mut copied: Option<String> = None;
@@ -706,6 +754,44 @@ impl QuickModeApp {
             self.filter_changed_at = Instant::now();
         }
         requery
+    }
+
+    /// The poeprices.info ML estimate badge: a spinner while it loads, then the
+    /// predicted range + confidence, or nothing if poeprices declined.
+    fn estimate_badge(&self, ui: &mut egui::Ui) {
+        if self.estimate_loading {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    RichText::new("poeprices.info ML estimate…")
+                        .weak()
+                        .small(),
+                );
+            });
+            return;
+        }
+        let Some(est) = &self.estimate else {
+            return;
+        };
+        let conf = est
+            .confidence
+            .map(|c| format!("  ·  {c:.0}% confidence"))
+            .unwrap_or_default();
+        let text = format!(
+            "🤖 poeprices ML: {}–{} {}{}",
+            fmt_amount(est.min),
+            fmt_amount(est.max),
+            est.currency,
+            conf
+        );
+        egui::Frame::none()
+            .fill(Color32::from_rgb(0x23, 0x2a, 0x3a))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(0x3c, 0x55, 0x7a)))
+            .rounding(6.0)
+            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+            .show(ui, |ui| {
+                ui.label(RichText::new(text).color(Color32::from_rgb(0x7e, 0xc8, 0xff)));
+            });
     }
 }
 
