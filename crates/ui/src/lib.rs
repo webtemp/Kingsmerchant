@@ -1303,28 +1303,56 @@ fn scaled_min(rolled: f64, percent: u32) -> f64 {
 /// If the watcher can't start (e.g. not in the `input` group), we log and carry
 /// on — the window still works manually (PRD §4.1).
 pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
-    use platform_linux::HotkeyEvent;
+    use platform_linux::{HotkeyBindings, HotkeyEvent};
+    // Hotkeys and the POE2-focus gate are config-driven (rebindable, PRD §4.8).
+    let config = Config::load();
+    let bindings = HotkeyBindings::from_strings(
+        &config.hotkey_quick,
+        &config.hotkey_detailed,
+        &config.hotkey_macro,
+        &config.hotkey_close,
+    );
+    let require_focus = config.require_poe2_focus;
+    // Whether a copy/macro hotkey should act right now (gated to POE2).
+    let allowed = move || !require_focus || platform_linux::is_poe2_active();
+
     std::thread::spawn(move || {
-        let hotkeys = match platform_linux::watch_hotkeys() {
+        let hotkeys = match platform_linux::watch_hotkeys(bindings) {
             Ok(rx) => rx,
             Err(e) => {
                 tracing::warn!(error = %e, "hotkey watcher disabled; use the buttons");
                 return;
             }
         };
-        tracing::info!("listening for Ctrl+C / Ctrl+Alt+C / Esc in game");
+        tracing::info!(
+            quick = %config.hotkey_quick,
+            detailed = %config.hotkey_detailed,
+            macro_ = %config.hotkey_macro,
+            require_poe2_focus = require_focus,
+            "listening for hotkeys"
+        );
         let mut last_seen = platform_linux::read_clipboard_text().unwrap_or(None);
         for event in hotkeys {
             let outcome = match event {
-                // Escape dismisses — no clipboard involved.
+                // Escape dismisses — overlay control, not gated to POE2 focus.
                 HotkeyEvent::Close => Hotkey::Close,
-                // F5 chat macro.
-                HotkeyEvent::Macro => Hotkey::Macro,
-                // Ctrl/Alt state forwarded straight through.
+                // Ctrl/Alt state forwarded straight through (overlay drag/show).
                 HotkeyEvent::Modifiers { ctrl, alt } => Hotkey::Mods { ctrl, alt },
-                // A copy combo: wait for POE2 to write the item. Both Ctrl+C and
-                // Ctrl+Alt+C open the pinned filter popup (PRD §4.7).
+                // Chat macro — only into POE2.
+                HotkeyEvent::Macro => {
+                    if !allowed() {
+                        tracing::info!("macro ignored — POE2 not focused");
+                        continue;
+                    }
+                    Hotkey::Macro
+                }
+                // A copy combo: only when POE2 is focused (don't hijack Ctrl+C in
+                // other apps). Both copy hotkeys open the pinned filter popup.
                 HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
+                    if !allowed() {
+                        tracing::info!("Ctrl+C ignored — POE2 not focused");
+                        continue;
+                    }
                     let start = Instant::now();
                     match wait_for_new_item(&last_seen) {
                         Some(text) => {

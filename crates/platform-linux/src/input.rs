@@ -41,11 +41,152 @@ pub enum HotkeyEvent {
     Macro,
 }
 
+/// A key plus an exact modifier combination, parsed from a string like
+/// `"Ctrl+Alt+C"` / `"F5"` / `"Escape"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Binding {
+    key: Key,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+}
+
+impl Binding {
+    /// Parse `"Ctrl+Alt+C"`-style strings (case-insensitive modifiers; the last
+    /// `+`-segment is the key). Errors on an unknown key name.
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        let mut ctrl = false;
+        let mut alt = false;
+        let mut shift = false;
+        let mut key = None;
+        for part in s.split('+').map(str::trim).filter(|p| !p.is_empty()) {
+            match part.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => ctrl = true,
+                "alt" => alt = true,
+                "shift" => shift = true,
+                other => key = Some(key_from_name(other).ok_or_else(|| {
+                    anyhow::anyhow!("unknown key `{part}` in hotkey `{s}`")
+                })?),
+            }
+        }
+        let key = key.ok_or_else(|| anyhow::anyhow!("no key in hotkey `{s}`"))?;
+        Ok(Binding { key, ctrl, alt, shift })
+    }
+
+    fn matches(&self, key: Key, ctrl: bool, alt: bool, shift: bool) -> bool {
+        self.key == key && self.ctrl == ctrl && self.alt == alt && self.shift == shift
+    }
+}
+
+/// The configurable hotkeys (PRD §4.8 makes these rebindable).
+#[derive(Debug, Clone, Copy)]
+pub struct HotkeyBindings {
+    pub quick: Binding,
+    pub detailed: Binding,
+    pub close: Binding,
+    pub macro_: Binding,
+}
+
+impl Default for HotkeyBindings {
+    fn default() -> Self {
+        HotkeyBindings {
+            quick: Binding { key: Key::KEY_C, ctrl: true, alt: false, shift: false },
+            detailed: Binding { key: Key::KEY_C, ctrl: true, alt: true, shift: false },
+            close: Binding { key: Key::KEY_ESC, ctrl: false, alt: false, shift: false },
+            macro_: Binding { key: Key::KEY_F5, ctrl: false, alt: false, shift: false },
+        }
+    }
+}
+
+impl HotkeyBindings {
+    /// Build from config strings, falling back to the default for any that fail
+    /// to parse (logged, so a typo'd binding doesn't disable the whole hotkey).
+    pub fn from_strings(quick: &str, detailed: &str, macro_: &str, close: &str) -> Self {
+        let d = Self::default();
+        let one = |s: &str, fallback: Binding| {
+            Binding::parse(s).unwrap_or_else(|e| {
+                warn!(error = %e, "invalid hotkey; using default");
+                fallback
+            })
+        };
+        HotkeyBindings {
+            quick: one(quick, d.quick),
+            detailed: one(detailed, d.detailed),
+            macro_: one(macro_, d.macro_),
+            close: one(close, d.close),
+        }
+    }
+
+    /// Which action a key-press maps to, given the exact modifier state.
+    /// Detailed (more modifiers) is checked first; exact matching means at most
+    /// one binding applies.
+    fn event_for(&self, key: Key, ctrl: bool, alt: bool, shift: bool) -> Option<HotkeyEvent> {
+        if self.detailed.matches(key, ctrl, alt, shift) {
+            Some(HotkeyEvent::DetailedCopy)
+        } else if self.quick.matches(key, ctrl, alt, shift) {
+            Some(HotkeyEvent::QuickCopy)
+        } else if self.close.matches(key, ctrl, alt, shift) {
+            Some(HotkeyEvent::Close)
+        } else if self.macro_.matches(key, ctrl, alt, shift) {
+            Some(HotkeyEvent::Macro)
+        } else {
+            None
+        }
+    }
+}
+
+/// Map a key name (`"c"`, `"f5"`, `"escape"`, `"space"`, …) to an evdev [`Key`].
+fn key_from_name(name: &str) -> Option<Key> {
+    let n = name.to_ascii_lowercase();
+    // Single letters a-z and digits 0-9.
+    if n.len() == 1 {
+        let c = n.chars().next().unwrap();
+        if c.is_ascii_alphanumeric() {
+            return ascii_key(c);
+        }
+    }
+    Some(match n.as_str() {
+        "escape" | "esc" => Key::KEY_ESC,
+        "enter" | "return" => Key::KEY_ENTER,
+        "space" => Key::KEY_SPACE,
+        "tab" => Key::KEY_TAB,
+        "f1" => Key::KEY_F1,
+        "f2" => Key::KEY_F2,
+        "f3" => Key::KEY_F3,
+        "f4" => Key::KEY_F4,
+        "f5" => Key::KEY_F5,
+        "f6" => Key::KEY_F6,
+        "f7" => Key::KEY_F7,
+        "f8" => Key::KEY_F8,
+        "f9" => Key::KEY_F9,
+        "f10" => Key::KEY_F10,
+        "f11" => Key::KEY_F11,
+        "f12" => Key::KEY_F12,
+        _ => return None,
+    })
+}
+
+fn ascii_key(c: char) -> Option<Key> {
+    Some(match c {
+        'a' => Key::KEY_A, 'b' => Key::KEY_B, 'c' => Key::KEY_C, 'd' => Key::KEY_D,
+        'e' => Key::KEY_E, 'f' => Key::KEY_F, 'g' => Key::KEY_G, 'h' => Key::KEY_H,
+        'i' => Key::KEY_I, 'j' => Key::KEY_J, 'k' => Key::KEY_K, 'l' => Key::KEY_L,
+        'm' => Key::KEY_M, 'n' => Key::KEY_N, 'o' => Key::KEY_O, 'p' => Key::KEY_P,
+        'q' => Key::KEY_Q, 'r' => Key::KEY_R, 's' => Key::KEY_S, 't' => Key::KEY_T,
+        'u' => Key::KEY_U, 'v' => Key::KEY_V, 'w' => Key::KEY_W, 'x' => Key::KEY_X,
+        'y' => Key::KEY_Y, 'z' => Key::KEY_Z,
+        '0' => Key::KEY_0, '1' => Key::KEY_1, '2' => Key::KEY_2, '3' => Key::KEY_3,
+        '4' => Key::KEY_4, '5' => Key::KEY_5, '6' => Key::KEY_6, '7' => Key::KEY_7,
+        '8' => Key::KEY_8, '9' => Key::KEY_9,
+        _ => return None,
+    })
+}
+
 /// Start watching every connected keyboard for the price-check hotkeys.
 ///
 /// Returns a receiver that yields a [`HotkeyEvent`] on each matching press.
 /// Reader threads are detached and live for the process lifetime.
-pub fn watch_hotkeys() -> anyhow::Result<Receiver<HotkeyEvent>> {
+pub fn watch_hotkeys(bindings: HotkeyBindings) -> anyhow::Result<Receiver<HotkeyEvent>> {
     let devices = keyboard_paths()?;
     if devices.is_empty() {
         anyhow::bail!(
@@ -63,7 +204,7 @@ pub fn watch_hotkeys() -> anyhow::Result<Receiver<HotkeyEvent>> {
                 let label = path.display().to_string();
                 thread::Builder::new()
                     .name(format!("evdev:{label}"))
-                    .spawn(move || reader_loop(device, label, tx))?;
+                    .spawn(move || reader_loop(device, label, tx, bindings))?;
                 opened += 1;
             }
             Err(err) => {
@@ -105,11 +246,12 @@ fn keyboard_paths() -> anyhow::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-/// Blocking read loop for one keyboard. Tracks this keyboard's own modifier
-/// state and emits a hotkey when `C` is pressed with the right modifiers.
-fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>) {
+/// Blocking read loop for one keyboard. Tracks this keyboard's modifier state
+/// and emits a hotkey when a key matching a configured [`Binding`] is pressed.
+fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>, bindings: HotkeyBindings) {
     let mut ctrl = false;
     let mut alt = false;
+    let mut shift = false;
     loop {
         let events = match device.fetch_events() {
             Ok(events) => events,
@@ -128,6 +270,7 @@ fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>) {
             match key {
                 Key::KEY_LEFTCTRL | Key::KEY_RIGHTCTRL if ctrl != pressed => {
                     ctrl = pressed;
+                    // The overlay still needs Ctrl/Alt state (drag + show).
                     if tx.send(HotkeyEvent::Modifiers { ctrl, alt }).is_err() {
                         return;
                     }
@@ -138,29 +281,43 @@ fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>) {
                         return;
                     }
                 }
-                Key::KEY_ESC if event.value() == 1 => {
-                    if tx.send(HotkeyEvent::Close).is_err() {
-                        return;
-                    }
-                }
-                Key::KEY_F5 if event.value() == 1 => {
-                    if tx.send(HotkeyEvent::Macro).is_err() {
-                        return;
-                    }
-                }
-                Key::KEY_C if event.value() == 1 && ctrl => {
-                    let hotkey = if alt {
-                        HotkeyEvent::DetailedCopy
-                    } else {
-                        HotkeyEvent::QuickCopy
-                    };
-                    // If the main thread is gone, so are we.
+                Key::KEY_LEFTSHIFT | Key::KEY_RIGHTSHIFT => shift = pressed,
+                _ => {}
+            }
+            // Action bindings fire on the initial press only (not autorepeat).
+            if event.value() == 1 {
+                if let Some(hotkey) = bindings.event_for(key, ctrl, alt, shift) {
                     if tx.send(hotkey).is_err() {
                         return;
                     }
                 }
-                _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_modifiers_and_key() {
+        let b = Binding::parse("Ctrl+Alt+C").unwrap();
+        assert!(b.ctrl && b.alt && !b.shift && b.key == Key::KEY_C);
+        let f5 = Binding::parse("F5").unwrap();
+        assert!(!f5.ctrl && !f5.alt && f5.key == Key::KEY_F5);
+        assert_eq!(Binding::parse("escape").unwrap().key, Key::KEY_ESC);
+        assert!(Binding::parse("Ctrl+Nonsense").is_err());
+    }
+
+    #[test]
+    fn exact_match_disambiguates_quick_and_detailed() {
+        let b = HotkeyBindings::default();
+        // Ctrl+C → quick; Ctrl+Alt+C → detailed; neither bare nor wrong-mods.
+        assert_eq!(b.event_for(Key::KEY_C, true, false, false), Some(HotkeyEvent::QuickCopy));
+        assert_eq!(b.event_for(Key::KEY_C, true, true, false), Some(HotkeyEvent::DetailedCopy));
+        assert_eq!(b.event_for(Key::KEY_C, false, false, false), None);
+        assert_eq!(b.event_for(Key::KEY_F5, false, false, false), Some(HotkeyEvent::Macro));
+        assert_eq!(b.event_for(Key::KEY_ESC, false, false, false), Some(HotkeyEvent::Close));
     }
 }

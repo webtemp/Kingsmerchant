@@ -7,7 +7,9 @@
 pub mod clipboard;
 pub mod inject;
 pub mod input;
+pub mod window;
 
 pub use clipboard::{open_url, read_clipboard_text, write_clipboard_text};
 pub use inject::send_chat_command;
-pub use input::{watch_hotkeys, HotkeyEvent};
+pub use input::{watch_hotkeys, Binding, HotkeyBindings, HotkeyEvent};
+pub use window::is_poe2_active;
