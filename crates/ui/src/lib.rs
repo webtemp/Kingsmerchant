@@ -24,9 +24,11 @@ const USER_AGENT: &str = "poe2ddd/0.1 (+phase3 ui)";
 /// Fetch a sample of this many so the median is meaningful; show the cheapest N.
 const SAMPLE: usize = 10;
 const SHOWN: usize = 7;
-/// How long to wait for POE2 to write the clipboard after Ctrl+C (PRD §4.2).
-const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(500);
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// How long to wait for POE2 to write the clipboard after Ctrl+C. The PRD §4.2
+/// budget was 500ms; we're more patient (1s) because POE2's write latency is
+/// variable, and a too-short window is what made some presses "do nothing".
+const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(1000);
+const POLL_INTERVAL: Duration = Duration::from_millis(8);
 
 /// In-game-ish colour for rolled mod text.
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
@@ -54,6 +56,15 @@ type Client = TradeClient<ReqwestTransport>;
 /// Result of a background price check, sent back to the UI thread.
 enum Msg {
     Result(Box<Result<PriceCheck, String>>),
+}
+
+/// What the global-hotkey watcher observed after a Ctrl+C.
+enum Hotkey {
+    /// A new item landed on the clipboard.
+    Item(String),
+    /// The clipboard never produced an item before the timeout — usually POE2
+    /// skipping the copy on a static cursor (PRD §9.3).
+    Missed,
 }
 
 #[derive(Default)]
@@ -85,10 +96,12 @@ pub struct QuickModeApp {
     phase: Phase,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
-    /// Item text pushed in by the global-hotkey watcher (Ctrl+C in game).
-    hotkey_rx: Receiver<String>,
+    /// Events pushed in by the global-hotkey watcher (Ctrl+C in game).
+    hotkey_rx: Receiver<Hotkey>,
     /// Last "copied to clipboard" note, shown as feedback under the listings.
     copy_status: Option<String>,
+    /// Transient hint (e.g. a missed copy), shown near the top.
+    hint: Option<String>,
 }
 
 impl QuickModeApp {
@@ -96,7 +109,7 @@ impl QuickModeApp {
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
         league: String,
-        hotkey_rx: Receiver<String>,
+        hotkey_rx: Receiver<Hotkey>,
     ) -> Self {
         let (tx, rx) = channel();
         QuickModeApp {
@@ -112,6 +125,7 @@ impl QuickModeApp {
             rx,
             hotkey_rx,
             copy_status: None,
+            hint: None,
         }
     }
 
@@ -155,13 +169,26 @@ impl QuickModeApp {
 
 impl eframe::App for QuickModeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Ctrl+C in game → the watcher pushes the copied item text here; raise
-        // the window and price-check it automatically.
-        while let Ok(text) = self.hotkey_rx.try_recv() {
-            self.item_text = text;
-            self.view = View::Item;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            self.start_price_check(ctx);
+        // Ctrl+C in game → the watcher pushes the copied item here; raise the
+        // window and price-check it automatically. A missed copy gets a hint
+        // instead of silently doing nothing.
+        while let Ok(event) = self.hotkey_rx.try_recv() {
+            match event {
+                Hotkey::Item(text) => {
+                    self.hint = None;
+                    self.item_text = text;
+                    self.view = View::Item;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    self.start_price_check(ctx);
+                }
+                Hotkey::Missed => {
+                    self.hint = Some(
+                        "No item copied — nudge the mouse over the item, then press \
+                         Ctrl+C again. (POE2 skips the copy when the cursor is still.)"
+                            .to_string(),
+                    );
+                }
+            }
         }
 
         while let Ok(Msg::Result(result)) = self.rx.try_recv() {
@@ -212,6 +239,11 @@ impl eframe::App for QuickModeApp {
                     }
                 });
             });
+
+            if let Some(hint) = &self.hint {
+                ui.add_space(4.0);
+                ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("⚠ {hint}"));
+            }
 
             ui.add_space(4.0);
 
@@ -512,7 +544,7 @@ fn fmt_amount(amount: f64) -> String {
 /// we wait for POE2 to write the clipboard, then push the item text to the UI.
 /// If the watcher can't start (e.g. not in the `input` group), we log and carry
 /// on — the window still works manually (PRD §4.1).
-fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<String>) {
+fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
     std::thread::spawn(move || {
         let hotkeys = match platform_linux::watch_hotkeys() {
             Ok(rx) => rx,
@@ -524,13 +556,22 @@ fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<String>) {
         tracing::info!("listening for Ctrl+C / Ctrl+Alt+C in game");
         let mut last_seen = platform_linux::read_clipboard_text().unwrap_or(None);
         for _event in hotkeys {
-            if let Some(text) = wait_for_new_item(&last_seen) {
-                last_seen = Some(text.clone());
-                if tx.send(text).is_err() {
-                    return; // UI gone
+            let start = Instant::now();
+            let outcome = match wait_for_new_item(&last_seen) {
+                Some(text) => {
+                    tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "item copied");
+                    last_seen = Some(text.clone());
+                    Hotkey::Item(text)
                 }
-                ctx.request_repaint();
+                None => {
+                    tracing::debug!("Ctrl+C produced no new item (cursor static?)");
+                    Hotkey::Missed
+                }
+            };
+            if tx.send(outcome).is_err() {
+                return; // UI gone
             }
+            ctx.request_repaint();
         }
     });
 }
@@ -596,7 +637,7 @@ pub fn run() -> anyhow::Result<()> {
         Box::new(move |cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             configure_style(&cc.egui_ctx);
-            let (hk_tx, hk_rx) = channel::<String>();
+            let (hk_tx, hk_rx) = channel::<Hotkey>();
             spawn_hotkey_watcher(cc.egui_ctx.clone(), hk_tx);
             Ok(Box::new(QuickModeApp::new(rt, client, league, hk_rx)))
         }),
