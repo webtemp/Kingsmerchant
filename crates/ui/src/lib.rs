@@ -586,34 +586,44 @@ fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<Strin
 
     let character = listing.account.last_character_name.clone();
     let seller = listing.account.name.clone();
+    // Icon buttons (the row is too narrow for text labels); the action name is
+    // the hover tooltip.
     ui.horizontal(|ui| {
         if let Some(whisper) = &listing.whisper {
-            if ui.button("Whisper").on_hover_text(whisper).clicked() {
+            if ui.button("💬").on_hover_text("Whisper").clicked() {
                 copy_to_clipboard(whisper);
                 *copied = Some(format!("whisper to {seller}"));
             }
         } else {
-            ui.add_enabled(false, egui::Button::new("Whisper"));
+            ui.add_enabled(false, egui::Button::new("💬"))
+                .on_hover_text("Whisper (unavailable)");
         }
-        chat_button(ui, "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
-        chat_button(ui, "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
-        chat_button(ui, "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
+        chat_button(ui, "➕", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
+        chat_button(ui, "🏠", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
+        chat_button(ui, "🤝", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
     });
 }
 
-/// A button that copies `command` to the clipboard, disabled when we couldn't
-/// build one (e.g. no character name).
-fn chat_button(ui: &mut egui::Ui, label: &str, command: Option<String>, copied: &mut Option<String>) {
+/// An icon button that copies a chat `command` to the clipboard. `name` is the
+/// hover label. Disabled (greyed) when we couldn't build a command (e.g. the
+/// listing has no character name).
+fn chat_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    name: &str,
+    command: Option<String>,
+    copied: &mut Option<String>,
+) {
     match command {
         Some(cmd) => {
-            if ui.button(label).on_hover_text(&cmd).clicked() {
+            if ui.button(icon).on_hover_text(name).clicked() {
                 copy_to_clipboard(&cmd);
                 *copied = Some(cmd);
             }
         }
         None => {
-            ui.add_enabled(false, egui::Button::new(label))
-                .on_hover_text("no character name in this listing");
+            ui.add_enabled(false, egui::Button::new(icon))
+                .on_hover_text(format!("{name} (no character name)"));
         }
     }
 }
