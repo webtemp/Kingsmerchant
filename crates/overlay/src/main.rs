@@ -10,7 +10,8 @@
 //! keyboard focus, and prices the item copied by the in-game Ctrl+C. Cursor
 //! positioning, Alt-drag, and Esc-dismiss land in later increments.
 //!
-//! Run: `POE_LEAGUE="Runes of Aldur" cargo run -p overlay`.
+//! Run: `cargo run -p overlay` (league comes from `~/.config/poe2ddd/
+//! config.json`; set `POE_LEAGUE` only to override for one run).
 
 use std::num::NonZeroU32;
 use std::ptr::NonNull;
@@ -86,10 +87,9 @@ fn main() -> Result<()> {
     ui::install_loaders(&egui_ctx);
     ui::configure_style(&egui_ctx);
 
-    let league = ui::league_from_env();
     let (hk_tx, hk_rx) = channel::<Hotkey>();
     ui::spawn_hotkey_watcher(egui_ctx.clone(), hk_tx);
-    let quick = ui::build_app(league, hk_rx).context("building price-check app")?;
+    let quick = ui::build_app(hk_rx).context("building price-check app")?;
 
     // Wayland side.
     let conn = Connection::connect_to_env().context("connect to Wayland")?;

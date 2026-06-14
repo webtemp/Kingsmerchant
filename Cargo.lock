@@ -3370,6 +3370,8 @@ dependencies = [
  "image",
  "parser",
  "platform-linux",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

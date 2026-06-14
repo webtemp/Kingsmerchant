@@ -7,10 +7,13 @@
 //! the chat command to the clipboard (we can't type into POE2 on Wayland, so
 //! the user pastes — PRD §4.6, §9.1).
 
+pub mod config;
+
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use config::Config;
 use eframe::egui;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
@@ -69,7 +72,8 @@ pub struct QuickModeApp {
     // Held to keep the runtime alive for the app's lifetime.
     rt: tokio::runtime::Runtime,
     client: Arc<Client>,
-    league: String,
+    /// Persisted settings; rewritten when the league selector changes.
+    config: Config,
     /// Leagues offered in the top-right selector (PRD §4.8).
     leagues: Vec<League>,
     item_text: String,
@@ -97,7 +101,7 @@ impl QuickModeApp {
     pub fn new(
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
-        league: String,
+        config: Config,
         leagues: Vec<League>,
         hotkey_rx: Receiver<Hotkey>,
     ) -> Self {
@@ -105,7 +109,7 @@ impl QuickModeApp {
         QuickModeApp {
             rt,
             client,
-            league,
+            config,
             leagues,
             item_text: String::new(),
             view: View::Item,
@@ -317,7 +321,7 @@ impl QuickModeApp {
             Phase::Done(pc) => {
                 show_results(ui, pc, &mut copied);
                 ui.add_space(6.0);
-                let url = trade_url(&self.league, &pc.query_id);
+                let url = trade_url(&self.config.league, &pc.query_id);
                 if ui
                     .button("🌐 Open on trade site")
                     .on_hover_text(&url)
@@ -346,10 +350,10 @@ impl QuickModeApp {
     /// league. Falls back to a plain label if the leagues list failed to load.
     fn league_selector(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if self.leagues.is_empty() {
-            ui.label(RichText::new(&self.league).weak());
+            ui.label(RichText::new(&self.config.league).weak());
             return;
         }
-        let current = self.league.clone();
+        let current = self.config.league.clone();
         let mut chosen = current.clone();
         egui::ComboBox::from_id_salt("league-selector")
             .selected_text(&current)
@@ -359,7 +363,11 @@ impl QuickModeApp {
                 }
             });
         if chosen != current {
-            self.league = chosen.clone();
+            self.config.league = chosen.clone();
+            // Persist the choice so it sticks across restarts (no env var).
+            if let Err(e) = self.config.save() {
+                tracing::warn!(error = %e, "could not save config");
+            }
             self.client.set_league(chosen);
             // Re-price the currently loaded item under the new league.
             if parser::parse_item(&self.item_text).is_ok() {
@@ -688,15 +696,25 @@ pub fn configure_style(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
-/// The trade league for this session (`POE_LEAGUE`, default `Runes of Aldur`).
-pub fn league_from_env() -> String {
-    std::env::var("POE_LEAGUE").unwrap_or_else(|_| "Runes of Aldur".to_string())
-}
+/// Build a ready-to-render [`QuickModeApp`]: load settings, spin up a tokio
+/// runtime, fetch the live trade definitions + leagues, and construct the API
+/// client. Shared by the eframe window ([`run`]) and the layer-shell overlay.
+///
+/// The league comes from `config.json` (PRD §4.8), so no env var is needed.
+/// `POE_LEAGUE` / `POE_REALM`, if set, still override for that run (handy for
+/// testing) but are not persisted.
+pub fn build_app(hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<QuickModeApp> {
+    let mut config = Config::load();
+    if let Ok(league) = std::env::var("POE_LEAGUE") {
+        if !league.is_empty() {
+            config.league = league;
+        }
+    }
+    if let Ok(realm) = std::env::var("POE_REALM") {
+        config.realm = Some(realm);
+    }
+    tracing::info!(path = %config::Config::path().display(), league = %config.league, "loaded config");
 
-/// Build a ready-to-render [`QuickModeApp`]: spin up a tokio runtime, fetch the
-/// live trade definitions, and construct the API client. Shared by the eframe
-/// window ([`run`]) and the layer-shell overlay.
-pub fn build_app(league: String, hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<QuickModeApp> {
     let rt = tokio::runtime::Runtime::new()?;
     let transport = ReqwestTransport::new(USER_AGENT)?;
     tracing::info!("fetching trade definitions…");
@@ -712,18 +730,16 @@ pub fn build_app(league: String, hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<
             Vec::new()
         });
 
-    let mut config = ClientConfig::new(&league);
-    config.realm = std::env::var("POE_REALM").ok();
-    let client = Arc::new(TradeClient::new(transport, config, stats, items));
+    let mut client_config = ClientConfig::new(&config.league);
+    client_config.realm = config.realm.clone();
+    let client = Arc::new(TradeClient::new(transport, client_config, stats, items));
 
-    Ok(QuickModeApp::new(rt, client, league, leagues, hotkey_rx))
+    Ok(QuickModeApp::new(rt, client, config, leagues, hotkey_rx))
 }
 
 /// Build the client (fetching live definitions) and run the plain eframe window
 /// (Phase 3). The Phase 4 overlay is a separate entry point (`overlay` crate).
 pub fn run() -> anyhow::Result<()> {
-    let league = league_from_env();
-
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 720.0])
@@ -740,7 +756,7 @@ pub fn run() -> anyhow::Result<()> {
             configure_style(&cc.egui_ctx);
             let (hk_tx, hk_rx) = channel::<Hotkey>();
             spawn_hotkey_watcher(cc.egui_ctx.clone(), hk_tx);
-            let app = build_app(league, hk_rx)
+            let app = build_app(hk_rx)
                 .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!("{e:#}")))?;
             Ok(Box::new(app))
         }),
