@@ -5,6 +5,7 @@ members = [
     "crates/parser",
     "crates/platform-linux",
     "crates/trade-api",
+    "crates/ui",
 ]
 
 [workspace.package]

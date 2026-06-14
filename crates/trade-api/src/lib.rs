@@ -27,7 +27,7 @@ pub mod query;
 pub mod rate_limit;
 pub mod stat_text;
 
-pub use client::{ClientConfig, PriceCheck, TradeClient, FETCH_BATCH};
+pub use client::{fetch_definitions, ClientConfig, PriceCheck, TradeClient, FETCH_BATCH};
 pub use definitions::{ItemDefinitions, MappedStat, StatDefinitions};
 pub use error::Error;
 pub use http::{HttpRequest, HttpResponse, HttpTransport, Method, ReqwestTransport};

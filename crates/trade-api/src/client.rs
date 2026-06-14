@@ -203,6 +203,32 @@ impl<T: HttpTransport> TradeClient<T> {
     }
 }
 
+/// Fetch the live `trade2/data/stats` + `data/items` snapshots (PRD §4.3,
+/// refreshed on app start). Anonymous; no auth required.
+pub async fn fetch_definitions<T: HttpTransport>(
+    transport: &T,
+    base_url: &str,
+) -> Result<(StatDefinitions, ItemDefinitions), Error> {
+    let stats_json = get_body(transport, &format!("{base_url}/api/trade2/data/stats")).await?;
+    let items_json = get_body(transport, &format!("{base_url}/api/trade2/data/items")).await?;
+    Ok((
+        StatDefinitions::from_json(&stats_json)?,
+        ItemDefinitions::from_json(&items_json)?,
+    ))
+}
+
+async fn get_body<T: HttpTransport>(transport: &T, url: &str) -> Result<String, Error> {
+    let resp = transport
+        .execute(HttpRequest {
+            method: Method::Get,
+            url: url.to_string(),
+            headers: Vec::new(),
+            body: None,
+        })
+        .await?;
+    ok_or_api_error(resp).map(|r| r.body)
+}
+
 /// Percent-encode a URL path segment (RFC 3986 unreserved chars pass through).
 /// League ids like `Runes of Aldur` carry spaces that would otherwise produce
 /// an invalid URL.
