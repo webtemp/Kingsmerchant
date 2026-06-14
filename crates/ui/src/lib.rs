@@ -13,12 +13,14 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use std::collections::HashSet;
+
 use config::Config;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
-    fetch_definitions, fetch_leagues, ClientConfig, League, PriceCheck, QueryOptions,
-    ReqwestTransport, ResultEntry, TradeClient,
+    fetch_definitions, fetch_leagues, ClientConfig, League, ListingStatus, PriceCheck, PriceFilter,
+    QueryOptions, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -85,6 +87,79 @@ enum View {
     Text,
 }
 
+/// One toggleable stat filter in the detailed panel (PRD §4.7), built from the
+/// item's mapped stats. `min`/`max` are text buffers (blank = unbounded) so the
+/// numeric fields can be cleared.
+struct StatFilterRow {
+    id: String,
+    /// Human-ish label (the canonical stat template, e.g. `#% to Fire Resistance`).
+    label: String,
+    enabled: bool,
+    min: String,
+    max: String,
+}
+
+impl StatFilterRow {
+    fn selection(&self) -> StatSelection {
+        StatSelection {
+            id: self.id.clone(),
+            enabled: self.enabled,
+            min: parse_num(&self.min),
+            max: parse_num(&self.max),
+        }
+    }
+}
+
+/// The detailed-mode price-range filter inputs (PRD §4.7).
+#[derive(Default)]
+struct PriceFilterState {
+    min: String,
+    max: String,
+    /// Currency id (`exalted`, …) or empty for "any".
+    currency: String,
+}
+
+impl PriceFilterState {
+    fn to_filter(&self) -> PriceFilter {
+        PriceFilter {
+            min: parse_num(&self.min),
+            max: parse_num(&self.max),
+            currency: if self.currency.is_empty() {
+                None
+            } else {
+                Some(self.currency.clone())
+            },
+        }
+    }
+}
+
+/// Currencies offered in the price-range dropdown (id, label). Empty id = any.
+const PRICE_CURRENCIES: &[(&str, &str)] = &[
+    ("", "any"),
+    ("exalted", "exalted"),
+    ("divine", "divine"),
+    ("chaos", "chaos"),
+];
+
+/// Label for the price-currency dropdown's current id.
+fn currency_label(id: &str) -> &str {
+    PRICE_CURRENCIES
+        .iter()
+        .find(|(cid, _)| *cid == id)
+        .map(|(_, label)| *label)
+        .unwrap_or("any")
+}
+
+/// Parse a numeric filter buffer; blank or unparseable → no bound.
+fn parse_num(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        t.parse().ok()
+    }
+}
+
 pub struct QuickModeApp {
     // Held to keep the runtime alive for the app's lifetime.
     rt: tokio::runtime::Runtime,
@@ -101,6 +176,10 @@ pub struct QuickModeApp {
     item: Option<Item>,
     /// Icon URL of the priced item, learned from the search results.
     icon_url: Option<String>,
+    /// Detailed-mode stat filter rows (rebuilt on a fresh detailed check).
+    filters: Vec<StatFilterRow>,
+    /// Detailed-mode price-range filter.
+    price_filter: PriceFilterState,
     phase: Phase,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -140,6 +219,8 @@ impl QuickModeApp {
             mode: Mode::Quick,
             item: None,
             icon_url: None,
+            filters: Vec::new(),
+            price_filter: PriceFilterState::default(),
             phase: Phase::Idle,
             tx,
             rx,
@@ -189,6 +270,10 @@ impl QuickModeApp {
         std::mem::take(&mut self.close_requested)
     }
 
+    /// Start a *fresh* price check from `item_text` (a new Ctrl+C, the manual
+    /// button, or a paste). In detailed mode this rebuilds the filter panel from
+    /// the item and resets the price filter; a filter-driven re-query goes
+    /// through [`rerun_query`](Self::rerun_query) instead so toggles survive.
     fn start_price_check(&mut self, ctx: &egui::Context) {
         let item = match parser::parse_item(&self.item_text) {
             Ok(item) => item,
@@ -198,21 +283,69 @@ impl QuickModeApp {
                 return;
             }
         };
-        self.item = Some(item.clone());
         self.icon_url = None;
-        self.phase = Phase::Loading;
+        if self.mode == Mode::Detailed {
+            self.filters = self.build_filter_rows(&item);
+            self.price_filter = PriceFilterState::default();
+        }
+        self.item = Some(item.clone());
+        self.spawn_query(ctx, item);
+    }
 
+    /// Re-run the search for the already-loaded item, keeping the current filter
+    /// state (used by the detailed panel and by a league switch).
+    fn rerun_query(&mut self, ctx: &egui::Context) {
+        if let Some(item) = self.item.clone() {
+            self.spawn_query(ctx, item);
+        }
+    }
+
+    /// Spawn the background search/fetch for `item`, picking the quick or
+    /// detailed query per the current mode.
+    fn spawn_query(&mut self, ctx: &egui::Context, item: Item) {
+        self.phase = Phase::Loading;
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let detailed = self.mode == Mode::Detailed;
+        let selections: Vec<StatSelection> = self.filters.iter().map(StatFilterRow::selection).collect();
+        let price = self.price_filter.to_filter();
         self.rt.spawn(async move {
-            let result = client
-                .price_check(&item, QueryOptions::default(), SAMPLE)
-                .await
-                .map_err(|e| e.to_string());
+            let result = if detailed {
+                client
+                    .price_check_detailed(&item, ListingStatus::Online, &selections, &price, SAMPLE)
+                    .await
+            } else {
+                client.price_check(&item, QueryOptions::default(), SAMPLE).await
+            }
+            .map_err(|e| e.to_string());
             let _ = tx.send(Msg::Result(Box::new(result)));
             ctx.request_repaint();
         });
+    }
+
+    /// Enumerate the item's mapped stats into toggleable filter rows, deduped by
+    /// stat id, with the rolled value pre-filled as the min (blank max).
+    fn build_filter_rows(&self, item: &Item) -> Vec<StatFilterRow> {
+        let stats = self.client.stats();
+        let mut rows = Vec::new();
+        let mut seen = HashSet::new();
+        for modifier in &item.modifiers {
+            for mapped in stats.map_modifier(modifier) {
+                if !seen.insert(mapped.id.clone()) {
+                    continue;
+                }
+                let min = mapped.filter_value().map(fmt_amount).unwrap_or_default();
+                rows.push(StatFilterRow {
+                    id: mapped.id,
+                    label: mapped.template,
+                    enabled: false,
+                    min,
+                    max: String::new(),
+                });
+            }
+        }
+        rows
     }
 
     fn read_clipboard(&mut self) {
@@ -361,6 +494,15 @@ impl QuickModeApp {
             }
         }
 
+        // Detailed mode: the filter panel (PRD §4.7), between the item and the
+        // listings. "Apply" re-runs the search keeping the toggled filters.
+        if self.mode == Mode::Detailed {
+            ui.add_space(6.0);
+            if self.filter_panel(ui) {
+                self.rerun_query(&ctx);
+            }
+        }
+
         ui.add_space(6.0);
 
         if matches!(self.phase, Phase::Loading) {
@@ -435,11 +577,90 @@ impl QuickModeApp {
                 tracing::warn!(error = %e, "could not save config");
             }
             self.client.set_league(chosen);
-            // Re-price the currently loaded item under the new league.
-            if parser::parse_item(&self.item_text).is_ok() {
-                self.start_price_check(ctx);
-            }
+            // Re-price the currently loaded item under the new league, keeping
+            // any detailed-mode filters in place.
+            self.rerun_query(ctx);
         }
+    }
+
+    /// The detailed-mode filter panel: a price range plus a toggleable row per
+    /// mapped stat (PRD §4.7). Returns `true` when the user asked to re-run the
+    /// search (the Apply button).
+    fn filter_panel(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut requery = false;
+        egui::CollapsingHeader::new(RichText::new("🔍 Filters").strong())
+            .default_open(true)
+            .show(ui, |ui| {
+                // Price range (PRD §4.7 price-range filter).
+                ui.horizontal(|ui| {
+                    ui.label("Price");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.price_filter.min)
+                            .hint_text("min")
+                            .desired_width(48.0),
+                    );
+                    ui.label("–");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.price_filter.max)
+                            .hint_text("max")
+                            .desired_width(48.0),
+                    );
+                    egui::ComboBox::from_id_salt("price-currency")
+                        .selected_text(currency_label(&self.price_filter.currency))
+                        .show_ui(ui, |ui| {
+                            for (id, label) in PRICE_CURRENCIES {
+                                ui.selectable_value(
+                                    &mut self.price_filter.currency,
+                                    id.to_string(),
+                                    *label,
+                                );
+                            }
+                        });
+                });
+
+                ui.add_space(4.0);
+                if self.filters.is_empty() {
+                    ui.label(
+                        RichText::new("No mapped stats to filter on this item.")
+                            .weak()
+                            .italics(),
+                    );
+                } else {
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            egui::Grid::new("stat-filters")
+                                .num_columns(4)
+                                .spacing([6.0, 6.0])
+                                .striped(true)
+                                .show(ui, |ui| {
+                                    for row in &mut self.filters {
+                                        ui.checkbox(&mut row.enabled, "");
+                                        ui.label(
+                                            RichText::new(&row.label).color(AFFIX_BLUE).small(),
+                                        );
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut row.min)
+                                                .hint_text("min")
+                                                .desired_width(46.0),
+                                        );
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut row.max)
+                                                .hint_text("max")
+                                                .desired_width(46.0),
+                                        );
+                                        ui.end_row();
+                                    }
+                                });
+                        });
+                }
+
+                ui.add_space(4.0);
+                if ui.button("🔄 Apply filters").clicked() {
+                    requery = true;
+                }
+            });
+        requery
     }
 }
 
