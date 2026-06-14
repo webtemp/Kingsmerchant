@@ -35,8 +35,12 @@ pub struct Status {
 
 impl Status {
     pub fn online() -> Self {
+        Status::new("online")
+    }
+
+    pub fn new(option: impl Into<String>) -> Self {
         Status {
-            option: "online".to_string(),
+            option: option.into(),
         }
     }
 }

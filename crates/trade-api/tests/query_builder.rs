@@ -4,7 +4,9 @@
 //! directly.
 
 use parser::parse_item;
-use trade_api::{build_search_query, category_for, ItemDefinitions, QueryOptions, StatDefinitions};
+use trade_api::{
+    build_search_query, category_for, ItemDefinitions, ListingStatus, QueryOptions, StatDefinitions,
+};
 
 fn stats() -> StatDefinitions {
     StatDefinitions::from_json(include_str!("fixtures/api/data_stats.json")).unwrap()
@@ -117,6 +119,7 @@ fn enabled_stat_filters_carry_min_values() {
     let opts = QueryOptions {
         include_stats: true,
         stats_disabled: false,
+        ..QueryOptions::default()
     };
     let req = build_search_query(&item, &stats(), &items(), opts);
     let filters = &req.query.stats[0].filters;
@@ -131,11 +134,26 @@ fn enabled_stat_filters_carry_min_values() {
 }
 
 #[test]
+fn securable_status_selects_instant_buyout_listings() {
+    let item = parse_item(RARE_RING).unwrap();
+    let opts = QueryOptions {
+        status: ListingStatus::Securable,
+        ..QueryOptions::default()
+    };
+    let req = build_search_query(&item, &stats(), &items(), opts);
+    assert_eq!(req.query.status.option, "securable");
+    // Default stays plain online.
+    let online = build_search_query(&item, &stats(), &items(), QueryOptions::default());
+    assert_eq!(online.query.status.option, "online");
+}
+
+#[test]
 fn stats_can_be_omitted_entirely() {
     let item = parse_item(RARE_RING).unwrap();
     let opts = QueryOptions {
         include_stats: false,
         stats_disabled: true,
+        ..QueryOptions::default()
     };
     let req = build_search_query(&item, &stats(), &items(), opts);
     assert!(req.query.stats.is_empty());

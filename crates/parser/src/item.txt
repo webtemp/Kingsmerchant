@@ -1,0 +1,30 @@
+Item Class: Sceptres
+Rarity: Rare
+Dire Grinder
+Stoic Sceptre
+--------
+Quality: +20% (augmented)
+Spirit: 100
+--------
+Requires: Level 52, 29 Str, 72 Int
+--------
+Sockets: S 
+--------
+Item Level: 55
+--------
+Allies in your Presence deal 40% increased Damage (rune)
+--------
+Grants Skill: Level 13 Discipline
+--------
+{ Prefix Modifier "Cobalt" (Tier: 10) — Mana }
++20(15-24) to maximum Mana
+{ Prefix Modifier "Snapping" (Tier: 7) — Damage, Elemental, Lightning, Attack }
+Allies in your Presence deal 1 to 19(16-22) added Attack Lightning Damage
+{ Prefix Modifier "Persuasive" (Tier: 4) — Damage }
+Allies in your Presence deal 66(65-74)% increased Damage
+{ Suffix Modifier "of the Philosopher" (Tier: 4) — Attribute }
++24(21-24) to Intelligence
+{ Suffix Modifier "of the Overseer" (Tier: 2) — Minion, Gem }
++3 to Level of all Minion Skills
+{ Desecrated Suffix Modifier "of Mastery" (Tier: 2) — Attack, Speed }
+Allies in your Presence have 12(11-13)% increased Attack Speed

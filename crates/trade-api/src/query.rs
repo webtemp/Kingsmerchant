@@ -13,9 +13,38 @@ use crate::model::{
     TypeFilterFields, TypeFilters,
 };
 
+/// Which listings a search should return, by seller/trade availability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListingStatus {
+    /// Seller online (default).
+    #[default]
+    Online,
+    /// "Instant buyout" — listings buyable through GGG's automated secure
+    /// trade, the ones the trade site shows a Teleport button for.
+    Securable,
+    /// Available to trade (online or securable).
+    Available,
+    /// Any listing, online or not.
+    Any,
+}
+
+impl ListingStatus {
+    /// The trade API `status.option` string.
+    pub fn as_option(self) -> &'static str {
+        match self {
+            ListingStatus::Online => "online",
+            ListingStatus::Securable => "securable",
+            ListingStatus::Available => "available",
+            ListingStatus::Any => "any",
+        }
+    }
+}
+
 /// Knobs for query construction.
 #[derive(Debug, Clone, Copy)]
 pub struct QueryOptions {
+    /// Which listings to return (online / instant-buyout / …).
+    pub status: ListingStatus,
     /// Emit mapped affix rolls as stat filters at all.
     pub include_stats: bool,
     /// Emit those stat filters disabled (toggleable later) rather than active.
@@ -25,6 +54,7 @@ pub struct QueryOptions {
 impl Default for QueryOptions {
     fn default() -> Self {
         QueryOptions {
+            status: ListingStatus::Online,
             include_stats: true,
             stats_disabled: true,
         }
@@ -71,7 +101,7 @@ pub fn build_search_query(
 
     SearchRequest {
         query: Query {
-            status: Status::online(),
+            status: Status::new(opts.status.as_option()),
             type_,
             name,
             stats: stat_groups,
