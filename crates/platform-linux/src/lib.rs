@@ -7,5 +7,5 @@
 pub mod clipboard;
 pub mod input;
 
-pub use clipboard::read_clipboard_text;
+pub use clipboard::{read_clipboard_text, write_clipboard_text};
 pub use input::{watch_hotkeys, HotkeyEvent};

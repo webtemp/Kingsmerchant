@@ -87,6 +87,8 @@ pub struct QuickModeApp {
     rx: Receiver<Msg>,
     /// Item text pushed in by the global-hotkey watcher (Ctrl+C in game).
     hotkey_rx: Receiver<String>,
+    /// Last "copied to clipboard" note, shown as feedback under the listings.
+    copy_status: Option<String>,
 }
 
 impl QuickModeApp {
@@ -109,6 +111,7 @@ impl QuickModeApp {
             tx,
             rx,
             hotkey_rx,
+            copy_status: None,
         }
     }
 
@@ -243,6 +246,7 @@ impl eframe::App for QuickModeApp {
             }
             ui.separator();
 
+            let mut copied: Option<String> = None;
             match &self.phase {
                 Phase::Idle => {
                     ui.label(RichText::new("Press 💰 Price check.").weak().italics());
@@ -251,7 +255,18 @@ impl eframe::App for QuickModeApp {
                 Phase::Failed(e) => {
                     ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
                 }
-                Phase::Done(pc) => show_results(ui, pc),
+                Phase::Done(pc) => show_results(ui, pc, &mut copied),
+            }
+            if let Some(label) = copied {
+                self.copy_status = Some(label);
+            }
+
+            if let Some(status) = &self.copy_status {
+                ui.add_space(4.0);
+                ui.colored_label(
+                    Color32::from_rgb(0x4c, 0xd1, 0x37),
+                    format!("✓ Copied {status} — paste into POE2 chat (Enter)"),
+                );
             }
         });
     }
@@ -370,7 +385,7 @@ fn thin_separator(ui: &mut egui::Ui) {
     ui.add_space(2.0);
 }
 
-fn show_results(ui: &mut egui::Ui, pc: &PriceCheck) {
+fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>) {
     match pc.median_price() {
         Some(p) => {
             ui.label(
@@ -403,13 +418,13 @@ fn show_results(ui: &mut egui::Ui, pc: &PriceCheck) {
         .spacing([10.0, 10.0])
         .show(ui, |ui| {
             for entry in cheapest {
-                listing_row(ui, entry);
+                listing_row(ui, entry, copied);
                 ui.end_row();
             }
         });
 }
 
-fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry) {
+fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<String>) {
     let listing = &entry.listing;
 
     let price = listing
@@ -433,33 +448,43 @@ fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry) {
     });
 
     let character = listing.account.last_character_name.clone();
+    let seller = listing.account.name.clone();
     ui.horizontal(|ui| {
         if let Some(whisper) = &listing.whisper {
             if ui.button("Whisper").on_hover_text(whisper).clicked() {
-                ui.ctx().copy_text(whisper.clone());
+                copy_to_clipboard(whisper);
+                *copied = Some(format!("whisper to {seller}"));
             }
         } else {
             ui.add_enabled(false, egui::Button::new("Whisper"));
         }
-        chat_button(ui, "Invite", character.as_deref().map(|c| format!("/invite {c}")));
-        chat_button(ui, "Hideout", character.as_deref().map(|c| format!("/hideout {c}")));
-        chat_button(ui, "Trade", character.as_deref().map(|c| format!("/tradewith {c}")));
+        chat_button(ui, "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
+        chat_button(ui, "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
+        chat_button(ui, "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
     });
 }
 
 /// A button that copies `command` to the clipboard, disabled when we couldn't
 /// build one (e.g. no character name).
-fn chat_button(ui: &mut egui::Ui, label: &str, command: Option<String>) {
+fn chat_button(ui: &mut egui::Ui, label: &str, command: Option<String>, copied: &mut Option<String>) {
     match command {
         Some(cmd) => {
             if ui.button(label).on_hover_text(&cmd).clicked() {
-                ui.ctx().copy_text(cmd);
+                copy_to_clipboard(&cmd);
+                *copied = Some(cmd);
             }
         }
         None => {
             ui.add_enabled(false, egui::Button::new(label))
                 .on_hover_text("no character name in this listing");
         }
+    }
+}
+
+/// Write to the X11 clipboard (where POE2 will paste from), logging on failure.
+fn copy_to_clipboard(text: &str) {
+    if let Err(e) = platform_linux::write_clipboard_text(text) {
+        tracing::warn!(error = %e, "clipboard write failed");
     }
 }
 
@@ -499,7 +524,7 @@ fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<String>) {
         tracing::info!("listening for Ctrl+C / Ctrl+Alt+C in game");
         let mut last_seen = platform_linux::read_clipboard_text().unwrap_or(None);
         for _event in hotkeys {
-            if let Some(text) = wait_for_new_clipboard(&last_seen) {
+            if let Some(text) = wait_for_new_item(&last_seen) {
                 last_seen = Some(text.clone());
                 if tx.send(text).is_err() {
                     return; // UI gone
@@ -510,13 +535,18 @@ fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<String>) {
     });
 }
 
-/// Poll the clipboard until it differs from `last_seen` or the timeout hits.
-fn wait_for_new_clipboard(last_seen: &Option<String>) -> Option<String> {
+/// Poll the clipboard until it both *changed* and *parses as a POE2 item*, or
+/// the timeout hits (PRD §4.2). Gating on "is an item" — not merely "changed" —
+/// avoids grabbing the transient/stale clipboard value the X11↔Wayland bridge
+/// can briefly expose before POE2 finishes writing (which made the first Ctrl+C
+/// fail while the second worked).
+fn wait_for_new_item(last_seen: &Option<String>) -> Option<String> {
     let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
     loop {
-        match platform_linux::read_clipboard_text() {
-            Ok(Some(text)) if Some(&text) != last_seen.as_ref() => return Some(text),
-            _ => {}
+        if let Ok(Some(text)) = platform_linux::read_clipboard_text() {
+            if Some(&text) != last_seen.as_ref() && parser::parse_item(&text).is_ok() {
+                return Some(text);
+            }
         }
         if Instant::now() >= deadline {
             return None;

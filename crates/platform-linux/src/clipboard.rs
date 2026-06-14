@@ -25,7 +25,8 @@
 //! Implementation: shell out to `xclip`, consistent with the PRD's decision to
 //! shell out to `xdotool` for window position (§6). `DISPLAY` is inherited.
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 use anyhow::Context;
 
@@ -50,4 +51,34 @@ pub fn read_clipboard_text() -> anyhow::Result<Option<String>> {
     }
 
     Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+/// Write UTF-8 text to the X11 CLIPBOARD selection (for the Whisper / Invite /
+/// … buttons, PRD §4.6).
+///
+/// This deliberately breaks the "read only, never write" rule above — but it's
+/// the right tradeoff: POE2 reads the **X11** clipboard, so we must write there
+/// (egui's own clipboard goes to Wayland and KWin's flaky X11 bridge usually
+/// fails to deliver it to the game). The ownership concern is bounded: this is
+/// a one-shot user action right before pasting into chat, and POE2 reclaims the
+/// selection the moment it copies the next item.
+///
+/// `xclip -in` forks a helper that serves the selection and then returns, so
+/// this call doesn't block.
+pub fn write_clipboard_text(text: &str) -> anyhow::Result<()> {
+    let mut child = Command::new("xclip")
+        .args(["-selection", "clipboard", "-in"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("failed to run `xclip` for write (is it installed?)")?;
+    child
+        .stdin
+        .take()
+        .context("xclip stdin unavailable")?
+        .write_all(text.as_bytes())
+        .context("failed to write to xclip stdin")?;
+    child.wait().context("xclip did not exit cleanly")?;
+    Ok(())
 }
