@@ -33,6 +33,10 @@ pub enum HotkeyEvent {
     /// no keyboard focus (so Wayland never delivers it the key). Observe-only:
     /// POE2 still sees Escape too.
     Close,
+    /// Ctrl / Alt state changed. The overlay is visible only while Ctrl is held
+    /// and drags on Ctrl+Alt — but with no keyboard focus it can't read
+    /// modifiers from Wayland, so we report them from evdev.
+    Modifiers { ctrl: bool, alt: bool },
 }
 
 /// Start watching every connected keyboard for the price-check hotkeys.
@@ -120,8 +124,18 @@ fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>) {
             // value: 0 = release, 1 = press, 2 = autorepeat.
             let pressed = event.value() != 0;
             match key {
-                Key::KEY_LEFTCTRL | Key::KEY_RIGHTCTRL => ctrl = pressed,
-                Key::KEY_LEFTALT | Key::KEY_RIGHTALT => alt = pressed,
+                Key::KEY_LEFTCTRL | Key::KEY_RIGHTCTRL if ctrl != pressed => {
+                    ctrl = pressed;
+                    if tx.send(HotkeyEvent::Modifiers { ctrl, alt }).is_err() {
+                        return;
+                    }
+                }
+                Key::KEY_LEFTALT | Key::KEY_RIGHTALT if alt != pressed => {
+                    alt = pressed;
+                    if tx.send(HotkeyEvent::Modifiers { ctrl, alt }).is_err() {
+                        return;
+                    }
+                }
                 Key::KEY_ESC if event.value() == 1 => {
                     if tx.send(HotkeyEvent::Close).is_err() {
                         return;

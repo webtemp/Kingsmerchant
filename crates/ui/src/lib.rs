@@ -52,6 +52,9 @@ pub enum Hotkey {
     Missed,
     /// Escape was pressed — dismiss the popup.
     Close,
+    /// Ctrl / Alt held-state changed (from evdev, since the overlay has no
+    /// keyboard focus).
+    Mods { ctrl: bool, alt: bool },
 }
 
 #[derive(Default)]
@@ -97,6 +100,10 @@ pub struct QuickModeApp {
     pop_requested: bool,
     /// Set when Escape was pressed — the overlay reads this to hide the popup.
     close_requested: bool,
+    /// Live Ctrl / Alt held-state (from evdev). The overlay reads these to keep
+    /// the popup visible only while Ctrl is held, and to gate Ctrl+Alt drag.
+    ctrl_held: bool,
+    alt_held: bool,
 }
 
 impl QuickModeApp {
@@ -125,7 +132,19 @@ impl QuickModeApp {
             hint: None,
             pop_requested: false,
             close_requested: false,
+            ctrl_held: false,
+            alt_held: false,
         }
+    }
+
+    /// Whether Ctrl is currently held (from the evdev watcher).
+    pub fn ctrl_held(&self) -> bool {
+        self.ctrl_held
+    }
+
+    /// Whether Alt is currently held (from the evdev watcher).
+    pub fn alt_held(&self) -> bool {
+        self.alt_held
     }
 
     /// Consume a pending "pop the overlay" request raised by the last Ctrl+C.
@@ -202,6 +221,10 @@ impl QuickModeApp {
                 }
                 Hotkey::Close => {
                     self.close_requested = true;
+                }
+                Hotkey::Mods { ctrl, alt } => {
+                    self.ctrl_held = ctrl;
+                    self.alt_held = alt;
                 }
             }
         }
@@ -642,6 +665,8 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
             let outcome = match event {
                 // Escape dismisses — no clipboard involved.
                 HotkeyEvent::Close => Hotkey::Close,
+                // Ctrl/Alt state forwarded straight through.
+                HotkeyEvent::Modifiers { ctrl, alt } => Hotkey::Mods { ctrl, alt },
                 // A copy combo: wait for POE2 to write the item.
                 HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
                     let start = Instant::now();

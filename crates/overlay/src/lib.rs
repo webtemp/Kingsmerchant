@@ -135,6 +135,10 @@ pub fn run() -> Result<()> {
         height: INITIAL_HEIGHT,
         desired_height: INITIAL_HEIGHT,
         current_output: None,
+        margin_left: 0,
+        margin_top: 0,
+        dragged: false,
+        drag_grab: None,
         shown: false,
         input_region: None,
         applied_input: None,
@@ -175,6 +179,13 @@ struct App {
     desired_height: u32,
     /// The output the surface is on (from `surface_enter`), used to center it.
     current_output: Option<wl_output::WlOutput>,
+    /// Current top/left margins (the surface position).
+    margin_left: i32,
+    margin_top: i32,
+    /// Whether the user has Ctrl+Alt-dragged this show (suppresses centering).
+    dragged: bool,
+    /// Grab point (surface-local) while a Ctrl+Alt drag is in progress.
+    drag_grab: Option<egui::Pos2>,
     /// Whether the popup is visible. Starts hidden; a valid Ctrl+C shows it,
     /// Escape hides it.
     shown: bool,
@@ -267,6 +278,15 @@ impl App {
         if self.quick.take_close_request() {
             self.shown = false;
         }
+        // The popup lives only while Ctrl is held — release Ctrl hides it.
+        if !self.quick.ctrl_held() {
+            self.shown = false;
+        }
+        if !self.shown {
+            // Forget any drag so the next pop re-centers (no position memory).
+            self.dragged = false;
+            self.drag_grab = None;
+        }
 
         // Lay the content out in a tall space so we can measure its natural
         // height, then shrink the surface to fit (PRD §4.5 "small popup").
@@ -306,15 +326,26 @@ impl App {
         });
 
         // Auto-height: resize the surface to the measured content (one-frame
-        // settle; the configure that follows resizes the GL surface), and keep
-        // it centered on the output for the size we're asking for.
+        // settle; the configure that follows resizes the GL surface), then place
+        // it: follow a Ctrl+Alt drag, else stay where dragged, else center.
         if shown && measured > 0.0 {
             let want = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
             if want != self.desired_height {
                 self.desired_height = want;
                 self.layer.set_size(self.width, want);
             }
-            self.center(self.width, self.desired_height);
+            if let Some(grab) = self.drag_grab {
+                // Move so the grabbed point stays under the cursor.
+                let delta = self.pointer_pos - grab;
+                self.margin_left = (self.margin_left + delta.x.round() as i32).max(0);
+                self.margin_top = (self.margin_top + delta.y.round() as i32).max(0);
+                self.dragged = true;
+                self.apply_margin();
+            } else if self.dragged {
+                self.apply_margin();
+            } else {
+                self.center(self.width, self.desired_height);
+            }
         }
 
         self.apply_input_region();
@@ -363,9 +394,14 @@ impl App {
     /// Center a `w`×`h` surface on its output by setting top/left margins.
     fn center(&mut self, w: u32, h: u32) {
         let (ow, oh) = self.output_size();
-        let left = ((ow - w as i32) / 2).max(0);
-        let top = ((oh - h as i32) / 2).max(0);
-        self.layer.set_margin(top, 0, 0, left);
+        self.margin_left = ((ow - w as i32) / 2).max(0);
+        self.margin_top = ((oh - h as i32) / 2).max(0);
+        self.apply_margin();
+    }
+
+    /// Push the current margins to the surface (committed at end of frame).
+    fn apply_margin(&self) {
+        self.layer.set_margin(self.margin_top, 0, 0, self.margin_left);
     }
 
     /// Logical size of the output the surface is on (falls back to the first
@@ -459,13 +495,20 @@ impl PointerHandler for App {
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     self.pointer_pos = pos;
-                    self.events.push(egui::Event::PointerMoved(pos));
+                    // While dragging, the cursor drives the move, not egui.
+                    if self.drag_grab.is_none() {
+                        self.events.push(egui::Event::PointerMoved(pos));
+                    }
                 }
                 PointerEventKind::Leave { .. } => {
                     self.events.push(egui::Event::PointerGone);
                 }
                 PointerEventKind::Press { button, .. } => {
-                    if let Some(b) = map_button(button) {
+                    // Ctrl+Alt + left button starts a window drag (consumed, not
+                    // forwarded to egui).
+                    if button == BTN_LEFT && self.quick.ctrl_held() && self.quick.alt_held() {
+                        self.drag_grab = Some(pos);
+                    } else if let Some(b) = map_button(button) {
                         self.events.push(egui::Event::PointerButton {
                             pos,
                             button: b,
@@ -475,7 +518,9 @@ impl PointerHandler for App {
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if let Some(b) = map_button(button) {
+                    if button == BTN_LEFT && self.drag_grab.is_some() {
+                        self.drag_grab = None; // end drag
+                    } else if let Some(b) = map_button(button) {
                         self.events.push(egui::Event::PointerButton {
                             pos,
                             button: b,
@@ -501,10 +546,13 @@ impl PointerHandler for App {
     }
 }
 
+/// Linux evdev left-button code (the drag button).
+const BTN_LEFT: u32 = 0x110;
+
 /// Linux evdev button codes → egui buttons.
 fn map_button(code: u32) -> Option<egui::PointerButton> {
     match code {
-        0x110 => Some(egui::PointerButton::Primary),   // BTN_LEFT
+        BTN_LEFT => Some(egui::PointerButton::Primary),
         0x111 => Some(egui::PointerButton::Secondary), // BTN_RIGHT
         0x112 => Some(egui::PointerButton::Middle),    // BTN_MIDDLE
         _ => None,
