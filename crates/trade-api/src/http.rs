@@ -47,6 +47,10 @@ pub trait HttpTransport: Send + Sync {
 pub struct ReqwestTransport {
     client: reqwest::Client,
     user_agent: String,
+    /// Optional `Cookie:` header value. Anonymous queries work for the public
+    /// data endpoints, but the live `search` POST is session-gated, so this is
+    /// where a `POESESSID=…` (and any `cf_clearance`) goes.
+    cookie: Option<String>,
 }
 
 impl ReqwestTransport {
@@ -57,7 +61,14 @@ impl ReqwestTransport {
         Ok(ReqwestTransport {
             client,
             user_agent: user_agent.into(),
+            cookie: None,
         })
+    }
+
+    /// Attach a `Cookie:` header value sent with every request.
+    pub fn with_cookie(mut self, cookie: impl Into<String>) -> Self {
+        self.cookie = Some(cookie.into());
+        self
     }
 }
 
@@ -72,6 +83,9 @@ impl HttpTransport for ReqwestTransport {
             .client
             .request(method, &request.url)
             .header("user-agent", &self.user_agent);
+        if let Some(cookie) = &self.cookie {
+            builder = builder.header("cookie", cookie);
+        }
         for (k, v) in &request.headers {
             builder = builder.header(k, v);
         }
