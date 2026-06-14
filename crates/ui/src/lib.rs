@@ -298,12 +298,32 @@ pub struct QuickModeApp {
     last_query_hash: Option<u64>,
 }
 
-/// Stable hash of an item's clipboard text (trimmed), for de-duplicating
-/// repeated Ctrl+C on the same item.
+/// Whitespace-collapsed form of clipboard text. Two copies of the SAME item can
+/// differ by line endings / spacing (the XWayland clipboard bridge isn't
+/// byte-stable), which `trim()` alone wouldn't normalise — so we collapse every
+/// whitespace run to one space before comparing/hashing.
+fn normalize_item_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Stable hash identifying an item, for de-duplicating repeated Ctrl+C on the
+/// same item. Hashes the *parsed* structure (name / base / class / mod lines) so
+/// it's invariant to any clipboard text-formatting differences between copies;
+/// falls back to whitespace-normalised text if the item doesn't parse.
 fn item_hash(text: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    text.trim().hash(&mut h);
+    match parser::parse_item(text) {
+        Ok(item) => {
+            item.name.hash(&mut h);
+            item.base_type.hash(&mut h);
+            item.item_class.hash(&mut h);
+            for m in &item.modifiers {
+                m.stats.hash(&mut h);
+            }
+        }
+        Err(_) => normalize_item_text(text).hash(&mut h),
+    }
     h.finish()
 }
 
@@ -1275,12 +1295,16 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                     let start = Instant::now();
                     match wait_for_new_item(&last_seen) {
                         Some(text) => {
-                            tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "item copied");
+                            tracing::info!(
+                                elapsed_ms = start.elapsed().as_millis(),
+                                hash = item_hash(&text),
+                                "clipboard: NEW item → pricing"
+                            );
                             last_seen = Some(text.clone());
                             Hotkey::Item { text }
                         }
                         None => {
-                            tracing::debug!("Ctrl+C produced no new item (cursor static?)");
+                            tracing::info!("clipboard: same/no item → ignored (no request)");
                             Hotkey::Missed
                         }
                     }
@@ -1301,12 +1325,13 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
 /// fail while the second worked).
 fn wait_for_new_item(last_seen: &Option<String>) -> Option<String> {
     let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
-    // Compare trimmed: a same item re-copied can differ only by trailing
-    // whitespace, which must NOT count as a new item (else it re-searches).
-    let last = last_seen.as_deref().map(str::trim);
+    // Compare whitespace-normalised: a same item re-copied must NOT count as a
+    // new item (else it re-searches and burns the rate limit).
+    let last = last_seen.as_deref().map(normalize_item_text);
     loop {
         if let Ok(Some(text)) = platform_linux::read_clipboard_text() {
-            if last != Some(text.trim()) && parser::parse_item(&text).is_ok() {
+            let is_new = last.as_deref() != Some(normalize_item_text(&text).as_str());
+            if is_new && parser::parse_item(&text).is_ok() {
                 return Some(text);
             }
         }
