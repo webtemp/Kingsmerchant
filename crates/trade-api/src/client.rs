@@ -98,9 +98,12 @@ impl<T: HttpTransport> TradeClient<T> {
     /// Submit a search query, returning the query id + result hashes.
     pub async fn search(&self, request: &SearchRequest) -> Result<SearchResponse, Error> {
         let body = serde_json::to_string(request).map_err(|e| Error::decode("search request", e))?;
+        // The league is a path segment and can contain spaces ("Runes of
+        // Aldur"), so it must be percent-encoded.
         let url = self.with_realm(format!(
             "{}/api/trade2/search/{}",
-            self.config.base_url, self.config.league
+            self.config.base_url,
+            encode_path_segment(&self.config.league)
         ));
         let resp = self
             .send(HttpRequest {
@@ -198,6 +201,22 @@ impl<T: HttpTransport> TradeClient<T> {
         }
         unreachable!("loop returns on the final attempt")
     }
+}
+
+/// Percent-encode a URL path segment (RFC 3986 unreserved chars pass through).
+/// League ids like `Runes of Aldur` carry spaces that would otherwise produce
+/// an invalid URL.
+fn encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn ok_or_api_error(resp: HttpResponse) -> Result<HttpResponse, Error> {

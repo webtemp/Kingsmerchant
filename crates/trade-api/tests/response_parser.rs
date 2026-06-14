@@ -82,3 +82,33 @@ fn empty_listing_set_has_no_median() {
     assert!(median_price(&[]).is_none());
     assert!(modal_currency(&[]).is_none());
 }
+
+// ---- real captures: prove our serde models match live data ----------------
+
+#[test]
+fn decodes_real_search_capture() {
+    // Captured anonymously from `search/Runes of Aldur` (Topaz Ring).
+    let json = include_str!("fixtures/api/search_response_real.json");
+    let resp: SearchResponse = serde_json::from_str(json).expect("real search decodes");
+    assert!(!resp.id.is_empty());
+    assert!(!resp.result.is_empty());
+    assert!(resp.result.iter().all(|id| id.len() == 64));
+}
+
+#[test]
+fn decodes_real_fetch_capture_with_varied_currencies() {
+    // Real listings include currencies like `aug`/`regal` and a non-ASCII
+    // (Cyrillic) whisper — our model must take them in stride.
+    let json = include_str!("fixtures/api/fetch_response_real.json");
+    let parsed: FetchResponse = serde_json::from_str(json).expect("real fetch decodes");
+    let entries: Vec<_> = parsed.result.into_iter().flatten().collect();
+    assert!(!entries.is_empty());
+    for e in &entries {
+        assert!(!e.listing.account.name.is_empty());
+        if let Some(p) = &e.listing.price {
+            assert!(!p.currency.is_empty());
+        }
+    }
+    // Aggregation works on real data too.
+    assert!(median_price(&entries).is_some());
+}

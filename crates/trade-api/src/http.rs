@@ -47,9 +47,9 @@ pub trait HttpTransport: Send + Sync {
 pub struct ReqwestTransport {
     client: reqwest::Client,
     user_agent: String,
-    /// Optional `Cookie:` header value. Anonymous queries work for the public
-    /// data endpoints, but the live `search` POST is session-gated, so this is
-    /// where a `POESESSID=…` (and any `cf_clearance`) goes.
+    /// Optional `Cookie:` header value. Anonymous queries work for search and
+    /// fetch in v1; this is reserved for later auth (PRD §10 v1.3 "Login with
+    /// PoE Account", e.g. a `POESESSID=…`).
     cookie: Option<String>,
 }
 

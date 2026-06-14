@@ -137,7 +137,8 @@ async fn realm_is_appended_to_search_and_fetch_urls() {
     let (transport, requests) =
         MockTransport::new(vec![ok(r#"{"id":"q","result":[],"total":0}"#)]);
     let (stats, items) = defs();
-    let mut config = ClientConfig::new("Mirage");
+    // A real POE2 league id with spaces must be percent-encoded in the URL.
+    let mut config = ClientConfig::new("Runes of Aldur");
     config.realm = Some("poe2".to_string());
     let client = TradeClient::new(transport, config, stats, items);
 
@@ -148,9 +149,12 @@ async fn realm_is_appended_to_search_and_fetch_urls() {
         .unwrap();
 
     let reqs = requests.lock().unwrap();
-    // No results → no fetch; just the search, carrying the realm query param.
+    // No results → no fetch; just the search, with the league encoded and the
+    // realm query param appended.
     assert_eq!(reqs.len(), 1);
-    assert!(reqs[0].url.ends_with("/api/trade2/search/Mirage?realm=poe2"));
+    assert!(reqs[0]
+        .url
+        .ends_with("/api/trade2/search/Runes%20of%20Aldur?realm=poe2"));
 }
 
 #[tokio::test]

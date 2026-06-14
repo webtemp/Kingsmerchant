@@ -11,11 +11,12 @@
 //!   #   from a saved file:                 cargo run … < some_item.txt
 //!
 //! Env vars:
-//!   POE_LEAGUE   league id (default: Standard). See the leagues API.
+//!   POE_LEAGUE   league id (default: Standard). MUST be a POE2 trade league id
+//!                from `trade2/data/leagues` — e.g. "Runes of Aldur". A bad
+//!                league id is what produces a 400 "Invalid query".
 //!   POE_REALM    pc | sony | xbox (optional).
-//!   POE_COOKIE   full Cookie header, e.g. "POESESSID=abc123" — the live search
-//!                POST is session-gated, so without this it will likely 400.
-//!                Grab it from your browser's devtools on pathofexile.com.
+//!   POE_COOKIE   full Cookie header (optional; not needed — anonymous search
+//!                works). Reserved for later authenticated features.
 //!   POE_UA       override the User-Agent (be polite: include contact info).
 //! ```
 
@@ -129,10 +130,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             eprintln!("\nsearch/fetch failed: {e}");
             eprintln!(
-                "\nIf this is an HTTP 400 'Invalid query', the search POST is \
-                 session-gated:\nset POE_COOKIE to your browser's \"POESESSID=…\" \
-                 (and cf_clearance if present).\nThe definition fetch + query build \
-                 above are the parts that work anonymously."
+                "\nAn HTTP 400 'Invalid query' usually means POE_LEAGUE isn't a \
+                 valid POE2 trade league.\nValid ids come from \
+                 trade2/data/leagues (e.g. \"Runes of Aldur\"); the plain leagues \
+                 API returns POE1 leagues."
             );
             std::process::exit(1);
         }
