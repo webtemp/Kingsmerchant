@@ -9,6 +9,9 @@ members = [
     "crates/overlay",
     "crates/overlay-spike",
 ]
+# Plain `cargo run` launches the app (the `poe2ddd` overlay binary) instead of
+# erroring on which of the workspace's binaries to run.
+default-members = ["app"]
 
 [workspace.package]
 edition = "2021"

@@ -11,6 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-platform-linux = { path = "../crates/platform-linux" }
+overlay = { path = "../crates/overlay" }
