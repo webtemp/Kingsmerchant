@@ -1,5 +1,5 @@
-//! The quick-mode price popup rendered onto a `wlr-layer-shell` *overlay*
-//! surface (PRD §4.5).
+//! The price-check popup rendered onto a `wlr-layer-shell` *overlay* surface
+//! (PRD §4.5), in both quick (Ctrl+C) and detailed (Ctrl+Alt+C) modes.
 //!
 //! The windowing layer is a smithay-client-toolkit layer surface + glutin EGL +
 //! egui_glow; the UI itself reuses [`ui::QuickModeApp`] so only the surface
@@ -7,7 +7,9 @@
 //! (POE2 stays focused), starts hidden until the first valid Ctrl+C, and is
 //! centered on the output.
 //!
-//! Still to come: cursor-relative placement, Alt-drag to move, and Esc-dismiss.
+//! Quick mode is visible only while Ctrl is held; detailed mode pins the popup
+//! open (it's wider, for the filter panel) until Esc or the ✕ button. Drag with
+//! Alt held (plus Ctrl in quick mode, which is what keeps it visible).
 //!
 //! Entry point is [`run`], shared by the `poe2ddd` binary (`cargo run`) and the
 //! `poe2-overlay` binary (`cargo run -p overlay`). The league comes from
@@ -136,6 +138,7 @@ pub fn run() -> Result<()> {
         events: Vec::new(),
         width: WIDTH,
         height: INITIAL_HEIGHT,
+        desired_width: WIDTH,
         desired_height: INITIAL_HEIGHT,
         current_output: None,
         margin_left: 0,
@@ -179,6 +182,8 @@ struct App {
     events: Vec<egui::Event>,
     width: u32,
     height: u32,
+    /// Width we last asked the surface to be (mode-dependent: detailed is wider).
+    desired_width: u32,
     /// Height we last asked the surface to be (auto-height target).
     desired_height: u32,
     /// The output the surface is on (from `surface_enter`), used to center it.
@@ -282,8 +287,9 @@ impl App {
         if self.quick.take_close_request() {
             self.shown = false;
         }
-        // The popup lives only while Ctrl is held — release Ctrl hides it.
-        if !self.quick.ctrl_held() {
+        // Quick mode lives only while Ctrl is held — release Ctrl hides it. A
+        // pinned (detailed) popup stays up until Esc or the ✕ button.
+        if !self.quick.pinned() && !self.quick.ctrl_held() {
             self.shown = false;
         }
         if !self.shown {
@@ -333,17 +339,20 @@ impl App {
         // settle; the configure that follows resizes the GL surface), then place
         // it: follow a Ctrl+Alt drag, else stay where dragged, else center.
         if shown && measured > 0.0 {
-            let want = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
-            if want != self.desired_height {
-                self.desired_height = want;
-                self.layer.set_size(self.width, want);
+            let want_h = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
+            // Width is mode-dependent (detailed mode is wider for the filters).
+            let want_w = self.quick.surface_width();
+            if want_h != self.desired_height || want_w != self.desired_width {
+                self.desired_height = want_h;
+                self.desired_width = want_w;
+                self.layer.set_size(want_w, want_h);
             }
             if self.dragged {
                 // Margins are updated by the relative-pointer handler; just keep
                 // them applied (also re-applies after an auto-height resize).
                 self.apply_margin();
             } else {
-                self.center(self.width, self.desired_height);
+                self.center(self.desired_width, self.desired_height);
             }
         }
 
@@ -512,9 +521,13 @@ impl PointerHandler for App {
                     self.events.push(egui::Event::PointerGone);
                 }
                 PointerEventKind::Press { button, .. } => {
-                    // Ctrl+Alt + left button starts a window drag (consumed, not
-                    // forwarded to egui).
-                    if button == BTN_LEFT && self.quick.ctrl_held() && self.quick.alt_held() {
+                    // Alt + left button starts a window drag (consumed, not
+                    // forwarded to egui). Quick mode also needs Ctrl held (it's
+                    // what keeps the popup visible); a pinned popup needs only Alt.
+                    if button == BTN_LEFT
+                        && self.quick.alt_held()
+                        && (self.quick.pinned() || self.quick.ctrl_held())
+                    {
                         self.dragging = true;
                         self.dragged = true; // stop centering, keep current pos
                     } else if let Some(b) = map_button(button) {

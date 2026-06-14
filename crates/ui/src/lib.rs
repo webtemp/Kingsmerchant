@@ -36,6 +36,10 @@ const POLL_INTERVAL: Duration = Duration::from_millis(8);
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
 const HEADER_BG: Color32 = Color32::from_rgb(0x17, 0x17, 0x1c);
 
+/// Popup width in quick mode; detailed mode is wider for the filter panel.
+pub const QUICK_WIDTH: u32 = 470;
+pub const DETAILED_WIDTH: u32 = 600;
+
 pub type Client = TradeClient<ReqwestTransport>;
 
 /// Result of a background price check, sent back to the UI thread.
@@ -43,10 +47,19 @@ enum Msg {
     Result(Box<Result<PriceCheck, String>>),
 }
 
+/// Quick (Ctrl+C) vs detailed (Ctrl+Alt+C) price check. Detailed mode pins the
+/// popup open (it doesn't hide on Ctrl release) so filters can be toggled.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Quick,
+    Detailed,
+}
+
 /// What the global-hotkey watcher observed.
 pub enum Hotkey {
-    /// A new item landed on the clipboard.
-    Item(String),
+    /// A new item landed on the clipboard. `detailed` is true for Ctrl+Alt+C.
+    Item { text: String, detailed: bool },
     /// The clipboard never produced an item before the timeout — usually POE2
     /// skipping the copy on a static cursor (PRD §9.3).
     Missed,
@@ -82,6 +95,8 @@ pub struct QuickModeApp {
     leagues: Vec<League>,
     item_text: String,
     view: View,
+    /// Quick vs detailed — set by the last hotkey. Detailed pins the popup.
+    mode: Mode,
     /// The item the current/last search was built from (for the header).
     item: Option<Item>,
     /// Icon URL of the priced item, learned from the search results.
@@ -122,6 +137,7 @@ impl QuickModeApp {
             leagues,
             item_text: String::new(),
             view: View::Item,
+            mode: Mode::Quick,
             item: None,
             icon_url: None,
             phase: Phase::Idle,
@@ -140,6 +156,22 @@ impl QuickModeApp {
     /// Whether Ctrl is currently held (from the evdev watcher).
     pub fn ctrl_held(&self) -> bool {
         self.ctrl_held
+    }
+
+    /// Whether the popup is pinned open (detailed mode). The overlay keeps a
+    /// pinned popup visible even after Ctrl is released — it's dismissed only by
+    /// Escape or the ✕ button.
+    pub fn pinned(&self) -> bool {
+        self.mode == Mode::Detailed
+    }
+
+    /// Logical surface width for the current mode. Detailed mode is wider to fit
+    /// the filter panel; the overlay reads this each frame to size the layer.
+    pub fn surface_width(&self) -> u32 {
+        match self.mode {
+            Mode::Quick => QUICK_WIDTH,
+            Mode::Detailed => DETAILED_WIDTH,
+        }
     }
 
     /// Whether Alt is currently held (from the evdev watcher).
@@ -205,10 +237,11 @@ impl QuickModeApp {
         // silently doing nothing.
         while let Ok(event) = self.hotkey_rx.try_recv() {
             match event {
-                Hotkey::Item(text) => {
+                Hotkey::Item { text, detailed } => {
                     self.hint = None;
                     self.item_text = text;
                     self.view = View::Item;
+                    self.mode = if detailed { Mode::Detailed } else { Mode::Quick };
                     self.pop_requested = true;
                     self.start_price_check(ctx);
                 }
@@ -251,11 +284,21 @@ impl QuickModeApp {
     pub fn content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // Header: title + league selector (top-right, PRD §4.8).
+        // Header: title + league selector (top-right, PRD §4.8). Detailed mode
+        // is pinned, so it gets a ✕ to dismiss (quick mode hides on Ctrl release).
         ui.horizontal(|ui| {
             ui.heading("poe2ddd");
-            ui.label(RichText::new("· quick mode").weak());
+            let mode_label = match self.mode {
+                Mode::Quick => "· quick mode",
+                Mode::Detailed => "· detailed mode",
+            };
+            ui.label(RichText::new(mode_label).weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.mode == Mode::Detailed
+                    && ui.button("✕").on_hover_text("Close (Esc)").clicked()
+                {
+                    self.close_requested = true;
+                }
                 self.league_selector(ui, &ctx);
             });
         });
@@ -677,14 +720,16 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                 HotkeyEvent::Close => Hotkey::Close,
                 // Ctrl/Alt state forwarded straight through.
                 HotkeyEvent::Modifiers { ctrl, alt } => Hotkey::Mods { ctrl, alt },
-                // A copy combo: wait for POE2 to write the item.
+                // A copy combo: wait for POE2 to write the item. Ctrl+Alt+C
+                // opens the pinned detailed view (PRD §4.7).
                 HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
+                    let detailed = event == HotkeyEvent::DetailedCopy;
                     let start = Instant::now();
                     match wait_for_new_item(&last_seen) {
                         Some(text) => {
                             tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "item copied");
                             last_seen = Some(text.clone());
-                            Hotkey::Item(text)
+                            Hotkey::Item { text, detailed }
                         }
                         None => {
                             tracing::debug!("Ctrl+C produced no new item (cursor static?)");
