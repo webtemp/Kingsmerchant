@@ -20,9 +20,9 @@ use config::Config;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
-    build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, League, ListingStatus,
-    PriceCheck, PriceEstimate, PriceFilter, ReqwestTransport, ResultEntry, StatSelection,
-    TradeClient,
+    build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, DetailedFilters,
+    EquipmentSelection, League, ListingStatus, PriceCheck, PriceEstimate, PriceFilter,
+    ReqwestTransport, ResultEntry, StatSelection, TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -115,6 +115,73 @@ impl StatFilterRow {
     }
 }
 
+/// A defence/offence equipment-property filter (PRD §4.7), built from the item's
+/// parsed properties (e.g. `Evasion Rating: 1099`) rather than its affix mods.
+struct EquipmentRow {
+    /// Trade filter id (`ev`, `ar`, `es`, …).
+    key: String,
+    /// Display label (the property name, e.g. `Evasion Rating`).
+    label: String,
+    enabled: bool,
+    min: String,
+    max: String,
+}
+
+impl EquipmentRow {
+    fn selection(&self) -> EquipmentSelection {
+        EquipmentSelection {
+            key: self.key.clone(),
+            enabled: self.enabled,
+            min: parse_num(&self.min),
+            max: parse_num(&self.max),
+        }
+    }
+}
+
+/// Map a parsed item-property name to its trade equipment-filter id, for the
+/// properties worth filtering on (defences + spirit).
+fn equipment_key(property_name: &str) -> Option<&'static str> {
+    match property_name {
+        "Armour" => Some("ar"),
+        "Evasion Rating" => Some("ev"),
+        "Energy Shield" => Some("es"),
+        "Spirit" => Some("spirit"),
+        "Ward" => Some("ward"),
+        "Block" | "Block chance" => Some("block"),
+        _ => None,
+    }
+}
+
+/// First numeric run in a property value (`"1099 (augmented)"` → `1099`).
+fn first_number(s: &str) -> Option<f64> {
+    let start = s.find(|c: char| c.is_ascii_digit())?;
+    let rest = &s[start..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+/// Build equipment-property filter rows from the item's defences (PRD §4.7),
+/// prefilled with the item's value and ticked — the key thing you search armour
+/// by, but absent before because they're properties, not affix mods.
+fn build_equipment_rows(item: &Item) -> Vec<EquipmentRow> {
+    item.properties
+        .iter()
+        .filter_map(|prop| {
+            let key = equipment_key(&prop.name)?;
+            let value = first_number(&prop.value)?;
+            Some(EquipmentRow {
+                key: key.to_string(),
+                label: prop.name.clone(),
+                enabled: true,
+                min: fmt_amount(value),
+                max: String::new(),
+            })
+        })
+        .collect()
+}
+
 /// The detailed-mode price-range filter inputs (PRD §4.7).
 #[derive(Default)]
 struct PriceFilterState {
@@ -194,9 +261,11 @@ pub struct QuickModeApp {
     item: Option<Item>,
     /// Icon URL of the priced item, learned from the search results.
     icon_url: Option<String>,
-    /// Detailed-mode stat filter rows (rebuilt on a fresh detailed check).
+    /// Per-stat affix filter rows (rebuilt on a fresh check).
     filters: Vec<StatFilterRow>,
-    /// Detailed-mode price-range filter.
+    /// Equipment-property filter rows (armour/evasion/ES/… defences).
+    equipment: Vec<EquipmentRow>,
+    /// Price-range filter.
     price_filter: PriceFilterState,
     /// A filter edit is pending a debounced live re-query.
     filter_dirty: bool,
@@ -245,6 +314,7 @@ impl QuickModeApp {
             item: None,
             icon_url: None,
             filters: Vec::new(),
+            equipment: Vec::new(),
             price_filter: PriceFilterState::default(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),
@@ -306,6 +376,7 @@ impl QuickModeApp {
         self.estimate = None;
         self.estimate_loading = false;
         self.filters = self.build_filter_rows(&item);
+        self.equipment = build_equipment_rows(&item);
         self.price_filter = PriceFilterState::default();
         self.filter_dirty = false; // no stale debounce from the previous item
         // poeprices ML estimate is rares-only and doesn't depend on the
@@ -340,18 +411,26 @@ impl QuickModeApp {
         }
     }
 
+    /// Snapshot the current panel state into the trade-api filter struct.
+    fn detailed_filters(&self) -> DetailedFilters {
+        DetailedFilters {
+            status: ListingStatus::Online,
+            stats: self.filters.iter().map(StatFilterRow::selection).collect(),
+            equipment: self.equipment.iter().map(EquipmentRow::selection).collect(),
+            price: self.price_filter.to_filter(),
+        }
+    }
+
     /// Spawn the background search/fetch for `item` using the current filters.
     fn spawn_query(&mut self, ctx: &egui::Context, item: Item) {
         self.phase = Phase::Loading;
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
-        let selections: Vec<StatSelection> =
-            self.filters.iter().map(StatFilterRow::selection).collect();
-        let price = self.price_filter.to_filter();
+        let filters = self.detailed_filters();
         self.rt.spawn(async move {
             let result = client
-                .price_check_detailed(&item, ListingStatus::Online, &selections, &price, SAMPLE)
+                .price_check_detailed(&item, &filters, SAMPLE)
                 .await
                 .map_err(|e| e.to_string());
             if let Err(ref e) = result {
@@ -369,19 +448,20 @@ impl QuickModeApp {
         let mut rows = Vec::new();
         let mut seen = HashSet::new();
         // Mapped with the item's local/global context (e.g. local evasion on
-        // body armour). Explicit mods are enabled by default so the first search
-        // matches the item; implicits are off by default (they're rarely the
-        // point and would over-constrain) and flagged with a pill.
+        // body armour). Most mods start ticked so the first search matches the
+        // item; implicits and the configured noise mods (life regen, light
+        // radius, …) start unticked (PRD §4.7, config-driven).
         for mapped in self.client.stats().map_item(item) {
             if !seen.insert(mapped.id.clone()) {
                 continue;
             }
             let rolled = mapped.filter_value();
             let is_implicit = mapped.stat_type == "implicit";
+            let off = self.config.filter_off_by_default(&mapped.template, is_implicit);
             rows.push(StatFilterRow {
                 id: mapped.id,
                 label: mapped.template,
-                enabled: !is_implicit,
+                enabled: !off,
                 min: rolled.map(fmt_amount).unwrap_or_default(),
                 max: String::new(),
                 rolled,
@@ -704,7 +784,42 @@ impl QuickModeApp {
                     changed |= self.price_filter.currency != before;
                 });
 
+                // Defences / equipment properties (armour / evasion / ES / …),
+                // built from the item's stats block, not its affix mods.
+                if !self.equipment.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Defences").strong().small());
+                    egui::Grid::new("equip-filters")
+                        .num_columns(4)
+                        .spacing([6.0, 6.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for row in &mut self.equipment {
+                                changed |= ui.checkbox(&mut row.enabled, "").changed();
+                                ui.label(RichText::new(&row.label).strong().small());
+                                changed |= ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut row.min)
+                                            .hint_text("min")
+                                            .desired_width(46.0),
+                                    )
+                                    .changed();
+                                changed |= ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut row.max)
+                                            .hint_text("max")
+                                            .desired_width(46.0),
+                                    )
+                                    .changed();
+                                ui.end_row();
+                            }
+                        });
+                }
+
                 ui.add_space(4.0);
+                if !self.equipment.is_empty() {
+                    ui.label(RichText::new("Modifiers").strong().small());
+                }
                 if self.filters.is_empty() {
                     ui.label(
                         RichText::new("No mapped stats to filter on this item.")
@@ -836,15 +951,7 @@ impl QuickModeApp {
         let Some(item) = &self.item else {
             return base;
         };
-        let selections: Vec<StatSelection> =
-            self.filters.iter().map(StatFilterRow::selection).collect();
-        let request = build_detailed_query(
-            item,
-            self.client.items(),
-            ListingStatus::Online,
-            &selections,
-            &self.price_filter.to_filter(),
-        );
+        let request = build_detailed_query(item, self.client.items(), &self.detailed_filters());
         match serde_json::to_string(&request) {
             Ok(json) => format!("{base}?q={}", percent_encode(&json)),
             Err(e) => {

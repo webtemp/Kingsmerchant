@@ -30,6 +30,13 @@ expression: req
           }
         }
       },
+      "equipment_filters": {
+        "filters": {
+          "ev": {
+            "min": 1099
+          }
+        }
+      },
       "trade_filters": {
         "filters": {
           "price": {

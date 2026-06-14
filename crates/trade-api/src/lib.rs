@@ -37,7 +37,7 @@ pub use http::{HttpRequest, HttpResponse, HttpTransport, Method, ReqwestTranspor
 pub use model::{Price, ResultEntry, SearchRequest, SearchResponse};
 pub use poeprices::PriceEstimate;
 pub use query::{
-    build_detailed_query, build_search_query, category_for, ListingStatus, PriceFilter,
-    QueryOptions, StatSelection,
+    build_detailed_query, build_search_query, category_for, DetailedFilters, EquipmentSelection,
+    ListingStatus, PriceFilter, QueryOptions, StatSelection,
 };
 pub use rate_limit::{Bucket, RateLimiter};

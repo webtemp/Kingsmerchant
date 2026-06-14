@@ -1,5 +1,7 @@
 //! Serde models for the trade2 search request and the search/fetch responses.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 // ---- search request --------------------------------------------------------
@@ -110,13 +112,25 @@ pub struct Filters {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_filters: Option<TypeFilters>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub equipment_filters: Option<EquipmentFilters>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trade_filters: Option<TradeFilters>,
 }
 
 impl Filters {
     pub fn is_empty(&self) -> bool {
-        self.type_filters.is_none() && self.trade_filters.is_none()
+        self.type_filters.is_none()
+            && self.equipment_filters.is_none()
+            && self.trade_filters.is_none()
     }
+}
+
+/// The `equipment_filters` group: an item's defence/offence properties (armour
+/// `ar`, evasion `ev`, energy shield `es`, block, spirit, …), keyed by the
+/// trade filter id. These are item *properties*, not affix mods.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EquipmentFilters {
+    pub filters: BTreeMap<String, StatValue>,
 }
 
 /// The `trade_filters` group: seller/price constraints. We use it for the

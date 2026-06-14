@@ -19,6 +19,12 @@ pub struct Config {
     pub league: String,
     /// Realm (`pc` / `sony` / `xbox`); `None` = pc.
     pub realm: Option<String>,
+    /// Start implicit-mod filters unticked in the detailed panel (they're rarely
+    /// the point and would over-constrain a search). Hand-editable.
+    pub implicits_off_by_default: bool,
+    /// Stat filters whose label contains any of these (case-insensitive)
+    /// substrings start unticked — low-value "noise" mods. Hand-editable list.
+    pub filters_off_by_default: Vec<String>,
 }
 
 impl Default for Config {
@@ -26,11 +32,28 @@ impl Default for Config {
         Config {
             league: "Runes of Aldur".to_string(),
             realm: None,
+            implicits_off_by_default: true,
+            filters_off_by_default: vec![
+                "Life Regeneration per second".to_string(),
+                "Light Radius".to_string(),
+            ],
         }
     }
 }
 
 impl Config {
+    /// Whether a stat filter with this `label` should start unticked, per config
+    /// (implicits and the noise-mod list).
+    pub fn filter_off_by_default(&self, label: &str, is_implicit: bool) -> bool {
+        if is_implicit && self.implicits_off_by_default {
+            return true;
+        }
+        let lower = label.to_lowercase();
+        self.filters_off_by_default
+            .iter()
+            .any(|p| lower.contains(&p.to_lowercase()))
+    }
+
     /// `~/.config/poe2ddd/config.json` (honouring `XDG_CONFIG_HOME`).
     pub fn path() -> PathBuf {
         let base = std::env::var_os("XDG_CONFIG_HOME")

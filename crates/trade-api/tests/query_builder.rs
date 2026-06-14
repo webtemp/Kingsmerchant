@@ -5,8 +5,8 @@
 
 use parser::parse_item;
 use trade_api::{
-    build_detailed_query, build_search_query, category_for, ItemDefinitions, ListingStatus,
-    PriceFilter, QueryOptions, StatDefinitions, StatSelection,
+    build_detailed_query, build_search_query, category_for, DetailedFilters, EquipmentSelection,
+    ItemDefinitions, ListingStatus, PriceFilter, QueryOptions, StatDefinitions, StatSelection,
 };
 
 fn stats() -> StatDefinitions {
@@ -171,9 +171,10 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
     let req = build_detailed_query(
         &item,
         &items(),
-        ListingStatus::Online,
-        &selections,
-        &PriceFilter::default(),
+        &DetailedFilters {
+            stats: selections,
+            ..Default::default()
+        },
     );
 
     // Category-based search (no exact base type) carries over from the quick
@@ -213,7 +214,14 @@ fn detailed_query_attaches_price_range_filter() {
         max: Some(20.0),
         currency: Some("exalted".to_string()),
     };
-    let req = build_detailed_query(&item, &items(), ListingStatus::Online, &[], &price);
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            price,
+            ..Default::default()
+        },
+    );
 
     let price = req
         .query
@@ -235,18 +243,50 @@ fn detailed_query_attaches_price_range_filter() {
 #[test]
 fn detailed_query_with_nothing_active_is_a_bare_base_search() {
     let item = parse_item(RARE_RING).unwrap();
-    let req = build_detailed_query(
-        &item,
-        &items(),
-        ListingStatus::Online,
-        &[],
-        &PriceFilter::default(),
-    );
+    let req = build_detailed_query(&item, &items(), &DetailedFilters::default());
     assert!(req.query.stats.is_empty());
     assert!(req.query.filters.trade_filters.is_none());
+    assert!(req.query.filters.equipment_filters.is_none());
     assert_eq!(req.query.type_, None);
     let category = &req.query.filters.type_filters.as_ref().unwrap().filters.category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
+}
+
+#[test]
+fn detailed_query_attaches_enabled_equipment_filters() {
+    let item = parse_item(RARE_RING).unwrap();
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            equipment: vec![
+                EquipmentSelection {
+                    key: "ev".to_string(),
+                    enabled: true,
+                    min: Some(1099.0),
+                    max: None,
+                },
+                // Disabled → omitted entirely (no greyed state for equipment).
+                EquipmentSelection {
+                    key: "ar".to_string(),
+                    enabled: false,
+                    min: Some(50.0),
+                    max: None,
+                },
+            ],
+            ..Default::default()
+        },
+    );
+    let eq = &req
+        .query
+        .filters
+        .equipment_filters
+        .as_ref()
+        .unwrap()
+        .filters;
+    assert_eq!(eq.len(), 1);
+    assert_eq!(eq["ev"].min.as_ref().unwrap().as_i64(), Some(1099));
+    assert!(!eq.contains_key("ar"));
 }
 
 #[test]
@@ -263,7 +303,21 @@ fn detailed_query_snapshot() {
         max: None,
         currency: Some("exalted".to_string()),
     };
-    let req = build_detailed_query(&item, &items(), ListingStatus::Online, &selections, &price);
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            stats: selections,
+            equipment: vec![EquipmentSelection {
+                key: "ev".to_string(),
+                enabled: true,
+                min: Some(1099.0),
+                max: None,
+            }],
+            price,
+            ..Default::default()
+        },
+    );
     insta::assert_json_snapshot!(req);
 }
 

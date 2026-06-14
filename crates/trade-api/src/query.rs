@@ -5,12 +5,14 @@
 //! filters are emitted *disabled* — the base/name search is the broad query a
 //! price check wants, and detailed mode (Phase 5) flips individual mods on.
 
+use std::collections::BTreeMap;
+
 use parser::{Item, Rarity};
 
 use crate::definitions::{ItemDefinitions, StatDefinitions};
 use crate::model::{
-    Filters, OptionFilter, PriceRange, Query, SearchRequest, Sort, StatFilter, StatGroup, StatValue,
-    Status, TradeFilterFields, TradeFilters, TypeFilterFields, TypeFilters,
+    EquipmentFilters, Filters, OptionFilter, PriceRange, Query, SearchRequest, Sort, StatFilter,
+    StatGroup, StatValue, Status, TradeFilterFields, TradeFilters, TypeFilterFields, TypeFilters,
 };
 
 /// Which listings a search should return, by seller/trade availability.
@@ -78,6 +80,7 @@ pub fn build_search_query(
                 rarity: None,
             },
         }),
+        equipment_filters: None,
         trade_filters: None,
     };
 
@@ -152,22 +155,42 @@ impl PriceFilter {
     }
 }
 
+/// One equipment-property filter in detailed mode (PRD §4.7): an item's defence
+/// or offence stat (`ar`, `ev`, `es`, `block`, `spirit`, …), built from the
+/// item's parsed properties rather than its affix mods.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EquipmentSelection {
+    /// Trade filter id, e.g. `ev` for Evasion.
+    pub key: String,
+    pub enabled: bool,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+}
+
+/// Everything the user can tune in detailed mode (PRD §4.7): listing status,
+/// per-stat affix filters, equipment-property filters, and a price range.
+#[derive(Debug, Clone, Default)]
+pub struct DetailedFilters {
+    pub status: ListingStatus,
+    pub stats: Vec<StatSelection>,
+    pub equipment: Vec<EquipmentSelection>,
+    pub price: PriceFilter,
+}
+
 /// Build the detailed-mode search request (PRD §4.7): same exact name / type /
 /// category as the quick query, but the stat filters come from explicit
-/// per-stat `selections` (each emitted with `disabled = !enabled`, so the
-/// resulting trade-site link mirrors exactly what the user sees), plus an
-/// optional price-range filter.
+/// per-stat selections (each emitted with `disabled = !enabled`, so the
+/// resulting trade-site link mirrors exactly what the user sees), plus
+/// equipment-property filters and an optional price-range filter.
 pub fn build_detailed_query(
     item: &Item,
     items: &ItemDefinitions,
-    status: ListingStatus,
-    selections: &[StatSelection],
-    price: &PriceFilter,
+    f: &DetailedFilters,
 ) -> SearchRequest {
     let category_opt = category_for(&item.item_class);
     let (name, type_) = query_name_and_type(item, items, category_opt);
 
-    let trade_filters = PriceRange::new(price.min, price.max, price.currency.clone())
+    let trade_filters = PriceRange::new(f.price.min, f.price.max, f.price.currency.clone())
         .map(|price| TradeFilters {
             filters: TradeFilterFields { price: Some(price) },
         });
@@ -179,10 +202,11 @@ pub fn build_detailed_query(
                 rarity: None,
             },
         }),
+        equipment_filters: build_equipment_filters(&f.equipment),
         trade_filters,
     };
 
-    let stat_filters: Vec<StatFilter> = selections.iter().map(StatSelection::to_filter).collect();
+    let stat_filters: Vec<StatFilter> = f.stats.iter().map(StatSelection::to_filter).collect();
     let stat_groups = if stat_filters.is_empty() {
         Vec::new()
     } else {
@@ -191,13 +215,31 @@ pub fn build_detailed_query(
 
     SearchRequest {
         query: Query {
-            status: Status::new(status.as_option()),
+            status: Status::new(f.status.as_option()),
             type_,
             name,
             stats: stat_groups,
             filters,
         },
         sort: Some(Sort::price_asc()),
+    }
+}
+
+/// Collect the enabled equipment-property filters into the `equipment_filters`
+/// group (omitting disabled / empty ones — these are plain min/max inputs on the
+/// trade site, with no "disabled" state).
+fn build_equipment_filters(selections: &[EquipmentSelection]) -> Option<EquipmentFilters> {
+    let mut filters = BTreeMap::new();
+    for s in selections {
+        if !s.enabled || (s.min.is_none() && s.max.is_none()) {
+            continue;
+        }
+        filters.insert(s.key.clone(), StatValue::range(s.min, s.max));
+    }
+    if filters.is_empty() {
+        None
+    } else {
+        Some(EquipmentFilters { filters })
     }
 }
 
