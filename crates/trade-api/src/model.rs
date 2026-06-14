@@ -185,6 +185,10 @@ pub struct TypeFilterFields {
     pub category: Option<OptionFilter>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rarity: Option<OptionFilter>,
+    /// Item quality (`{min,max}`) — `type_filters` is where the trade API keeps
+    /// it, not `equipment_filters`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<StatValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

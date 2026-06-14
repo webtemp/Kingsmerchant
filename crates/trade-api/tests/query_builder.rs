@@ -290,6 +290,30 @@ fn detailed_query_attaches_enabled_equipment_filters() {
 }
 
 #[test]
+fn detailed_query_carries_sockets_and_quality() {
+    let item = parse_item(RARE_RING).unwrap();
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            equipment: vec![EquipmentSelection {
+                key: "rune_sockets".to_string(),
+                enabled: true,
+                min: Some(3.0),
+                max: None,
+            }],
+            quality: Some(23.0),
+            ..Default::default()
+        },
+    );
+    // Sockets ride in equipment_filters; quality rides in type_filters.
+    let eq = &req.query.filters.equipment_filters.as_ref().unwrap().filters;
+    assert_eq!(eq["rune_sockets"].min.as_ref().unwrap().as_i64(), Some(3));
+    let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
+    assert_eq!(tf.quality.as_ref().unwrap().min.as_ref().unwrap().as_i64(), Some(23));
+}
+
+#[test]
 fn detailed_query_snapshot() {
     let item = parse_item(RARE_RING).unwrap();
     let selections = vec![StatSelection {

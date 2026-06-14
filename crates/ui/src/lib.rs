@@ -167,8 +167,9 @@ fn first_number(s: &str) -> Option<f64> {
 /// Build equipment-property filter rows from the item's defences (PRD §4.7),
 /// prefilled with the item's value and ticked — the key thing you search armour
 /// by, but absent before because they're properties, not affix mods.
-fn build_equipment_rows(item: &Item, percent: u32) -> Vec<EquipmentRow> {
-    item.properties
+fn build_equipment_rows(item: &Item, percent: u32, exceptional: bool) -> Vec<EquipmentRow> {
+    let mut rows: Vec<EquipmentRow> = item
+        .properties
         .iter()
         .filter_map(|prop| {
             let key = equipment_key(&prop.name)?;
@@ -181,7 +182,30 @@ fn build_equipment_rows(item: &Item, percent: u32) -> Vec<EquipmentRow> {
                 max: String::new(),
             })
         })
-        .collect()
+        .collect();
+
+    // Rune sockets (the "S S S" line). Usually not worth filtering — but on an
+    // Exceptional base the extra socket is the whole value, so default it ON
+    // (min = the item's own count) there; otherwise leave it available but off.
+    let sockets = socket_count(item);
+    if sockets > 0 {
+        rows.push(EquipmentRow {
+            key: "rune_sockets".to_string(),
+            label: "Rune sockets".to_string(),
+            enabled: exceptional,
+            min: sockets.to_string(),
+            max: String::new(),
+        });
+    }
+    rows
+}
+
+/// Number of rune sockets (count of `S` on the parsed `Sockets:` line).
+fn socket_count(item: &Item) -> usize {
+    item.sockets
+        .as_deref()
+        .map(|s| s.chars().filter(|c| *c == 'S').count())
+        .unwrap_or(0)
 }
 
 /// The detailed-mode price-range filter inputs (PRD §4.7).
@@ -203,6 +227,34 @@ impl PriceFilterState {
             } else {
                 Some(self.currency.clone())
             },
+        }
+    }
+}
+
+/// The item-quality filter (PRD §4.7), routed to `type_filters.quality`.
+#[derive(Default)]
+struct QualityFilterState {
+    enabled: bool,
+    min: String,
+}
+
+impl QualityFilterState {
+    /// Built from an item: enabled (with the item's quality as min) when quality
+    /// is above the normal 20% currency cap — i.e. a bonus-quality / Exceptional
+    /// base where quality is part of the value.
+    fn from_item(item: &Item) -> Self {
+        let q = item.quality.unwrap_or(0);
+        QualityFilterState {
+            enabled: q > 20,
+            min: if q > 0 { q.to_string() } else { String::new() },
+        }
+    }
+
+    fn value(&self) -> Option<f64> {
+        if self.enabled {
+            parse_num(&self.min)
+        } else {
+            None
         }
     }
 }
@@ -269,6 +321,8 @@ pub struct QuickModeApp {
     equipment: Vec<EquipmentRow>,
     /// Price-range filter.
     price_filter: PriceFilterState,
+    /// Item-quality filter (default-on for bonus-quality bases).
+    quality_filter: QualityFilterState,
     /// A filter edit is pending a debounced live re-query.
     filter_dirty: bool,
     /// When the last filter edit happened (debounce timer base).
@@ -350,6 +404,7 @@ impl QuickModeApp {
             filters: Vec::new(),
             equipment: Vec::new(),
             price_filter: PriceFilterState::default(),
+            quality_filter: QualityFilterState::default(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),
             estimate: None,
@@ -410,8 +465,13 @@ impl QuickModeApp {
         self.icon_url = None;
         self.estimate = None;
         self.estimate_loading = false;
+        // "Exceptional" bases carry a tier prefix that resolve_base strips
+        // (e.g. "Exceptional Obliterator Bow" → "Obliterator Bow"); on those the
+        // extra sockets / quality are the value, so default those filters on.
+        let exceptional = self.is_exceptional_base(&item);
         self.filters = self.build_filter_rows(&item);
-        self.equipment = build_equipment_rows(&item, self.config.filter_min_percent);
+        self.equipment = build_equipment_rows(&item, self.config.filter_min_percent, exceptional);
+        self.quality_filter = QualityFilterState::from_item(&item);
         self.price_filter = PriceFilterState::default();
         self.filter_dirty = false; // no stale debounce from the previous item
         // poeprices ML estimate is rares-only and doesn't depend on the
@@ -446,12 +506,25 @@ impl QuickModeApp {
         }
     }
 
+    /// Whether the item's base carries a tier prefix (Exceptional/Advanced/…)
+    /// that the trade `type` omits — i.e. a high-tier base where the extra
+    /// sockets / quality drive the price.
+    fn is_exceptional_base(&self, item: &Item) -> bool {
+        item.base_type.as_deref().is_some_and(|raw| {
+            self.client
+                .items()
+                .resolve_base(raw)
+                .is_some_and(|resolved| resolved != raw)
+        })
+    }
+
     /// Snapshot the current panel state into the trade-api filter struct.
     fn detailed_filters(&self) -> DetailedFilters {
         DetailedFilters {
             status: ListingStatus::Online,
             stats: self.filters.iter().map(StatFilterRow::selection).collect(),
             equipment: self.equipment.iter().map(EquipmentRow::selection).collect(),
+            quality: self.quality_filter.value(),
             price: self.price_filter.to_filter(),
         }
     }
@@ -844,6 +917,20 @@ impl QuickModeApp {
                             }
                         });
                     changed |= self.price_filter.currency != before;
+                });
+
+                // Item quality (type_filters.quality) — default-on for bonus
+                // quality, off otherwise.
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(&mut self.quality_filter.enabled, "").changed();
+                    ui.label("Quality ≥");
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.quality_filter.min)
+                                .hint_text("%")
+                                .desired_width(40.0),
+                        )
+                        .changed();
                 });
 
                 // Defences / equipment properties (armour / evasion / ES / …),
