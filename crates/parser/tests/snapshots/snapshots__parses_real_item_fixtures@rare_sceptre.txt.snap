@@ -1,0 +1,162 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/rare_sceptre.txt
+---
+Item {
+    item_class: "Sceptres",
+    rarity: Rare,
+    name: Some(
+        "Dire Grinder",
+    ),
+    base_type: Some(
+        "Stoic Sceptre",
+    ),
+    item_level: Some(
+        55,
+    ),
+    quality: Some(
+        20,
+    ),
+    requirements: Requirements {
+        level: Some(
+            52,
+        ),
+        strength: Some(
+            29,
+        ),
+        dexterity: None,
+        intelligence: Some(
+            72,
+        ),
+    },
+    sockets: Some(
+        "S",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Spirit",
+            value: "100",
+        },
+        Property {
+            name: "Grants Skill",
+            value: "Level 13 Discipline",
+        },
+    ],
+    rune_mods: [
+        "Allies in your Presence deal 40% increased Damage (rune)",
+    ],
+    modifiers: [
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Cobalt",
+            ),
+            tier: Some(
+                10,
+            ),
+            tags: [
+                "Mana",
+            ],
+            stats: [
+                "+20(15-24) to maximum Mana",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Snapping",
+            ),
+            tier: Some(
+                7,
+            ),
+            tags: [
+                "Damage",
+                "Elemental",
+                "Lightning",
+                "Attack",
+            ],
+            stats: [
+                "Allies in your Presence deal 1 to 19(16-22) added Attack Lightning Damage",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Persuasive",
+            ),
+            tier: Some(
+                4,
+            ),
+            tags: [
+                "Damage",
+            ],
+            stats: [
+                "Allies in your Presence deal 66(65-74)% increased Damage",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Philosopher",
+            ),
+            tier: Some(
+                4,
+            ),
+            tags: [
+                "Attribute",
+            ],
+            stats: [
+                "+24(21-24) to Intelligence",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Overseer",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Minion",
+                "Gem",
+            ],
+            stats: [
+                "+3 to Level of all Minion Skills",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: Some(
+                Desecrated,
+            ),
+            name: Some(
+                "of Mastery",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Attack",
+                "Speed",
+            ],
+            stats: [
+                "Allies in your Presence have 12(11-13)% increased Attack Speed",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

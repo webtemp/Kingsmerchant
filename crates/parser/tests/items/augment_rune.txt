@@ -1,0 +1,15 @@
+Item Class: Augment
+Rarity: Currency
+Greater Glacial Rune
+--------
+Stack Size: 45/10
+Rune
+--------
+Requires: Level 30
+--------
+Martial Weapon: Adds 9 to 15 Cold Damage
+Wand or Staff: Gain 10% of Damage as Extra Cold Damage
+Armour: +18% to Cold Resistance
+--------
+Place into an empty Augment Socket in a Weapon or Armour to apply its effect to that item. Once socketed it cannot be retrieved but can be replaced by other Augment items.
+Shift click to unstack.

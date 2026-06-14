@@ -1,0 +1,157 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/rare_boots.txt
+---
+Item {
+    item_class: "Boots",
+    rarity: Rare,
+    name: Some(
+        "Dragon Sole",
+    ),
+    base_type: Some(
+        "Runeforged Cinched Boots",
+    ),
+    item_level: Some(
+        82,
+    ),
+    quality: Some(
+        20,
+    ),
+    requirements: Requirements {
+        level: Some(
+            65,
+        ),
+        strength: None,
+        dexterity: Some(
+            86,
+        ),
+        intelligence: None,
+    },
+    sockets: Some(
+        "S",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Evasion Rating",
+            value: "391 (augmented)",
+        },
+        Property {
+            name: "Runic Ward",
+            value: "50 (augmented)",
+        },
+    ],
+    rune_mods: [
+        "+22% to Fire Resistance (rune)",
+    ],
+    modifiers: [
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Hellion's",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Speed",
+            ],
+            stats: [
+                "35% increased Movement Speed",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Virile",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Life",
+            ],
+            stats: [
+                "+102(100-119) to maximum Life",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Wraith's",
+            ),
+            tier: Some(
+                4,
+            ),
+            tags: [
+                "Evasion",
+            ],
+            stats: [
+                "63(56-67)% increased Evasion Rating",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Ice",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Elemental",
+                "Cold",
+                "Resistance",
+            ],
+            stats: [
+                "+36(36-40)% to Cold Resistance",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Curvation",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [
+                "Evasion",
+            ],
+            stats: [
+                "Gain Deflection Rating equal to 16(15-17)% of Evasion Rating",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Tzteosh",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Elemental",
+                "Fire",
+                "Resistance",
+            ],
+            stats: [
+                "+41(41-45)% to Fire Resistance",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

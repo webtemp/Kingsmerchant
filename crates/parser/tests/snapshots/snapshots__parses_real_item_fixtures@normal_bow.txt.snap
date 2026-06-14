@@ -1,0 +1,63 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/normal_bow.txt
+---
+Item {
+    item_class: "Bows",
+    rarity: Normal,
+    name: None,
+    base_type: Some(
+        "Obliterator Bow",
+    ),
+    item_level: Some(
+        80,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            78,
+        ),
+        strength: None,
+        dexterity: Some(
+            163,
+        ),
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Physical Damage",
+            value: "62-115",
+        },
+        Property {
+            name: "Critical Hit Chance",
+            value: "5.00%",
+        },
+        Property {
+            name: "Attacks per Second",
+            value: "1.10",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "50% reduced Projectile Range",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

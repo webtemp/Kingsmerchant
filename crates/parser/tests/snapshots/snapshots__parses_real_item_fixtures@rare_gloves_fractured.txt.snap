@@ -1,0 +1,178 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/rare_gloves_fractured.txt
+---
+Item {
+    item_class: "Gloves",
+    rarity: Rare,
+    name: Some(
+        "Horror Touch",
+    ),
+    base_type: Some(
+        "Runeforged War Wraps",
+    ),
+    item_level: Some(
+        80,
+    ),
+    quality: Some(
+        20,
+    ),
+    requirements: Requirements {
+        level: Some(
+            65,
+        ),
+        strength: None,
+        dexterity: Some(
+            44,
+        ),
+        intelligence: Some(
+            44,
+        ),
+    },
+    sockets: Some(
+        "S J",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Evasion Rating",
+            value: "88 (augmented)",
+        },
+        Property {
+            name: "Energy Shield",
+            value: "26 (augmented)",
+        },
+        Property {
+            name: "Runic Ward",
+            value: "34 (augmented)",
+        },
+    ],
+    rune_mods: [
+        "Destroys all Augment Sockets on the item to create a Jewel Socket (rune)",
+    ],
+    modifiers: [
+        Modifier {
+            kind: Prefix,
+            source: Some(
+                Fractured,
+            ),
+            name: Some(
+                "Entombing",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Damage",
+                "Elemental",
+                "Cold",
+                "Attack",
+            ],
+            stats: [
+                "Adds 22(21-24) to 36(32-37) Cold damage to Attacks",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Blasting",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Damage",
+                "Elemental",
+                "Fire",
+                "Attack",
+            ],
+            stats: [
+                "Adds 24(20-24) to 36(33-36) Fire damage to Attacks",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: Some(
+                Desecrated,
+            ),
+            name: Some(
+                "Electrocuting",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Damage",
+                "Elemental",
+                "Lightning",
+                "Attack",
+            ],
+            stats: [
+                "Adds 2(1-4) to 69(60-71) Lightning damage to Attacks",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Renown",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Attack",
+                "Speed",
+            ],
+            stats: [
+                "15(14-16)% increased Attack Speed",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: Some(
+                Crafted,
+            ),
+            name: Some(
+                "of the Essence",
+            ),
+            tier: None,
+            tags: [],
+            stats: [
+                "60% increased effect of Socketed Augment Items — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: Some(
+                Crafted,
+            ),
+            name: Some(
+                "of Fury",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Damage",
+                "Critical",
+            ],
+            stats: [
+                "29(25-29)% increased Critical Damage Bonus",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [
+        "~b/o 350 divine",
+    ],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: true,
+    flags: [
+        "Hinekora's Lock",
+    ],
+}

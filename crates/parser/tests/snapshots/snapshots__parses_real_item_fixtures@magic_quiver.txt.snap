@@ -1,0 +1,71 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/magic_quiver.txt
+---
+Item {
+    item_class: "Quivers",
+    rarity: Magic,
+    name: Some(
+        "Flaming Serrated Quiver",
+    ),
+    base_type: None,
+    item_level: Some(
+        64,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            44,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Physical",
+                "Attack",
+                "Ailment",
+            ],
+            stats: [
+                "Attacks have 30(20-30)% chance to cause Bleeding",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Flaming",
+            ),
+            tier: Some(
+                5,
+            ),
+            tags: [
+                "Damage",
+                "Elemental",
+                "Fire",
+                "Attack",
+            ],
+            stats: [
+                "Adds 13(12-13) to 18(18-20) Fire damage to Attacks",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

@@ -1,0 +1,17 @@
+Item Class: Jewels
+Rarity: Rare
+Fulgent Ornament
+Sapphire
+--------
+Item Level: 80
+--------
+{ Prefix Modifier "Numbing" (Tier: 1) — Damage, Elemental, Cold }
+Damage Penetrates 10(5-10)% Cold Resistance
+{ Prefix Modifier "Chaotic" (Tier: 1) — Damage, Chaos }
+9(7-13)% increased Chaos Damage
+{ Suffix Modifier "of Osmosis" (Tier: 1) — Mana }
+Recover 2(1-2)% of maximum Mana on Kill
+{ Suffix Modifier "of Annihilating" (Tier: 1) — Caster, Critical }
+14(5-15)% increased Critical Hit Chance for Spells
+--------
+Place into an allocated Jewel Socket on the Passive Skill Tree. Right click to remove from the Socket.

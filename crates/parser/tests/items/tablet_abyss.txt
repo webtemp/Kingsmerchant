@@ -1,0 +1,21 @@
+Item Class: Tablet
+Rarity: Rare
+Mythic Apex
+Abyss Tablet
+--------
+Item Level: 79
+--------
+{ Implicit Modifier }
+Adds Abysses to a Map
+10 uses remaining
+--------
+{ Prefix Modifier "Breeding" (Tier: 1) }
+6(5-7)% increased Pack Size in Map
+{ Prefix Modifier "Challenger's" (Tier: 1) }
+Monsters have 11(10-15)% increased Effectiveness
+{ Suffix Modifier "of the Exile" (Tier: 1) }
+Map has 73(70-100)% increased chance to contain Rogue Exiles
+{ Suffix Modifier "of Ossification" (Tier: 1) }
+28(20-30)% increased chance for Desecrated Currency from Abysses in Map
+--------
+Can be used in a personal Map Device to add modifiers to a Map.

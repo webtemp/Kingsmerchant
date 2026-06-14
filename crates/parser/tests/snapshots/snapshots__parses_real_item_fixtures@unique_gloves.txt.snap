@@ -1,0 +1,144 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/unique_gloves.txt
+---
+Item {
+    item_class: "Gloves",
+    rarity: Unique,
+    name: Some(
+        "Nightscale",
+    ),
+    base_type: Some(
+        "Pauascale Gloves",
+    ),
+    item_level: Some(
+        79,
+    ),
+    quality: Some(
+        20,
+    ),
+    requirements: Requirements {
+        level: Some(
+            45,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: Some(
+            56,
+        ),
+    },
+    sockets: Some(
+        "S",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Energy Shield",
+            value: "70 (augmented)",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Other(
+                "Corruption Enhancement",
+            ),
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Damage",
+                "Elemental",
+                "Fire",
+            ],
+            stats: [
+                "Damage Penetrates 10(10-15)% Fire Resistance",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Energy Shield",
+            ],
+            stats: [
+                "71(60-100)% increased Energy Shield",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Attribute",
+            ],
+            stats: [
+                "+17(10-20) to Intelligence",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Elemental",
+                "Cold",
+                "Resistance",
+            ],
+            stats: [
+                "+21(20-30)% to Cold Resistance",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Mana",
+            ],
+            stats: [
+                "Cannot Regenerate Mana if you haven't dealt a Critical Hit Recently — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Mana",
+                "Critical",
+            ],
+            stats: [
+                "150% increased Mana Regeneration Rate if you've dealt a Critical Hit Recently",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Critical",
+            ],
+            stats: [
+                "46(30-50)% increased Critical Hit Chance",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [
+        "~b/o 5 exalted",
+    ],
+    corrupted: true,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

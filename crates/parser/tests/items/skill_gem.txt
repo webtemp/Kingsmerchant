@@ -1,0 +1,27 @@
+Item Class: Skill Gems
+Rarity: Gem
+Freezing Mark
+--------
+Mark, Buff, Cold, Duration
+Level: 13
+Cost: 52 Mana
+Cooldown Time: 0.50s
+Use Time: 0.50s
+--------
+Requires: Level 52, 51 Dex, 51 Int
+--------
+Sockets: G G G
+--------
+Mark a target, making them more susceptible to being Frozen. When the Marked target is Frozen, the Mark Activates, granting you a Buff which gives extra Cold damage and Consuming the Mark. Marking another target while you have the Buff will remove the Buff.
+--------
+Mark
+--------
+Limit 1 Marked target
+Hits against Marked enemy cause 31% more Freeze buildup
+Marked enemy becomes Frozen when
+Hit while Primed for Freeze
+Mark duration is 8 seconds
+Buff grants 30% of damage Gained as Cold damage
+Buff duration is 10 seconds
+--------
+Skills can be managed in the Skills Panel.

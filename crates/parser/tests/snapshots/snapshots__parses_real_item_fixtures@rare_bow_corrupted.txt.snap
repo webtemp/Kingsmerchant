@@ -1,0 +1,145 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/rare_bow_corrupted.txt
+---
+Item {
+    item_class: "Bows",
+    rarity: Rare,
+    name: Some(
+        "Armageddon Horn",
+    ),
+    base_type: Some(
+        "Militant Bow",
+    ),
+    item_level: Some(
+        66,
+    ),
+    quality: Some(
+        20,
+    ),
+    requirements: Requirements {
+        level: Some(
+            62,
+        ),
+        strength: None,
+        dexterity: Some(
+            109,
+        ),
+        intelligence: None,
+    },
+    sockets: Some(
+        "S S",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Physical Damage",
+            value: "230-334 (augmented)",
+        },
+        Property {
+            name: "Critical Hit Chance",
+            value: "5.00%",
+        },
+        Property {
+            name: "Attacks per Second",
+            value: "1.41 (augmented)",
+        },
+    ],
+    rune_mods: [
+        "36% increased Physical Damage (rune)",
+    ],
+    modifiers: [
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Tempered",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Damage",
+                "Physical",
+                "Attack",
+            ],
+            stats: [
+                "Adds 29(21-31) to 40(36-53) Physical Damage",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Bloodthirsty",
+            ),
+            tier: Some(
+                4,
+            ),
+            tags: [
+                "Damage",
+                "Physical",
+                "Attack",
+            ],
+            stats: [
+                "119(110-134)% increased Physical Damage",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Acclaim",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Attack",
+                "Speed",
+            ],
+            stats: [
+                "17(17-19)% increased Attack Speed",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Sharpshooter",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [],
+            stats: [
+                "+2 to Level of all Projectile Skills",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Shining",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [
+                "Attack",
+            ],
+            stats: [
+                "+19(10-20) to Accuracy Rating",
+                "5% increased Light Radius",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: true,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

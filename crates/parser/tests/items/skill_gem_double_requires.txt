@@ -1,0 +1,30 @@
+Item Class: Skill Gems
+Rarity: Gem
+Whirling Assault
+--------
+Attack, AoE, Melee, Strike
+Level: 21 (augmented)
+20 Levels from Gem (Max)
++1 Level from Corruption (augmented)
+Quality: +20% (augmented)
+Cost: 136 Mana
+Attack Speed: 85% of base
+Attack Damage: 176%
+--------
+Requires: Level 90, 86 Dex, 86 Int
+Requires: Quarterstaff
+--------
+Sockets: G G
+--------
+Advance while hitting enemies around you with a series of spinning Strikes.
+--------
++1 second to Total Attack Time
+20% increased Attack Speed
++1.4 metres to Melee Strike Range
+21% more Area of Effect
+--------
+Skills can be managed in the Skills Panel.
+--------
+Corrupted
+--------
+Note: ~b/o 7 divine

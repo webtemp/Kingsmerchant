@@ -1,0 +1,166 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/rare_body_armour.txt
+---
+Item {
+    item_class: "Body Armours",
+    rarity: Rare,
+    name: Some(
+        "Dread Curtain",
+    ),
+    base_type: Some(
+        "Corsair Coat",
+    ),
+    item_level: Some(
+        81,
+    ),
+    quality: Some(
+        20,
+    ),
+    requirements: Requirements {
+        level: Some(
+            80,
+        ),
+        strength: None,
+        dexterity: Some(
+            121,
+        ),
+        intelligence: None,
+    },
+    sockets: Some(
+        "S S",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Evasion Rating",
+            value: "1099 (augmented)",
+        },
+    ],
+    rune_mods: [
+        "12% increased Rarity of Items found (rune)",
+        "10% increased Deflection Rating (rune)",
+    ],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Speed",
+            ],
+            stats: [
+                "5% increased Movement Speed",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Princess'",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [],
+            stats: [
+                "+54(54-56) to Spirit",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Athlete's",
+            ),
+            tier: Some(
+                5,
+            ),
+            tags: [
+                "Life",
+            ],
+            stats: [
+                "+132(120-149) to maximum Life",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Illusion's",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Evasion",
+            ],
+            stats: [
+                "103(101-110)% increased Evasion Rating",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Maelstrom",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [
+                "Elemental",
+                "Lightning",
+                "Resistance",
+            ],
+            stats: [
+                "+34(31-35)% to Lightning Resistance",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: Some(
+                Desecrated,
+            ),
+            name: Some(
+                "of the Phantom",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Attribute",
+            ],
+            stats: [
+                "+32(31-33) to Dexterity",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Volcano",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [
+                "Elemental",
+                "Fire",
+                "Resistance",
+            ],
+            stats: [
+                "+34(31-35)% to Fire Resistance",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

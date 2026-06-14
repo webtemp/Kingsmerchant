@@ -1,0 +1,64 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/skill_gem_corrupted.txt
+---
+Item {
+    item_class: "Skill Gems",
+    rarity: Gem,
+    name: Some(
+        "Thrashing Vines",
+    ),
+    base_type: None,
+    item_level: None,
+    quality: Some(
+        23,
+    ),
+    requirements: Requirements {
+        level: Some(
+            84,
+        ),
+        strength: Some(
+            80,
+        ),
+        dexterity: None,
+        intelligence: Some(
+            80,
+        ),
+    },
+    sockets: Some(
+        "G G G G G",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Level",
+            value: "18 (augmented)",
+        },
+        Property {
+            name: "Cost",
+            value: "124 Mana",
+        },
+        Property {
+            name: "Cast Time",
+            value: "1.00s",
+        },
+        Property {
+            name: "Critical Hit Chance",
+            value: "10.00%",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [
+        "~b/o 1 exalted",
+    ],
+    corrupted: true,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [
+        "Twice Corrupted",
+    ],
+}

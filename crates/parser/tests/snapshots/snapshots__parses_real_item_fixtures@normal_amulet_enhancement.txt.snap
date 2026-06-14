@@ -1,0 +1,70 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/normal_amulet_enhancement.txt
+---
+Item {
+    item_class: "Amulets",
+    rarity: Normal,
+    name: None,
+    base_type: Some(
+        "Distorted Amulet",
+    ),
+    item_level: Some(
+        79,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Other(
+                "Enhancement",
+            ),
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Allocates Embodiment of Frost — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Other(
+                "Enhancement",
+            ),
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Allocates Frozen Limit — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "-1 Suffix Modifier allowed",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

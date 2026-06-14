@@ -1,0 +1,19 @@
+Item Class: Jewels
+Rarity: Magic
+Prismatic Sapphire of Potency
+--------
+Item Level: 80
+--------
+{ Corruption Enhancement — Elemental, Lightning, Resistance }
++10(5-10)% to Lightning Resistance
+--------
+{ Prefix Modifier "Prismatic" (Tier: 1) — Damage, Elemental, Fire, Cold, Lightning }
+14(5-15)% increased Elemental Damage
+{ Suffix Modifier "of Potency" (Tier: 1) — Damage, Critical }
+19(10-20)% increased Critical Damage Bonus
+--------
+Place into an allocated Jewel Socket on the Passive Skill Tree. Right click to remove from the Socket.
+--------
+Corrupted
+--------
+Note: ~b/o 50 divine

@@ -1,0 +1,15 @@
+Item Class: Rings
+Rarity: Unique
+Kalandra's Touch
+Ring
+--------
+Item Level: 80
+--------
+{ Unique Modifier }
+Reflects opposite Ring — Unscalable Value
+--------
+Power is a matter of perspective.
+--------
+Mirrored
+--------
+Note: ~b/o 25 divine

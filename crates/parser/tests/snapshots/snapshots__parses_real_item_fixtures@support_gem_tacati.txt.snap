@@ -1,0 +1,44 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/support_gem_tacati.txt
+---
+Item {
+    item_class: "Support Gems",
+    rarity: Gem,
+    name: Some(
+        "Tacati's Ire",
+    ),
+    base_type: None,
+    item_level: None,
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            65,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Category",
+            value: "Tacati's Ire",
+        },
+        Property {
+            name: "Support Requirements",
+            value: "+5 Dex",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

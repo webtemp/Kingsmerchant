@@ -1,0 +1,41 @@
+Item Class: Bows
+Rarity: Rare
+Pandemonium Breeze
+Warmonger Bow
+--------
+Quality: +30% (augmented)
+Physical Damage: 429-688 (augmented)
+Critical Hit Chance: 10.00% (augmented)
+Attacks per Second: 1.20
+--------
+Requires: Level 77, 163 (unmet) Dex
+--------
+Sockets: S S S
+--------
+Item Level: 82
+--------
++1 Suffix Modifier allowed (rune)
+Bow Attacks fire an additional Arrow (rune)
+Gain 5% of Damage as Extra Damage of all Elements (rune)
+--------
+{ Prefix Modifier "Merciless" (Tier: 1) — Damage, Physical, Attack }
+176(170-179)% increased Physical Damage
+{ Prefix Modifier "Dictator's" (Tier: 1) — Damage, Physical, Attack }
+79(75-79)% increased Physical Damage
++176(175-200) to Accuracy Rating
+{ Desecrated Prefix Modifier "Flaring" (Tier: 1) — Damage, Physical, Attack }
+Adds 37(26-39) to 65(44-66) Physical Damage
+{ Fractured Suffix Modifier "of Unmaking" (Tier: 1) — Attack, Critical }
++5(4.41-5)% to Critical Hit Chance
+{ Suffix Modifier "of Many" (Tier: 1) — Attack }
++198(175-200)% Surpassing chance to fire an additional Arrow
+{ Suffix Modifier "of the Sniper" (Tier: 1) }
++4 to Level of all Projectile Skills
+{ Suffix Modifier "of Destruction" (Tier: 1) — Damage, Attack, Critical }
++25(23-25)% to Critical Damage Bonus
+--------
+Mirrored
+--------
+Fractured Item
+--------
+Note: ~b/o 2800 divine
