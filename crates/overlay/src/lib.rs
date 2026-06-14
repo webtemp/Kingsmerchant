@@ -648,6 +648,7 @@ impl KeyboardHandler for App {
         _: &[Keysym],
     ) {
         self.kbd_focus = true;
+        tracing::info!("keyboard focus GAINED (text fields should be editable)");
     }
     fn leave(
         &mut self,
@@ -658,6 +659,7 @@ impl KeyboardHandler for App {
         _: u32,
     ) {
         self.kbd_focus = false;
+        tracing::info!("keyboard focus lost");
     }
     fn press_key(
         &mut self,
@@ -668,6 +670,7 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         let modifiers = self.kbd_modifiers;
+        tracing::debug!(keysym = ?event.keysym, utf8 = ?event.utf8, "key press → egui");
         if let Some(key) = map_keysym(event.keysym) {
             self.events.push(egui::Event::Key {
                 key,
