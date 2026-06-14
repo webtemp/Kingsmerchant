@@ -32,12 +32,13 @@ use raw_window_handle::{
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, Region},
     delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
-    delegate_seat,
+    delegate_relative_pointer, delegate_seat,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        relative_pointer::{RelativeMotionEvent, RelativePointerHandler, RelativePointerState},
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -53,6 +54,7 @@ use wayland_client::{
     protocol::{wl_output, wl_pointer, wl_seat, wl_surface},
     Connection, Proxy, QueueHandle,
 };
+use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1;
 
 use ui::{Hotkey, QuickModeApp};
 
@@ -122,15 +124,16 @@ pub fn run() -> Result<()> {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
         output_state: OutputState::new(&globals, &qh),
+        relative_pointer_state: RelativePointerState::bind(&globals, &qh),
         conn: conn.clone(),
         compositor,
         layer,
         pointer: None,
+        relative_pointer: None,
         gl: None,
         egui_ctx,
         quick,
         events: Vec::new(),
-        pointer_pos: egui::pos2(-1.0, -1.0),
         width: WIDTH,
         height: INITIAL_HEIGHT,
         desired_height: INITIAL_HEIGHT,
@@ -138,7 +141,7 @@ pub fn run() -> Result<()> {
         margin_left: 0,
         margin_top: 0,
         dragged: false,
-        drag_grab: None,
+        dragging: false,
         shown: false,
         input_region: None,
         applied_input: None,
@@ -164,15 +167,16 @@ struct App {
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
+    relative_pointer_state: RelativePointerState,
     conn: Connection,
     compositor: CompositorState,
     layer: LayerSurface,
     pointer: Option<wl_pointer::WlPointer>,
+    relative_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
     gl: Option<Gl>,
     egui_ctx: egui::Context,
     quick: QuickModeApp,
     events: Vec<egui::Event>,
-    pointer_pos: egui::Pos2,
     width: u32,
     height: u32,
     /// Height we last asked the surface to be (auto-height target).
@@ -184,8 +188,8 @@ struct App {
     margin_top: i32,
     /// Whether the user has Ctrl+Alt-dragged this show (suppresses centering).
     dragged: bool,
-    /// Grab point (surface-local) while a Ctrl+Alt drag is in progress.
-    drag_grab: Option<egui::Pos2>,
+    /// Whether a Ctrl+Alt drag is in progress (left button held).
+    dragging: bool,
     /// Whether the popup is visible. Starts hidden; a valid Ctrl+C shows it,
     /// Escape hides it.
     shown: bool,
@@ -285,7 +289,7 @@ impl App {
         if !self.shown {
             // Forget any drag so the next pop re-centers (no position memory).
             self.dragged = false;
-            self.drag_grab = None;
+            self.dragging = false;
         }
 
         // Lay the content out in a tall space so we can measure its natural
@@ -334,14 +338,9 @@ impl App {
                 self.desired_height = want;
                 self.layer.set_size(self.width, want);
             }
-            if let Some(grab) = self.drag_grab {
-                // Move so the grabbed point stays under the cursor.
-                let delta = self.pointer_pos - grab;
-                self.margin_left = (self.margin_left + delta.x.round() as i32).max(0);
-                self.margin_top = (self.margin_top + delta.y.round() as i32).max(0);
-                self.dragged = true;
-                self.apply_margin();
-            } else if self.dragged {
+            if self.dragged {
+                // Margins are updated by the relative-pointer handler; just keep
+                // them applied (also re-applies after an auto-height resize).
                 self.apply_margin();
             } else {
                 self.center(self.width, self.desired_height);
@@ -471,12 +470,21 @@ impl SeatHandler for App {
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer && self.pointer.is_none() {
-            self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            if let Ok(pointer) = self.seat_state.get_pointer(qh, &seat) {
+                // Raw motion deltas for Ctrl+Alt drag (immune to the surface
+                // moving under the cursor).
+                self.relative_pointer = self
+                    .relative_pointer_state
+                    .get_relative_pointer(&pointer, qh)
+                    .ok();
+                self.pointer = Some(pointer);
+            }
         }
         // Deliberately never grab the keyboard — POE2 must keep focus.
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer {
+            self.relative_pointer = None;
             if let Some(p) = self.pointer.take() {
                 p.release();
             }
@@ -494,9 +502,9 @@ impl PointerHandler for App {
             let pos = egui::pos2(event.position.0 as f32, event.position.1 as f32);
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                    self.pointer_pos = pos;
-                    // While dragging, the cursor drives the move, not egui.
-                    if self.drag_grab.is_none() {
+                    // While dragging, the relative pointer drives the move; don't
+                    // also feed motion to egui.
+                    if !self.dragging {
                         self.events.push(egui::Event::PointerMoved(pos));
                     }
                 }
@@ -507,7 +515,8 @@ impl PointerHandler for App {
                     // Ctrl+Alt + left button starts a window drag (consumed, not
                     // forwarded to egui).
                     if button == BTN_LEFT && self.quick.ctrl_held() && self.quick.alt_held() {
-                        self.drag_grab = Some(pos);
+                        self.dragging = true;
+                        self.dragged = true; // stop centering, keep current pos
                     } else if let Some(b) = map_button(button) {
                         self.events.push(egui::Event::PointerButton {
                             pos,
@@ -518,8 +527,8 @@ impl PointerHandler for App {
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if button == BTN_LEFT && self.drag_grab.is_some() {
-                        self.drag_grab = None; // end drag
+                    if button == BTN_LEFT && self.dragging {
+                        self.dragging = false; // end drag (position kept)
                     } else if let Some(b) = map_button(button) {
                         self.events.push(egui::Event::PointerButton {
                             pos,
@@ -542,6 +551,24 @@ impl PointerHandler for App {
                     }
                 }
             }
+        }
+    }
+}
+
+impl RelativePointerHandler for App {
+    fn relative_pointer_motion(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &zwp_relative_pointer_v1::ZwpRelativePointerV1,
+        _: &wl_pointer::WlPointer,
+        event: RelativeMotionEvent,
+    ) {
+        if self.dragging {
+            // Raw cursor delta → margin shift. Moving the surface by exactly the
+            // cursor delta keeps the cursor over it, so events keep flowing.
+            self.margin_left = (self.margin_left + event.delta.0.round() as i32).max(0);
+            self.margin_top = (self.margin_top + event.delta.1.round() as i32).max(0);
         }
     }
 }
@@ -579,5 +606,6 @@ delegate_compositor!(App);
 delegate_output!(App);
 delegate_seat!(App);
 delegate_pointer!(App);
+delegate_relative_pointer!(App);
 delegate_layer!(App);
 delegate_registry!(App);

@@ -1230,6 +1230,7 @@ dependencies = [
  "tracing-subscriber",
  "ui",
  "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]
