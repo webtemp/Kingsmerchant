@@ -104,6 +104,9 @@ struct StatFilterRow {
     enabled: bool,
     min: String,
     max: String,
+    /// The item's own rolled value, used to seed the min and to relax it for
+    /// the "Similar item" preset.
+    rolled: Option<f64>,
 }
 
 impl StatFilterRow {
@@ -376,13 +379,14 @@ impl QuickModeApp {
                 if !seen.insert(mapped.id.clone()) {
                     continue;
                 }
-                let min = mapped.filter_value().map(fmt_amount).unwrap_or_default();
+                let rolled = mapped.filter_value();
                 rows.push(StatFilterRow {
                     id: mapped.id,
                     label: mapped.template,
                     enabled: false,
-                    min,
+                    min: rolled.map(fmt_amount).unwrap_or_default(),
                     max: String::new(),
+                    rolled,
                 });
             }
         }
@@ -742,9 +746,28 @@ impl QuickModeApp {
                 }
 
                 ui.add_space(4.0);
-                if ui.button("🔄 Apply now").clicked() {
-                    requery = true;
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("🔄 Apply now").clicked() {
+                        requery = true;
+                    }
+                    // "Similar item" (PRD §4.7): same base, every mapped mod
+                    // enabled at ~80% of its roll — find comparable items.
+                    if ui
+                        .button("🔎 Similar item")
+                        .on_hover_text("Same base, every mod present at ~80% of its roll")
+                        .clicked()
+                    {
+                        for row in &mut self.filters {
+                            row.enabled = true;
+                            row.min = row
+                                .rolled
+                                .map(|v| fmt_amount((v * 0.8).floor()))
+                                .unwrap_or_default();
+                            row.max.clear();
+                        }
+                        requery = true;
+                    }
+                });
             });
 
         // Any edit (re)starts the debounce timer; the caller fires the re-query
