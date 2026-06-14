@@ -1,8 +1,8 @@
 //! The trade client: ties query building, the HTTP seam, rate-limit gating and
 //! response parsing into search + fetch + price-check operations (PRD §4.4).
 
-use std::sync::RwLock;
-use std::time::Instant;
+use std::sync::{Mutex as StdMutex, RwLock};
+use std::time::{Duration, Instant};
 
 use parser::Item;
 use tokio::sync::Mutex;
@@ -73,6 +73,11 @@ pub struct TradeClient<T: HttpTransport> {
     stats: StatDefinitions,
     items: ItemDefinitions,
     limiter: Mutex<RateLimiter>,
+    /// When the in-flight (or next) request is allowed to fire, if it's been
+    /// rate-limit-delayed. The UI polls [`retry_in`](Self::retry_in) to show a
+    /// "throttled, retrying in Ns" note (PRD §4.4). Plain `std` mutex: only ever
+    /// locked briefly, never across an await.
+    retry_at: StdMutex<Option<Instant>>,
 }
 
 impl<T: HttpTransport> TradeClient<T> {
@@ -89,7 +94,15 @@ impl<T: HttpTransport> TradeClient<T> {
             stats,
             items,
             limiter: Mutex::new(RateLimiter::new()),
+            retry_at: StdMutex::new(None),
         }
+    }
+
+    /// How long until the next request is allowed to fire, if currently
+    /// rate-limit-throttled (else `None`). For the "retrying in Ns" UI note.
+    pub fn retry_in(&self) -> Option<Duration> {
+        let at = *self.retry_at.lock().expect("retry_at lock");
+        at.and_then(|t| t.checked_duration_since(Instant::now()))
     }
 
     /// The league searches currently target.
@@ -227,6 +240,8 @@ impl<T: HttpTransport> TradeClient<T> {
                     "rate limited, retrying in {}s",
                     delay.as_secs()
                 );
+                // Expose the wait to the UI for the duration of the sleep.
+                *self.retry_at.lock().expect("retry_at lock") = Some(Instant::now() + delay);
                 tokio::time::sleep(delay).await;
             }
 
@@ -241,6 +256,8 @@ impl<T: HttpTransport> TradeClient<T> {
                 tracing::warn!("got 429, honouring rate-limit headers and retrying");
                 continue;
             }
+            // No longer waiting on the limiter.
+            *self.retry_at.lock().expect("retry_at lock") = None;
             return Ok(response);
         }
         unreachable!("loop returns on the final attempt")

@@ -33,6 +33,10 @@ const SHOWN: usize = 7;
 /// variable, and a too-short window is what made some presses "do nothing".
 const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(1000);
 const POLL_INTERVAL: Duration = Duration::from_millis(8);
+/// Quiet period after the last filter edit before a live re-query fires (PRD
+/// §4.7 "debounced"). Long enough to coalesce a flurry of slider/checkbox edits,
+/// short enough to feel live.
+const FILTER_DEBOUNCE: Duration = Duration::from_millis(350);
 
 /// In-game-ish colour for rolled mod text.
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
@@ -180,6 +184,10 @@ pub struct QuickModeApp {
     filters: Vec<StatFilterRow>,
     /// Detailed-mode price-range filter.
     price_filter: PriceFilterState,
+    /// A filter edit is pending a debounced live re-query.
+    filter_dirty: bool,
+    /// When the last filter edit happened (debounce timer base).
+    filter_changed_at: Instant,
     phase: Phase,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -221,6 +229,8 @@ impl QuickModeApp {
             icon_url: None,
             filters: Vec::new(),
             price_filter: PriceFilterState::default(),
+            filter_dirty: false,
+            filter_changed_at: Instant::now(),
             phase: Phase::Idle,
             tx,
             rx,
@@ -495,16 +505,33 @@ impl QuickModeApp {
         }
 
         // Detailed mode: the filter panel (PRD §4.7), between the item and the
-        // listings. "Apply" re-runs the search keeping the toggled filters.
+        // listings. Edits re-run the search after a short debounce; "Apply" (or
+        // Enter in a field) fires immediately.
         if self.mode == Mode::Detailed {
             ui.add_space(6.0);
-            if self.filter_panel(ui) {
+            let apply_now = self.filter_panel(ui);
+            // Fire once edits go quiet and nothing is in flight. The overlay
+            // redraws continuously, so this is re-checked every frame.
+            let debounced = self.filter_dirty
+                && self.filter_changed_at.elapsed() >= FILTER_DEBOUNCE
+                && !matches!(self.phase, Phase::Loading);
+            if apply_now || debounced {
+                self.filter_dirty = false;
                 self.rerun_query(&ctx);
             }
         }
 
         ui.add_space(6.0);
 
+        // Rate-limit feedback (PRD §4.4): don't fire blindly — tell the user
+        // we're waiting on the trade API's bucket.
+        if let Some(wait) = self.client.retry_in() {
+            let secs = (wait.as_millis() as u64).div_ceil(1000);
+            ui.colored_label(
+                Color32::from_rgb(0xff, 0xc8, 0x4b),
+                format!("⏳ rate limited — retrying in {secs}s"),
+            );
+        }
         if matches!(self.phase, Phase::Loading) {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -588,23 +615,29 @@ impl QuickModeApp {
     /// search (the Apply button).
     fn filter_panel(&mut self, ui: &mut egui::Ui) -> bool {
         let mut requery = false;
+        let mut changed = false;
         egui::CollapsingHeader::new(RichText::new("🔍 Filters").strong())
             .default_open(true)
             .show(ui, |ui| {
                 // Price range (PRD §4.7 price-range filter).
                 ui.horizontal(|ui| {
                     ui.label("Price");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.price_filter.min)
-                            .hint_text("min")
-                            .desired_width(48.0),
-                    );
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.price_filter.min)
+                                .hint_text("min")
+                                .desired_width(48.0),
+                        )
+                        .changed();
                     ui.label("–");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.price_filter.max)
-                            .hint_text("max")
-                            .desired_width(48.0),
-                    );
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.price_filter.max)
+                                .hint_text("max")
+                                .desired_width(48.0),
+                        )
+                        .changed();
+                    let before = self.price_filter.currency.clone();
                     egui::ComboBox::from_id_salt("price-currency")
                         .selected_text(currency_label(&self.price_filter.currency))
                         .show_ui(ui, |ui| {
@@ -616,6 +649,7 @@ impl QuickModeApp {
                                 );
                             }
                         });
+                    changed |= self.price_filter.currency != before;
                 });
 
                 ui.add_space(4.0);
@@ -635,20 +669,24 @@ impl QuickModeApp {
                                 .striped(true)
                                 .show(ui, |ui| {
                                     for row in &mut self.filters {
-                                        ui.checkbox(&mut row.enabled, "");
+                                        changed |= ui.checkbox(&mut row.enabled, "").changed();
                                         ui.label(
                                             RichText::new(&row.label).color(AFFIX_BLUE).small(),
                                         );
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut row.min)
-                                                .hint_text("min")
-                                                .desired_width(46.0),
-                                        );
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut row.max)
-                                                .hint_text("max")
-                                                .desired_width(46.0),
-                                        );
+                                        changed |= ui
+                                            .add(
+                                                egui::TextEdit::singleline(&mut row.min)
+                                                    .hint_text("min")
+                                                    .desired_width(46.0),
+                                            )
+                                            .changed();
+                                        changed |= ui
+                                            .add(
+                                                egui::TextEdit::singleline(&mut row.max)
+                                                    .hint_text("max")
+                                                    .desired_width(46.0),
+                                            )
+                                            .changed();
                                         ui.end_row();
                                     }
                                 });
@@ -656,10 +694,17 @@ impl QuickModeApp {
                 }
 
                 ui.add_space(4.0);
-                if ui.button("🔄 Apply filters").clicked() {
+                if ui.button("🔄 Apply now").clicked() {
                     requery = true;
                 }
             });
+
+        // Any edit (re)starts the debounce timer; the caller fires the re-query
+        // once it elapses.
+        if changed {
+            self.filter_dirty = true;
+            self.filter_changed_at = Instant::now();
+        }
         requery
     }
 }
