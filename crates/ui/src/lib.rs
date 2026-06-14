@@ -600,7 +600,7 @@ fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<Strin
         }
         chat_button(ui, "➕", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
         chat_button(ui, "🏠", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
-        chat_button(ui, "🤝", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
+        chat_button(ui, "💱", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
     });
 }
 
