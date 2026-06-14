@@ -76,23 +76,24 @@ impl Config {
     }
 
     /// Load from disk, falling back to defaults on a missing or invalid file.
-    /// On first run (no file) the defaults are written out so the file exists
-    /// and can be hand-edited.
+    ///
+    /// The loaded config is always written back out, so the file on disk is
+    /// seeded on first run AND backfilled with any newly-added fields (with
+    /// their defaults) — otherwise new settings would be applied at runtime but
+    /// never visible/editable in the file.
     pub fn load() -> Self {
         let path = Self::path();
-        match std::fs::read_to_string(&path) {
+        let config = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
                 tracing::warn!(path = %path.display(), error = %e, "invalid config; using defaults");
                 Config::default()
             }),
-            Err(_) => {
-                let config = Config::default();
-                if let Err(e) = config.save() {
-                    tracing::warn!(path = %path.display(), error = %e, "could not seed config");
-                }
-                config
-            }
+            Err(_) => Config::default(),
+        };
+        if let Err(e) = config.save() {
+            tracing::warn!(path = %path.display(), error = %e, "could not write config");
         }
+        config
     }
 
     /// Write back to disk (creating the directory if needed).
