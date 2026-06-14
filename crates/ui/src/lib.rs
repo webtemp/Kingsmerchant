@@ -15,8 +15,8 @@ use eframe::egui;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
-    fetch_definitions, ClientConfig, PriceCheck, QueryOptions, ReqwestTransport, ResultEntry,
-    TradeClient,
+    fetch_definitions, fetch_leagues, ClientConfig, League, PriceCheck, QueryOptions,
+    ReqwestTransport, ResultEntry, TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -33,23 +33,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(8);
 /// In-game-ish colour for rolled mod text.
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
 const HEADER_BG: Color32 = Color32::from_rgb(0x17, 0x17, 0x1c);
-
-/// Prefilled so the first "Price check" works out of the box (a Topaz Ring base,
-/// which exists in any league). Replace it by pasting or reading the clipboard.
-const SAMPLE_ITEM: &str = "Item Class: Rings
-Rarity: Rare
-Honour Spiral
-Topaz Ring
---------
-Item Level: 79
---------
-{ Implicit Modifier - Elemental, Lightning, Resistance }
-+30(20-30)% to Lightning Resistance
---------
-{ Prefix Modifier \"Adroit\" (Tier: 1) - Evasion }
-+221(203-233) to Evasion Rating
-{ Suffix Modifier \"of the Thunderhead\" (Tier: 5) - Elemental, Lightning, Resistance }
-+23(21-25)% to Lightning Resistance";
 
 pub type Client = TradeClient<ReqwestTransport>;
 
@@ -87,6 +70,8 @@ pub struct QuickModeApp {
     rt: tokio::runtime::Runtime,
     client: Arc<Client>,
     league: String,
+    /// Leagues offered in the top-right selector (PRD §4.8).
+    leagues: Vec<League>,
     item_text: String,
     view: View,
     /// The item the current/last search was built from (for the header).
@@ -113,6 +98,7 @@ impl QuickModeApp {
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
         league: String,
+        leagues: Vec<League>,
         hotkey_rx: Receiver<Hotkey>,
     ) -> Self {
         let (tx, rx) = channel();
@@ -120,7 +106,8 @@ impl QuickModeApp {
             rt,
             client,
             league,
-            item_text: SAMPLE_ITEM.to_string(),
+            leagues,
+            item_text: String::new(),
             view: View::Item,
             item: None,
             icon_url: None,
@@ -179,18 +166,22 @@ impl QuickModeApp {
 
 impl eframe::App for QuickModeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.ui(ctx);
+        self.pump(ctx);
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(6.0);
+            self.content(ui);
+        });
     }
 }
 
 impl QuickModeApp {
-    /// Build the whole quick-mode UI for one frame and pump the hotkey/result
-    /// channels. Window-system agnostic: the eframe window and the layer-shell
-    /// overlay both call this with their own `egui::Context`.
-    pub fn ui(&mut self, ctx: &egui::Context) {
-        // Ctrl+C in game → the watcher pushes the copied item here; raise the
-        // window and price-check it automatically. A missed copy gets a hint
-        // instead of silently doing nothing.
+    /// Drain the hotkey + price-check channels. Side-effect only (no drawing),
+    /// so the overlay can call it every frame — even while hidden — to notice a
+    /// fresh Ctrl+C and decide to pop.
+    pub fn pump(&mut self, ctx: &egui::Context) {
+        // Ctrl+C in game → the watcher pushes the copied item here; price-check
+        // it automatically and flag a pop. A missed copy gets a hint instead of
+        // silently doing nothing.
         while let Ok(event) = self.hotkey_rx.try_recv() {
             match event {
                 Hotkey::Item(text) => {
@@ -225,103 +216,166 @@ impl QuickModeApp {
                 Err(e) => Phase::Failed(e),
             };
         }
+    }
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.heading("poe2ddd");
-                ui.label(RichText::new("· quick mode").weak());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(format!("league: {}", self.league)).weak());
-                });
+    /// Render the popup body into the given `Ui`. No panels — the caller frames
+    /// it (the eframe window uses a `CentralPanel`; the overlay an auto-sizing
+    /// translucent `Area`). Call [`pump`](Self::pump) first.
+    pub fn content(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+
+        // Header: title + league selector (top-right, PRD §4.8).
+        ui.horizontal(|ui| {
+            ui.heading("poe2ddd");
+            ui.label(RichText::new("· quick mode").weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.league_selector(ui, &ctx);
             });
-            ui.add_space(4.0);
+        });
+        ui.add_space(4.0);
+
+        // View toggle + actions.
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.view, View::Item, "🛡 Item");
+            ui.selectable_value(&mut self.view, View::Text, "📝 Text");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let busy = matches!(self.phase, Phase::Loading);
+                let can_search = !self.item_text.trim().is_empty() && !busy;
+                if ui
+                    .add_enabled(can_search, egui::Button::new("💰 Price check"))
+                    .clicked()
+                {
+                    self.start_price_check(&ctx);
+                }
+                if ui.button("📋 Read clipboard").clicked() {
+                    self.read_clipboard();
+                }
+            });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(6.0);
-
-            // View toggle + actions.
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.view, View::Item, "🛡 Item");
-                ui.selectable_value(&mut self.view, View::Text, "📝 Text");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let busy = matches!(self.phase, Phase::Loading);
-                    let can_search = !self.item_text.trim().is_empty() && !busy;
-                    if ui
-                        .add_enabled(can_search, egui::Button::new("💰 Price check"))
-                        .clicked()
-                    {
-                        self.start_price_check(ctx);
-                    }
-                    if ui.button("📋 Read clipboard").clicked() {
-                        self.read_clipboard();
-                    }
-                });
-            });
-
-            if let Some(hint) = &self.hint {
-                ui.add_space(4.0);
-                ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("⚠ {hint}"));
-            }
-
+        if let Some(hint) = &self.hint {
             ui.add_space(4.0);
+            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("⚠ {hint}"));
+        }
 
-            match self.view {
-                View::Text => {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut self.item_text)
-                            .desired_rows(8)
-                            .desired_width(f32::INFINITY)
-                            .font(egui::TextStyle::Monospace),
-                    );
-                }
-                View::Item => match parser::parse_item(&self.item_text) {
-                    Ok(item) => item_card(ui, &item, self.icon_url.as_deref()),
-                    Err(e) => {
-                        ui.colored_label(
-                            Color32::from_rgb(0xff, 0x6b, 0x6b),
-                            format!("Can't render — not a POE2 item: {e}"),
-                        );
-                        ui.label(RichText::new("Switch to 📝 Text to edit.").weak());
-                    }
-                },
-            }
+        ui.add_space(4.0);
 
-            ui.add_space(6.0);
-
-            if matches!(self.phase, Phase::Loading) {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("searching…");
-                });
-            }
-            ui.separator();
-
-            let mut copied: Option<String> = None;
-            match &self.phase {
-                Phase::Idle => {
-                    ui.label(RichText::new("Press 💰 Price check.").weak().italics());
-                }
-                Phase::Loading => {}
-                Phase::Failed(e) => {
-                    ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
-                }
-                Phase::Done(pc) => show_results(ui, pc, &mut copied),
-            }
-            if let Some(label) = copied {
-                self.copy_status = Some(label);
-            }
-
-            if let Some(status) = &self.copy_status {
-                ui.add_space(4.0);
-                ui.colored_label(
-                    Color32::from_rgb(0x4c, 0xd1, 0x37),
-                    format!("✓ Copied {status} — paste into POE2 chat (Enter)"),
+        match self.view {
+            View::Text => {
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.item_text)
+                        .desired_rows(8)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
                 );
             }
-        });
+            View::Item => {
+                if self.item_text.trim().is_empty() {
+                    ui.label(
+                        RichText::new("Hover an item in POE2 and press Ctrl+C to price it.")
+                            .weak()
+                            .italics(),
+                    );
+                } else {
+                    match parser::parse_item(&self.item_text) {
+                        Ok(item) => item_card(ui, &item, self.icon_url.as_deref()),
+                        Err(e) => {
+                            ui.colored_label(
+                                Color32::from_rgb(0xff, 0x6b, 0x6b),
+                                format!("Can't render — not a POE2 item: {e}"),
+                            );
+                            ui.label(RichText::new("Switch to 📝 Text to edit.").weak());
+                        }
+                    }
+                }
+            }
+        }
+
+        ui.add_space(6.0);
+
+        if matches!(self.phase, Phase::Loading) {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("searching…");
+            });
+        }
+        ui.separator();
+
+        let mut copied: Option<String> = None;
+        match &self.phase {
+            Phase::Idle => {
+                ui.label(
+                    RichText::new("Waiting for an item…")
+                        .weak()
+                        .italics(),
+                );
+            }
+            Phase::Loading => {}
+            Phase::Failed(e) => {
+                ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
+            }
+            Phase::Done(pc) => {
+                show_results(ui, pc, &mut copied);
+                ui.add_space(6.0);
+                let url = trade_url(&self.league, &pc.query_id);
+                if ui
+                    .button("🌐 Open on trade site")
+                    .on_hover_text(&url)
+                    .clicked()
+                {
+                    if let Err(e) = platform_linux::open_url(&url) {
+                        tracing::warn!(error = %e, "xdg-open failed");
+                    }
+                }
+            }
+        }
+        if let Some(label) = copied {
+            self.copy_status = Some(label);
+        }
+
+        if let Some(status) = &self.copy_status {
+            ui.add_space(4.0);
+            ui.colored_label(
+                Color32::from_rgb(0x4c, 0xd1, 0x37),
+                format!("✓ Copied {status} — paste into POE2 chat (Enter)"),
+            );
+        }
     }
+
+    /// The league dropdown. Switching re-prices the loaded item under the new
+    /// league. Falls back to a plain label if the leagues list failed to load.
+    fn league_selector(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if self.leagues.is_empty() {
+            ui.label(RichText::new(&self.league).weak());
+            return;
+        }
+        let current = self.league.clone();
+        let mut chosen = current.clone();
+        egui::ComboBox::from_id_salt("league-selector")
+            .selected_text(&current)
+            .show_ui(ui, |ui| {
+                for lg in &self.leagues {
+                    ui.selectable_value(&mut chosen, lg.id.clone(), &lg.text);
+                }
+            });
+        if chosen != current {
+            self.league = chosen.clone();
+            self.client.set_league(chosen);
+            // Re-price the currently loaded item under the new league.
+            if parser::parse_item(&self.item_text).is_ok() {
+                self.start_price_check(ctx);
+            }
+        }
+    }
+}
+
+/// Deep link to the official trade site for a finished search (PRD §4.6).
+fn trade_url(league: &str, query_id: &str) -> String {
+    format!(
+        "https://www.pathofexile.com/trade2/search/poe2/{}/{}",
+        league.replace(' ', "%20"),
+        query_id
+    )
 }
 
 /// Render a parsed item as an in-game-style tooltip card.
@@ -649,12 +703,20 @@ pub fn build_app(league: String, hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<
     let (stats, items) = rt
         .block_on(fetch_definitions(&transport, BASE_URL))
         .map_err(|e| anyhow::anyhow!("loading definitions: {e}"))?;
+    // A leagues failure shouldn't block startup — the selector just falls back
+    // to a static label.
+    let leagues = rt
+        .block_on(fetch_leagues(&transport, BASE_URL))
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not fetch leagues; selector disabled");
+            Vec::new()
+        });
 
     let mut config = ClientConfig::new(&league);
     config.realm = std::env::var("POE_REALM").ok();
     let client = Arc::new(TradeClient::new(transport, config, stats, items));
 
-    Ok(QuickModeApp::new(rt, client, league, hotkey_rx))
+    Ok(QuickModeApp::new(rt, client, league, leagues, hotkey_rx))
 }
 
 /// Build the client (fetching live definitions) and run the plain eframe window

@@ -29,7 +29,7 @@ use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
 };
 use smithay_client_toolkit::{
-    compositor::{CompositorHandler, CompositorState},
+    compositor::{CompositorHandler, CompositorState, Region},
     delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
     delegate_seat,
     output::{OutputHandler, OutputState},
@@ -55,13 +55,22 @@ use wayland_client::{
 
 use ui::{Hotkey, QuickModeApp};
 
-/// Popup size. Sized to the content we render (item card + 7 listings); egui
-/// clips anything taller for now (a ScrollArea is a later refinement).
+/// Fixed popup width; height auto-fits the content (see [`App::draw`]).
 const WIDTH: u32 = 470;
-const HEIGHT: u32 = 680;
-/// Fixed placement for increment 1 (cursor-relative placement is increment 2).
+/// Starting height before the first content measurement.
+const INITIAL_HEIGHT: u32 = 200;
+/// Vertical space egui lays the content out in while we measure it. The surface
+/// is then shrunk to the measured height (clamped to `MAX_HEIGHT`).
+const LAYOUT_HEIGHT: f32 = 1600.0;
+const MIN_HEIGHT: u32 = 80;
+const MAX_HEIGHT: u32 = 1300;
+/// Fixed placement for now (cursor-relative placement is a later increment).
 const MARGIN_TOP: i32 = 120;
 const MARGIN_LEFT: i32 = 120;
+/// Popup backing: deliberately very translucent so the game shows through
+/// (~80% transparent per the design). Text/widgets paint opaque on top.
+const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 11, 15, 52);
+const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x3a, 0x3a, 0x46);
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -103,7 +112,7 @@ fn main() -> Result<()> {
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     layer.set_anchor(Anchor::TOP | Anchor::LEFT);
     layer.set_margin(MARGIN_TOP, 0, 0, MARGIN_LEFT);
-    layer.set_size(WIDTH, HEIGHT);
+    layer.set_size(WIDTH, INITIAL_HEIGHT);
     layer.commit();
 
     let mut app = App {
@@ -111,6 +120,7 @@ fn main() -> Result<()> {
         seat_state: SeatState::new(&globals, &qh),
         output_state: OutputState::new(&globals, &qh),
         conn: conn.clone(),
+        compositor,
         layer,
         pointer: None,
         gl: None,
@@ -119,11 +129,14 @@ fn main() -> Result<()> {
         events: Vec::new(),
         pointer_pos: egui::pos2(-1.0, -1.0),
         width: WIDTH,
-        height: HEIGHT,
+        height: INITIAL_HEIGHT,
+        shown: false,
+        input_region: None,
+        applied_input: None,
         exit: false,
     };
 
-    tracing::info!("overlay running — Ctrl+C on an item in POE2 to price it");
+    tracing::info!("overlay running (hidden) — Ctrl+C on an item in POE2 to pop it");
     while !app.exit {
         event_queue.blocking_dispatch(&mut app).context("dispatch")?;
     }
@@ -143,6 +156,7 @@ struct App {
     seat_state: SeatState,
     output_state: OutputState,
     conn: Connection,
+    compositor: CompositorState,
     layer: LayerSurface,
     pointer: Option<wl_pointer::WlPointer>,
     gl: Option<Gl>,
@@ -152,6 +166,15 @@ struct App {
     pointer_pos: egui::Pos2,
     width: u32,
     height: u32,
+    /// Whether the popup is visible. Starts hidden; a valid Ctrl+C shows it,
+    /// Esc/✕ hides it (Esc lands in a later increment).
+    shown: bool,
+    /// Kept alive until the next commit so the compositor reads the region
+    /// before it's destroyed.
+    input_region: Option<Region>,
+    /// Last applied (shown, width, height) so we only touch the input region on
+    /// change.
+    applied_input: Option<(bool, u32, u32)>,
     exit: bool,
 }
 
@@ -226,22 +249,61 @@ impl App {
             }
         }
 
+        // Drain hotkeys + results every frame, even while hidden, so a fresh
+        // Ctrl+C is noticed. A valid item flips us visible.
+        self.quick.pump(&self.egui_ctx);
+        if self.quick.take_pop_request() {
+            self.shown = true;
+        }
+
+        // Lay the content out in a tall space so we can measure its natural
+        // height, then shrink the surface to fit (PRD §4.5 "small popup").
         let raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::pos2(0.0, 0.0),
-                egui::vec2(self.width as f32, self.height as f32),
+                egui::vec2(self.width as f32, LAYOUT_HEIGHT),
             )),
             events: std::mem::take(&mut self.events),
             focused: false,
             ..Default::default()
         };
 
-        // Reuse the Phase 3 draw code verbatim.
         let ctx = self.egui_ctx.clone();
-        let full = ctx.run(raw_input, |c| self.quick.ui(c));
-        // Increment 1 is always visible; just clear the flag so it doesn't
-        // accumulate. Increment 2 repositions to the cursor on a true request.
-        let _ = self.quick.take_pop_request();
+        let shown = self.shown;
+        let width = self.width as f32;
+        let mut measured = 0.0_f32;
+        let full = ctx.run(raw_input, |c| {
+            if !shown {
+                return;
+            }
+            let resp = egui::Area::new(egui::Id::new("popup"))
+                .fixed_pos(egui::pos2(0.0, 0.0))
+                .show(c, |ui| {
+                    ui.set_max_width(width);
+                    egui::Frame::none()
+                        .fill(OVERLAY_FILL)
+                        .stroke(egui::Stroke::new(1.0, OVERLAY_STROKE))
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::same(10.0))
+                        .show(ui, |ui| {
+                            ui.set_width(width - 20.0);
+                            self.quick.content(ui);
+                        });
+                });
+            measured = resp.response.rect.height();
+        });
+
+        // Auto-height: resize the surface to the measured content (one-frame
+        // settle). The configure that follows resizes the GL surface.
+        if shown && measured > 0.0 {
+            let want = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
+            if want != self.height {
+                self.layer.set_size(self.width, want);
+                self.layer.commit();
+            }
+        }
+
+        self.apply_input_region();
 
         let ppp = full.pixels_per_point;
         let primitives = ctx.tessellate(full.shapes, ppp);
@@ -259,10 +321,29 @@ impl App {
             .expect("swap_buffers");
 
         // Keep redrawing so async price-check results and hover states appear.
-        // (Continuous at vsync for now; on-demand wake-ups are a Phase 7 polish.)
+        // (Continuous at vsync for now; on-demand wake-ups are a later polish.)
         let surface = self.layer.wl_surface().clone();
         surface.frame(qh, surface.clone());
         self.layer.commit();
+    }
+
+    /// Set the surface input region to the popup bounds when visible (so it
+    /// catches clicks) and to nothing when hidden (so clicks pass through to
+    /// POE2). Only re-applied when the visibility or size changes.
+    fn apply_input_region(&mut self) {
+        let state = (self.shown, self.width, self.height);
+        if self.applied_input == Some(state) {
+            return;
+        }
+        if let Ok(region) = Region::new(&self.compositor) {
+            if self.shown {
+                region.add(0, 0, self.width as i32, self.height as i32);
+            }
+            // An empty region = no input = clicks pass through to the game.
+            self.layer.set_input_region(Some(region.wl_region()));
+            self.input_region = Some(region); // keep alive until the next commit
+            self.applied_input = Some(state);
+        }
     }
 }
 

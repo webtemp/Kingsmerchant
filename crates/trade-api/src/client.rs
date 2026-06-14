@@ -1,6 +1,7 @@
 //! The trade client: ties query building, the HTTP seam, rate-limit gating and
 //! response parsing into search + fetch + price-check operations (PRD §4.4).
 
+use std::sync::RwLock;
 use std::time::Instant;
 
 use parser::Item;
@@ -62,6 +63,10 @@ impl PriceCheck {
 pub struct TradeClient<T: HttpTransport> {
     transport: T,
     config: ClientConfig,
+    /// The active league. Held behind a lock so the UI can switch leagues at
+    /// runtime (PRD §4.8 selector) without rebuilding the whole client — the
+    /// definitions are league-independent. Seeded from `config.league`.
+    league: RwLock<String>,
     stats: StatDefinitions,
     items: ItemDefinitions,
     limiter: Mutex<RateLimiter>,
@@ -75,12 +80,24 @@ impl<T: HttpTransport> TradeClient<T> {
         items: ItemDefinitions,
     ) -> Self {
         TradeClient {
+            league: RwLock::new(config.league.clone()),
             transport,
             config,
             stats,
             items,
             limiter: Mutex::new(RateLimiter::new()),
         }
+    }
+
+    /// The league searches currently target.
+    pub fn league(&self) -> String {
+        self.league.read().expect("league lock").clone()
+    }
+
+    /// Switch the league future searches target (PRD §4.8). Cheap — definitions
+    /// are league-independent, so no rebuild.
+    pub fn set_league(&self, league: impl Into<String>) {
+        *self.league.write().expect("league lock") = league.into();
     }
 
     pub fn stats(&self) -> &StatDefinitions {
@@ -103,7 +120,7 @@ impl<T: HttpTransport> TradeClient<T> {
         let url = self.with_realm(format!(
             "{}/api/trade2/search/{}",
             self.config.base_url,
-            encode_path_segment(&self.config.league)
+            encode_path_segment(&self.league())
         ));
         let resp = self
             .send(HttpRequest {
@@ -215,6 +232,29 @@ pub async fn fetch_definitions<T: HttpTransport>(
         StatDefinitions::from_json(&stats_json)?,
         ItemDefinitions::from_json(&items_json)?,
     ))
+}
+
+/// A trade league as offered by `trade2/data/leagues` (PRD §4.8 selector).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct League {
+    /// League id used as the search path segment (e.g. `Runes of Aldur`).
+    pub id: String,
+    /// Human label for the dropdown (usually the same as `id`).
+    pub text: String,
+}
+
+/// Fetch the list of POE2 trade leagues for the league selector.
+pub async fn fetch_leagues<T: HttpTransport>(
+    transport: &T,
+    base_url: &str,
+) -> Result<Vec<League>, Error> {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        result: Vec<League>,
+    }
+    let body = get_body(transport, &format!("{base_url}/api/trade2/data/leagues")).await?;
+    let parsed: Wrapper = serde_json::from_str(&body).map_err(|e| Error::decode("leagues", e))?;
+    Ok(parsed.result)
 }
 
 async fn get_body<T: HttpTransport>(transport: &T, url: &str) -> Result<String, Error> {

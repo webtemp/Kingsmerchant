@@ -65,6 +65,19 @@ pub fn read_clipboard_text() -> anyhow::Result<Option<String>> {
 ///
 /// `xclip -in` forks a helper that serves the selection and then returns, so
 /// this call doesn't block.
+/// Open a URL in the user's default browser via `xdg-open` (for the popup's
+/// "open on the trade site" link, PRD §4.6). Fire-and-forget: `xdg-open`
+/// detaches the browser and returns immediately.
+pub fn open_url(url: &str) -> anyhow::Result<()> {
+    Command::new("xdg-open")
+        .arg(url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("failed to run `xdg-open` (is xdg-utils installed?)")?;
+    Ok(())
+}
+
 pub fn write_clipboard_text(text: &str) -> anyhow::Result<()> {
     let mut child = Command::new("xclip")
         .args(["-selection", "clipboard", "-in"])
