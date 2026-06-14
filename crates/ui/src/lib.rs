@@ -20,8 +20,9 @@ use config::Config;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
-    fetch_definitions, fetch_leagues, ClientConfig, League, ListingStatus, PriceCheck, PriceEstimate,
-    PriceFilter, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
+    build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, League, ListingStatus,
+    PriceCheck, PriceEstimate, PriceFilter, ReqwestTransport, ResultEntry, StatSelection,
+    TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -35,9 +36,9 @@ const SHOWN: usize = 7;
 const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(1000);
 const POLL_INTERVAL: Duration = Duration::from_millis(8);
 /// Quiet period after the last filter edit before a live re-query fires (PRD
-/// §4.7 "debounced"). Long enough to coalesce a flurry of slider/checkbox edits,
-/// short enough to feel live.
-const FILTER_DEBOUNCE: Duration = Duration::from_millis(350);
+/// §4.7 "debounced"). Deliberately long so toggling several filters fires one
+/// request, not a burst — easier on the rate limiter. "Apply now" bypasses it.
+const FILTER_DEBOUNCE: Duration = Duration::from_secs(4);
 
 /// In-game-ish colour for rolled mod text.
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
@@ -99,6 +100,8 @@ struct StatFilterRow {
     /// The item's own rolled value, used to seed the min and to relax it for
     /// the "Similar item" preset.
     rolled: Option<f64>,
+    /// This filter is an implicit mod — flagged with a pill and off by default.
+    is_implicit: bool,
 }
 
 impl StatFilterRow {
@@ -142,6 +145,21 @@ const PRICE_CURRENCIES: &[(&str, &str)] = &[
     ("divine", "divine"),
     ("chaos", "chaos"),
 ];
+
+/// A small green "implicit" pill, drawn before an implicit filter's label.
+fn implicit_pill(ui: &mut egui::Ui) {
+    egui::Frame::none()
+        .fill(Color32::from_rgb(0x2e, 0x7d, 0x32))
+        .rounding(7.0)
+        .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new("implicit")
+                    .color(Color32::from_rgb(0xe6, 0xff, 0xe6))
+                    .small(),
+            );
+        });
+}
 
 /// Label for the price-currency dropdown's current id.
 fn currency_label(id: &str) -> &str {
@@ -289,6 +307,7 @@ impl QuickModeApp {
         self.estimate_loading = false;
         self.filters = self.build_filter_rows(&item);
         self.price_filter = PriceFilterState::default();
+        self.filter_dirty = false; // no stale debounce from the previous item
         // poeprices ML estimate is rares-only and doesn't depend on the
         // filters, so fetch it once per fresh check (PRD §4.7).
         if item.rarity == Rarity::Rare {
@@ -350,20 +369,23 @@ impl QuickModeApp {
         let mut rows = Vec::new();
         let mut seen = HashSet::new();
         // Mapped with the item's local/global context (e.g. local evasion on
-        // body armour). Enabled by default so the first detailed search matches
-        // the item's own mods; the user toggles off what they don't care about.
+        // body armour). Explicit mods are enabled by default so the first search
+        // matches the item; implicits are off by default (they're rarely the
+        // point and would over-constrain) and flagged with a pill.
         for mapped in self.client.stats().map_item(item) {
             if !seen.insert(mapped.id.clone()) {
                 continue;
             }
             let rolled = mapped.filter_value();
+            let is_implicit = mapped.stat_type == "implicit";
             rows.push(StatFilterRow {
                 id: mapped.id,
                 label: mapped.template,
-                enabled: true,
+                enabled: !is_implicit,
                 min: rolled.map(fmt_amount).unwrap_or_default(),
                 max: String::new(),
                 rolled,
+                is_implicit,
             });
         }
         rows
@@ -562,6 +584,7 @@ impl QuickModeApp {
         ui.separator();
 
         let mut copied: Option<String> = None;
+        let mut open_trade: Option<String> = None;
         match &self.phase {
             Phase::Idle => {
                 ui.label(
@@ -577,20 +600,28 @@ impl QuickModeApp {
             Phase::Done(pc) => {
                 show_results(ui, pc, &mut copied);
                 ui.add_space(6.0);
-                let url = trade_url(&self.config.league, &pc.query_id);
+                // Deep link carries the FULL query (disabled filters included),
+                // so the trade site shows unticked filters greyed, not absent.
+                let url = self.trade_url();
                 if ui
                     .button("🌐 Open on trade site")
-                    .on_hover_text(&url)
+                    .on_hover_text("Opens your browser with this exact search")
                     .clicked()
                 {
-                    if let Err(e) = platform_linux::open_url(&url) {
-                        tracing::warn!(error = %e, "xdg-open failed");
-                    }
+                    open_trade = Some(url);
                 }
             }
         }
         if let Some(label) = copied {
             self.copy_status = Some(label);
+        }
+        if let Some(url) = open_trade {
+            match platform_linux::open_url(&url) {
+                // Hide the popup so the browser comes forward — we're an
+                // always-on-top overlay that would otherwise cover it.
+                Ok(()) => self.close_requested = true,
+                Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
+            }
         }
 
         if let Some(status) = &self.copy_status {
@@ -691,9 +722,16 @@ impl QuickModeApp {
                                 .show(ui, |ui| {
                                     for row in &mut self.filters {
                                         changed |= ui.checkbox(&mut row.enabled, "").changed();
-                                        ui.label(
-                                            RichText::new(&row.label).color(AFFIX_BLUE).small(),
-                                        );
+                                        ui.horizontal(|ui| {
+                                            if row.is_implicit {
+                                                implicit_pill(ui);
+                                            }
+                                            ui.label(
+                                                RichText::new(&row.label)
+                                                    .color(AFFIX_BLUE)
+                                                    .small(),
+                                            );
+                                        });
                                         changed |= ui
                                             .add(
                                                 egui::TextEdit::singleline(&mut row.min)
@@ -785,15 +823,50 @@ impl QuickModeApp {
                 ui.label(RichText::new(text).color(Color32::from_rgb(0x7e, 0xc8, 0xff)));
             });
     }
+
+    /// Deep link to the official trade site for the current item + filters
+    /// (PRD §4.6). Encodes the whole query in `?q=` (not just a saved-search id)
+    /// so every filter — including the disabled ones — shows on the site exactly
+    /// as in the popup (unticked ones greyed, not missing).
+    fn trade_url(&self) -> String {
+        let base = format!(
+            "https://www.pathofexile.com/trade2/search/poe2/{}",
+            percent_encode(&self.config.league)
+        );
+        let Some(item) = &self.item else {
+            return base;
+        };
+        let selections: Vec<StatSelection> =
+            self.filters.iter().map(StatFilterRow::selection).collect();
+        let request = build_detailed_query(
+            item,
+            self.client.items(),
+            ListingStatus::Online,
+            &selections,
+            &self.price_filter.to_filter(),
+        );
+        match serde_json::to_string(&request) {
+            Ok(json) => format!("{base}?q={}", percent_encode(&json)),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not encode trade query");
+                base
+            }
+        }
+    }
 }
 
-/// Deep link to the official trade site for a finished search (PRD §4.6).
-fn trade_url(league: &str, query_id: &str) -> String {
-    format!(
-        "https://www.pathofexile.com/trade2/search/poe2/{}/{}",
-        league.replace(' ', "%20"),
-        query_id
-    )
+/// Percent-encode a string for use in a URL (RFC 3986 unreserved pass through).
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Render a parsed item as an in-game-style tooltip card.
