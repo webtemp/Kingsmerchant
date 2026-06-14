@@ -192,7 +192,11 @@ fn preferred_types(kind: &ModKind, source: Option<&ModSource>) -> Vec<&'static s
     match source {
         Some(ModSource::Fractured) => vec!["fractured", "explicit"],
         Some(ModSource::Crafted) => vec!["crafted", "explicit"],
-        Some(ModSource::Desecrated) => vec!["desecrated", "explicit"],
+        // Desecrated: the `desecrated.*` stat id matches only items whose mod
+        // came from desecration (almost nothing on the market), so a price
+        // check finds no comparables. Prefer the plain explicit variant (same
+        // stat number) — it's the same affix for pricing purposes.
+        Some(ModSource::Desecrated) => vec!["explicit", "desecrated"],
         None => match kind {
             ModKind::Implicit => vec!["implicit", "explicit"],
             ModKind::Prefix | ModKind::Suffix | ModKind::Unique | ModKind::Other(_) => {

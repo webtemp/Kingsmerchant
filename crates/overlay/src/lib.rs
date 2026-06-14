@@ -7,9 +7,8 @@
 //! (POE2 stays focused), starts hidden until the first valid Ctrl+C, and is
 //! centered on the output.
 //!
-//! Quick mode is visible only while Ctrl is held; detailed mode pins the popup
-//! open (it's wider, for the filter panel) until Esc or the ✕ button. Drag with
-//! Alt held (plus Ctrl in quick mode, which is what keeps it visible).
+//! Ctrl+C (or Ctrl+Alt+C) shows the popup; it's pinned open (with the filter
+//! panel) until Esc or the X button. Drag it with Alt held.
 //!
 //! Entry point is [`run`], shared by the `poe2ddd` binary (`cargo run`) and the
 //! `poe2-overlay` binary (`cargo run -p overlay`). The league comes from
@@ -290,11 +289,8 @@ impl App {
         if self.quick.take_close_request() {
             self.shown = false;
         }
-        // Quick mode lives only while Ctrl is held — release Ctrl hides it. A
-        // pinned (detailed) popup stays up until Esc or the ✕ button.
-        if !self.quick.pinned() && !self.quick.ctrl_held() {
-            self.shown = false;
-        }
+        // The popup is pinned: once shown it stays until Esc or the X button
+        // (handled above via take_close_request).
         if !self.shown {
             // Forget any drag so the next pop re-centers (no position memory).
             self.dragged = false;
@@ -532,12 +528,8 @@ impl PointerHandler for App {
                 }
                 PointerEventKind::Press { button, .. } => {
                     // Alt + left button starts a window drag (consumed, not
-                    // forwarded to egui). Quick mode also needs Ctrl held (it's
-                    // what keeps the popup visible); a pinned popup needs only Alt.
-                    if button == BTN_LEFT
-                        && self.quick.alt_held()
-                        && (self.quick.pinned() || self.quick.ctrl_held())
-                    {
+                    // forwarded to egui).
+                    if button == BTN_LEFT && self.quick.alt_held() {
                         self.dragging = true;
                         self.dragged = true; // stop centering, keep current pos
                     } else if let Some(b) = map_button(button) {

@@ -1,11 +1,12 @@
-//! Quick-mode price-check UI (PRD §4.6): the egui view + app logic, windowing
+//! The price-check UI (PRD §4.6, §4.7): the egui view + app logic, windowing
 //! agnostic so the `overlay` crate can drive it on a layer surface.
 //!
 //! Flow: Ctrl+C on an item → parse it → search + fetch via `trade-api` on a
 //! background tokio task → show the median asking price and the cheapest
 //! listings, each with Whisper / Invite / Hideout / Trade-with buttons that copy
 //! the chat command to the clipboard (we can't type into POE2 on Wayland, so
-//! the user pastes — PRD §4.6, §9.1).
+//! the user pastes — PRD §4.6, §9.1). The popup is pinned open with a filter
+//! panel (per-stat toggles, price range, similar-item) that re-queries live.
 
 pub mod config;
 
@@ -20,7 +21,7 @@ use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
     fetch_definitions, fetch_leagues, ClientConfig, League, ListingStatus, PriceCheck, PriceEstimate,
-    PriceFilter, QueryOptions, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
+    PriceFilter, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -42,33 +43,24 @@ const FILTER_DEBOUNCE: Duration = Duration::from_millis(350);
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
 const HEADER_BG: Color32 = Color32::from_rgb(0x17, 0x17, 0x1c);
 
-/// Popup width in quick mode; detailed mode is wider for the filter panel.
-pub const QUICK_WIDTH: u32 = 470;
-pub const DETAILED_WIDTH: u32 = 600;
+/// Popup width — wide enough for the filter panel.
+pub const POPUP_WIDTH: u32 = 600;
 
 pub type Client = TradeClient<ReqwestTransport>;
 
 /// Result of a background price check, sent back to the UI thread.
 enum Msg {
     Result(Box<Result<PriceCheck, String>>),
-    /// poeprices.info ML estimate (detailed mode, rares). `None` = poeprices
-    /// declined to price it; `Err` = it failed.
+    /// poeprices.info ML estimate (rares). `None` = poeprices declined to price
+    /// it; `Err` = it failed.
     Estimate(Box<Result<Option<PriceEstimate>, String>>),
-}
-
-/// Quick (Ctrl+C) vs detailed (Ctrl+Alt+C) price check. Detailed mode pins the
-/// popup open (it doesn't hide on Ctrl release) so filters can be toggled.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum Mode {
-    #[default]
-    Quick,
-    Detailed,
 }
 
 /// What the global-hotkey watcher observed.
 pub enum Hotkey {
-    /// A new item landed on the clipboard. `detailed` is true for Ctrl+Alt+C.
-    Item { text: String, detailed: bool },
+    /// A new item landed on the clipboard (Ctrl+C / Ctrl+Alt+C — both open the
+    /// pinned filter popup).
+    Item { text: String },
     /// The clipboard never produced an item before the timeout — usually POE2
     /// skipping the copy on a static cursor (PRD §9.3).
     Missed,
@@ -180,8 +172,6 @@ pub struct QuickModeApp {
     leagues: Vec<League>,
     item_text: String,
     view: View,
-    /// Quick vs detailed — set by the last hotkey. Detailed pins the popup.
-    mode: Mode,
     /// The item the current/last search was built from (for the header).
     item: Option<Item>,
     /// Icon URL of the priced item, learned from the search results.
@@ -234,7 +224,6 @@ impl QuickModeApp {
             leagues,
             item_text: String::new(),
             view: View::Item,
-            mode: Mode::Quick,
             item: None,
             icon_url: None,
             filters: Vec::new(),
@@ -261,20 +250,10 @@ impl QuickModeApp {
         self.ctrl_held
     }
 
-    /// Whether the popup is pinned open (detailed mode). The overlay keeps a
-    /// pinned popup visible even after Ctrl is released — it's dismissed only by
-    /// Escape or the ✕ button.
-    pub fn pinned(&self) -> bool {
-        self.mode == Mode::Detailed
-    }
-
-    /// Logical surface width for the current mode. Detailed mode is wider to fit
-    /// the filter panel; the overlay reads this each frame to size the layer.
+    /// Logical surface width; the overlay reads this each frame to size the
+    /// layer.
     pub fn surface_width(&self) -> u32 {
-        match self.mode {
-            Mode::Quick => QUICK_WIDTH,
-            Mode::Detailed => DETAILED_WIDTH,
-        }
+        POPUP_WIDTH
     }
 
     /// Whether Alt is currently held (from the evdev watcher).
@@ -308,21 +287,19 @@ impl QuickModeApp {
         self.icon_url = None;
         self.estimate = None;
         self.estimate_loading = false;
-        if self.mode == Mode::Detailed {
-            self.filters = self.build_filter_rows(&item);
-            self.price_filter = PriceFilterState::default();
-            // poeprices ML estimate is rares-only and doesn't depend on the
-            // filters, so fetch it once per fresh detailed check (PRD §4.7).
-            if item.rarity == Rarity::Rare {
-                self.spawn_estimate(ctx);
-            }
+        self.filters = self.build_filter_rows(&item);
+        self.price_filter = PriceFilterState::default();
+        // poeprices ML estimate is rares-only and doesn't depend on the
+        // filters, so fetch it once per fresh check (PRD §4.7).
+        if item.rarity == Rarity::Rare {
+            self.spawn_estimate(ctx);
         }
         self.item = Some(item.clone());
         self.spawn_query(ctx, item);
     }
 
     /// Fetch the poeprices.info ML estimate for the current `item_text` on a
-    /// background task (detailed mode, rares).
+    /// background task (rares).
     fn spawn_estimate(&mut self, ctx: &egui::Context) {
         self.estimate_loading = true;
         let client = Arc::clone(&self.client);
@@ -344,28 +321,23 @@ impl QuickModeApp {
         }
     }
 
-    /// Spawn the background search/fetch for `item`, picking the quick or
-    /// detailed query per the current mode.
+    /// Spawn the background search/fetch for `item` using the current filters.
     fn spawn_query(&mut self, ctx: &egui::Context, item: Item) {
         self.phase = Phase::Loading;
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
-        let detailed = self.mode == Mode::Detailed;
-        let selections: Vec<StatSelection> = self.filters.iter().map(StatFilterRow::selection).collect();
+        let selections: Vec<StatSelection> =
+            self.filters.iter().map(StatFilterRow::selection).collect();
         let price = self.price_filter.to_filter();
         self.rt.spawn(async move {
-            let result = if detailed {
-                client
-                    .price_check_detailed(&item, ListingStatus::Online, &selections, &price, SAMPLE)
-                    .await
-            } else {
-                client.price_check(&item, QueryOptions::default(), SAMPLE).await
-            }
-            .map_err(|e| e.to_string());
+            let result = client
+                .price_check_detailed(&item, ListingStatus::Online, &selections, &price, SAMPLE)
+                .await
+                .map_err(|e| e.to_string());
             if let Err(ref e) = result {
                 // Log so it's easy to copy out of the terminal, not just the popup.
-                tracing::error!(error = %e, detailed, "price check failed");
+                tracing::error!(error = %e, "price check failed");
             }
             let _ = tx.send(Msg::Result(Box::new(result)));
             ctx.request_repaint();
@@ -419,11 +391,10 @@ impl QuickModeApp {
         // silently doing nothing.
         while let Ok(event) = self.hotkey_rx.try_recv() {
             match event {
-                Hotkey::Item { text, detailed } => {
+                Hotkey::Item { text } => {
                     self.hint = None;
                     self.item_text = text;
                     self.view = View::Item;
-                    self.mode = if detailed { Mode::Detailed } else { Mode::Quick };
                     self.pop_requested = true;
                     self.start_price_check(ctx);
                 }
@@ -477,21 +448,15 @@ impl QuickModeApp {
     pub fn content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // Header: title + league selector (top-right, PRD §4.8). Detailed mode
-        // is pinned, so it gets a ✕ to dismiss (quick mode hides on Ctrl release).
+        // Header: title + close button + league selector (top-right, PRD §4.8).
+        // The popup is pinned, so it's dismissed by the X (or Esc).
         ui.horizontal(|ui| {
             ui.heading("poe2ddd");
-            let mode_label = match self.mode {
-                Mode::Quick => "· quick mode",
-                Mode::Detailed => "· detailed mode",
-            };
-            ui.label(RichText::new(mode_label).weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.mode == Mode::Detailed
-                    && ui
-                        .button(RichText::new("X").strong())
-                        .on_hover_text("Close (Esc)")
-                        .clicked()
+                if ui
+                    .button(RichText::new("X").strong())
+                    .on_hover_text("Close (Esc)")
+                    .clicked()
                 {
                     self.close_requested = true;
                 }
@@ -557,10 +522,9 @@ impl QuickModeApp {
             }
         }
 
-        // Detailed mode: the filter panel (PRD §4.7), between the item and the
-        // listings. Edits re-run the search after a short debounce; "Apply" (or
-        // Enter in a field) fires immediately.
-        if self.mode == Mode::Detailed {
+        // The filter panel (PRD §4.7), between the item and the listings. Edits
+        // re-run the search after a short debounce; "Apply now" fires immediately.
+        {
             ui.add_space(6.0);
             let apply_now = self.filter_panel(ui);
             // Fire once edits go quiet and nothing is in flight. The overlay
@@ -592,10 +556,8 @@ impl QuickModeApp {
             });
         }
 
-        // poeprices.info ML estimate badge (detailed mode, rares — PRD §4.7).
-        if self.mode == Mode::Detailed {
-            self.estimate_badge(ui);
-        }
+        // poeprices.info ML estimate badge (rares — PRD §4.7).
+        self.estimate_badge(ui);
 
         ui.separator();
 
@@ -1102,16 +1064,15 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                 HotkeyEvent::Close => Hotkey::Close,
                 // Ctrl/Alt state forwarded straight through.
                 HotkeyEvent::Modifiers { ctrl, alt } => Hotkey::Mods { ctrl, alt },
-                // A copy combo: wait for POE2 to write the item. Ctrl+Alt+C
-                // opens the pinned detailed view (PRD §4.7).
+                // A copy combo: wait for POE2 to write the item. Both Ctrl+C and
+                // Ctrl+Alt+C open the pinned filter popup (PRD §4.7).
                 HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
-                    let detailed = event == HotkeyEvent::DetailedCopy;
                     let start = Instant::now();
                     match wait_for_new_item(&last_seen) {
                         Some(text) => {
                             tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "item copied");
                             last_seen = Some(text.clone());
-                            Hotkey::Item { text, detailed }
+                            Hotkey::Item { text }
                         }
                         None => {
                             tracing::debug!("Ctrl+C produced no new item (cursor static?)");
