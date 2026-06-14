@@ -1331,6 +1331,11 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
             require_poe2_focus = require_focus,
             "listening for hotkeys"
         );
+        // Pre-create the injection device (after the watcher scanned keyboards,
+        // so it isn't picked up) so the first macro press is instant.
+        if config.f5_command.is_some() {
+            std::thread::spawn(platform_linux::warm_up_injection);
+        }
         let mut last_seen = platform_linux::read_clipboard_text().unwrap_or(None);
         for event in hotkeys {
             let outcome = match event {

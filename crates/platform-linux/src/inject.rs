@@ -1,147 +1,121 @@
-//! Keystroke injection into the focused window via a uinput virtual keyboard.
+//! Chat-command injection into the focused window (POE2), the fast way.
 //!
-//! PRD §9.1 says "cannot synthesize keys into POE2 on KDE Wayland" — but that's
-//! only true for X11 XTEST (xdotool) and the Wayland virtual-keyboard protocol
-//! (wtype), both of which KWin blocks for XWayland clients. A **uinput** device
-//! is different: it's a kernel-level virtual *hardware* keyboard, so the
-//! compositor treats its events as real input and delivers them to whatever
-//! window has focus — including XWayland POE2. (Same mechanism ydotool uses.)
+//! We do NOT type the command out character-by-character — that's slow and you
+//! watch every letter appear. Instead, like Exiled-Exchange-2, we put the
+//! command on the clipboard and **paste** it: tap Enter (open chat), Ctrl+V
+//! (whole command appears at once), Enter (send). The user's clipboard is saved
+//! and restored around it.
 //!
-//! Caveats this carries:
-//!   * It types into the **focused** window — so POE2 must be focused (the
-//!     overlay takes focus only while its popup is shown, so this works while
-//!     playing).
-//!   * Key *codes* are emitted; the compositor maps them through the user's
-//!     layout. The char→key table below assumes a US/QWERTY layout (fine for
-//!     `/hideout`, `/invite name`, …).
-//!   * It steps slightly past the clipboard-only anti-cheat envelope (PRD
-//!     Appendix B); it's an explicit opt-in, used only for chat commands.
+//! Two things make this instant vs the old approach:
+//!   * **paste, not type** — one Ctrl+V regardless of command length;
+//!   * a **persistent** uinput virtual keyboard, created once and reused, so we
+//!     don't pay the ~250ms device-enumeration wait on every press.
+//!
+//! Same uinput mechanism as ydotool: a kernel virtual *hardware* keyboard, so
+//! the compositor delivers the keys to the focused window — including XWayland
+//! POE2 (PRD §9.1's "can't inject" is only true for X11 XTEST / wtype). It types
+//! into whatever's focused, so POE2 must be focused (the hotkey is gated on
+//! that). Opt-in; steps past the clipboard-only anti-cheat envelope (App. B).
 
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use evdev::{
-    uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, Key,
+    uinput::{VirtualDevice, VirtualDeviceBuilder},
+    AttributeSet, EventType, InputEvent, Key,
 };
 
-/// Open chat, type `command`, and send it: Enter → `command` → Enter.
-///
-/// Blocks for roughly half a second (device setup + inter-key delays), so call
-/// it off the UI thread.
+use crate::clipboard::{read_clipboard_text, write_clipboard_text};
+
+/// The virtual keyboard, created once on first use and kept alive.
+static DEVICE: OnceLock<Mutex<VirtualDevice>> = OnceLock::new();
+
+/// Chat prefixes that open a fresh command line in POE — no need to clear any
+/// existing text with Ctrl+A first (mirrors EE2's `AUTO_CLEAR`).
+const AUTO_CLEAR_PREFIXES: &[char] = &['#', '%', '@', '$', '&', '/'];
+
+/// Open chat, paste `command`, and send it. Blocks ~250ms only on the very first
+/// call (device setup); afterwards a few tens of ms. Call off the UI thread.
 pub fn send_chat_command(command: &str) -> Result<()> {
-    let mut keys = AttributeSet::<Key>::new();
-    keys.insert(Key::KEY_ENTER);
-    keys.insert(Key::KEY_LEFTSHIFT);
-    for c in command.chars() {
-        if let Some((key, _)) = char_to_key(c) {
-            keys.insert(key);
+    // Save the user's clipboard, set ours, paste, restore (so we don't clobber
+    // whatever they had copied — e.g. the item they just priced).
+    let saved = read_clipboard_text().ok().flatten();
+    write_clipboard_text(command).context("set clipboard for chat paste")?;
+
+    {
+        let mut device = device()?.lock().expect("inject device lock");
+        // Let the xclip selection helper start serving before we paste.
+        thread::sleep(Duration::from_millis(30));
+        tap(&mut device, Key::KEY_ENTER)?; // open chat
+        thread::sleep(Duration::from_millis(40));
+        let auto_clear = command
+            .chars()
+            .next()
+            .is_some_and(|c| AUTO_CLEAR_PREFIXES.contains(&c));
+        if !auto_clear {
+            ctrl_tap(&mut device, Key::KEY_A)?; // clear any leftover text
         }
+        ctrl_tap(&mut device, Key::KEY_V)?; // paste the whole command at once
+        thread::sleep(Duration::from_millis(40));
+        tap(&mut device, Key::KEY_ENTER)?; // send
     }
 
-    let mut device = VirtualDeviceBuilder::new()
+    // Let POE2 read the clipboard (the paste) before we put the old value back.
+    thread::sleep(Duration::from_millis(120));
+    if let Some(s) = saved {
+        let _ = write_clipboard_text(&s);
+    }
+    Ok(())
+}
+
+/// Create the virtual keyboard ahead of time so the first real use is instant.
+pub fn warm_up() {
+    if let Err(e) = device() {
+        tracing::warn!(error = %format!("{e:#}"), "could not pre-create injection device");
+    }
+}
+
+/// The shared virtual keyboard, created on first call (with the one-time
+/// enumeration wait). Only declares the keys we emit (Enter, Ctrl, A, V).
+fn device() -> Result<&'static Mutex<VirtualDevice>> {
+    if let Some(d) = DEVICE.get() {
+        return Ok(d);
+    }
+    let mut keys = AttributeSet::<Key>::new();
+    for k in [Key::KEY_ENTER, Key::KEY_LEFTCTRL, Key::KEY_A, Key::KEY_V] {
+        keys.insert(k);
+    }
+    let device = VirtualDeviceBuilder::new()
         .context("open /dev/uinput (in the `input` group?)")?
         .name("poe2ddd-virtual-kbd")
         .with_keys(&keys)
         .context("declare virtual keyboard keys")?
         .build()
         .context("create uinput keyboard")?;
-
-    // Let the compositor enumerate the new device before we emit, or the first
-    // events are dropped.
+    // Let the compositor enumerate the new device before it's first used.
     thread::sleep(Duration::from_millis(250));
-
-    // Open the chat box.
-    tap(&mut device, Key::KEY_ENTER)?;
-    thread::sleep(Duration::from_millis(90));
-
-    for c in command.chars() {
-        let Some((key, shift)) = char_to_key(c) else {
-            continue; // skip anything not in the table
-        };
-        if shift {
-            emit(&mut device, Key::KEY_LEFTSHIFT, 1)?;
-        }
-        tap(&mut device, key)?;
-        if shift {
-            emit(&mut device, Key::KEY_LEFTSHIFT, 0)?;
-        }
-        thread::sleep(Duration::from_millis(14));
-    }
-
-    thread::sleep(Duration::from_millis(90));
-    // Send.
-    tap(&mut device, Key::KEY_ENTER)?;
-    // Hold the device briefly so the final events flush before it's destroyed.
-    thread::sleep(Duration::from_millis(40));
-    Ok(())
+    // If another thread won the race, ours is dropped here — harmless.
+    Ok(DEVICE.get_or_init(|| Mutex::new(device)))
 }
 
-/// Emit a single key state change (value 1 = press, 0 = release).
-fn emit(device: &mut evdev::uinput::VirtualDevice, key: Key, value: i32) -> Result<()> {
+fn emit(device: &mut VirtualDevice, key: Key, value: i32) -> Result<()> {
     device
         .emit(&[InputEvent::new(EventType::KEY, key.code(), value)])
         .context("emit key event")
 }
 
 /// Press then release a key.
-fn tap(device: &mut evdev::uinput::VirtualDevice, key: Key) -> Result<()> {
+fn tap(device: &mut VirtualDevice, key: Key) -> Result<()> {
     emit(device, key, 1)?;
     emit(device, key, 0)
 }
 
-/// Map a character to its (key, shift) on a US/QWERTY layout. `None` for
-/// characters we don't type.
-fn char_to_key(c: char) -> Option<(Key, bool)> {
-    let shifted = c.is_ascii_uppercase()
-        || matches!(c, '#' | '@' | '_' | '!' | '?' | ':' | '"' | '(' | ')');
-    let key = match c.to_ascii_lowercase() {
-        'a' => Key::KEY_A,
-        'b' => Key::KEY_B,
-        'c' => Key::KEY_C,
-        'd' => Key::KEY_D,
-        'e' => Key::KEY_E,
-        'f' => Key::KEY_F,
-        'g' => Key::KEY_G,
-        'h' => Key::KEY_H,
-        'i' => Key::KEY_I,
-        'j' => Key::KEY_J,
-        'k' => Key::KEY_K,
-        'l' => Key::KEY_L,
-        'm' => Key::KEY_M,
-        'n' => Key::KEY_N,
-        'o' => Key::KEY_O,
-        'p' => Key::KEY_P,
-        'q' => Key::KEY_Q,
-        'r' => Key::KEY_R,
-        's' => Key::KEY_S,
-        't' => Key::KEY_T,
-        'u' => Key::KEY_U,
-        'v' => Key::KEY_V,
-        'w' => Key::KEY_W,
-        'x' => Key::KEY_X,
-        'y' => Key::KEY_Y,
-        'z' => Key::KEY_Z,
-        ' ' => Key::KEY_SPACE,
-        '/' => Key::KEY_SLASH,
-        '.' => Key::KEY_DOT,
-        ',' => Key::KEY_COMMA,
-        '-' | '_' => Key::KEY_MINUS,
-        '\'' => Key::KEY_APOSTROPHE,
-        '1' | '!' => Key::KEY_1,
-        '2' | '@' => Key::KEY_2,
-        '3' | '#' => Key::KEY_3,
-        '4' => Key::KEY_4,
-        '5' => Key::KEY_5,
-        '6' => Key::KEY_6,
-        '7' => Key::KEY_7,
-        '8' => Key::KEY_8,
-        '9' | '(' => Key::KEY_9,
-        '0' | ')' => Key::KEY_0,
-        ':' => Key::KEY_SEMICOLON,
-        '"' => Key::KEY_APOSTROPHE,
-        '?' => Key::KEY_SLASH,
-        _ => return None,
-    };
-    Some((key, shifted))
+/// Ctrl + key (press Ctrl, tap key, release Ctrl).
+fn ctrl_tap(device: &mut VirtualDevice, key: Key) -> Result<()> {
+    emit(device, Key::KEY_LEFTCTRL, 1)?;
+    emit(device, key, 1)?;
+    emit(device, key, 0)?;
+    emit(device, Key::KEY_LEFTCTRL, 0)
 }
