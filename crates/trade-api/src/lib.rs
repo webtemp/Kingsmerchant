@@ -31,7 +31,7 @@ pub mod stat_text;
 pub use client::{
     fetch_definitions, fetch_leagues, ClientConfig, League, PriceCheck, TradeClient, FETCH_BATCH,
 };
-pub use definitions::{ItemDefinitions, MappedStat, StatDefinitions};
+pub use definitions::{ItemDefinitions, LocalContext, MappedStat, StatDefinitions};
 pub use error::Error;
 pub use http::{HttpRequest, HttpResponse, HttpTransport, Method, ReqwestTransport};
 pub use model::{Price, ResultEntry, SearchRequest, SearchResponse};

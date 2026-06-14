@@ -100,7 +100,7 @@ fn hybrid_modifier_maps_each_stat_line() {
         ],
         ..modifier(ModKind::Prefix, None, "")
     };
-    let mapped = defs.map_modifier(&m, false);
+    let mapped = defs.map_modifier(&m, trade_api::LocalContext::default());
     assert_eq!(mapped.len(), 2);
     assert_eq!(mapped[0].id, "explicit.stat_3299347043"); // flat life
     assert_eq!(mapped[0].values, [118.0]);

@@ -293,6 +293,18 @@ pub struct QuickModeApp {
     /// the popup visible only while Ctrl is held, and to gate Ctrl+Alt drag.
     ctrl_held: bool,
     alt_held: bool,
+    /// Hash of the last item we actually searched. A Ctrl+C whose clipboard
+    /// hashes the same is a duplicate of the loaded item → no new request.
+    last_query_hash: Option<u64>,
+}
+
+/// Stable hash of an item's clipboard text (trimmed), for de-duplicating
+/// repeated Ctrl+C on the same item.
+fn item_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.trim().hash(&mut h);
+    h.finish()
 }
 
 impl QuickModeApp {
@@ -330,6 +342,7 @@ impl QuickModeApp {
             close_requested: false,
             ctrl_held: false,
             alt_held: false,
+            last_query_hash: None,
         }
     }
 
@@ -423,6 +436,10 @@ impl QuickModeApp {
 
     /// Spawn the background search/fetch for `item` using the current filters.
     fn spawn_query(&mut self, ctx: &egui::Context, item: Item) {
+        tracing::info!(
+            item = item.name.as_deref().or(item.base_type.as_deref()).unwrap_or("?"),
+            "search"
+        );
         self.phase = Phase::Loading;
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
@@ -496,11 +513,13 @@ impl QuickModeApp {
                 Hotkey::Item { text } => {
                     self.hint = None;
                     self.pop_requested = true;
-                    // Same item re-copied → just (re)show; don't fire another
-                    // search (saves a request / rate limit).
-                    let unchanged =
-                        self.item.is_some() && text.trim() == self.item_text.trim();
-                    if !unchanged {
+                    // De-dup by hash: a Ctrl+C on the SAME item just re-shows the
+                    // popup, never fires another request (saves rate limit).
+                    let hash = item_hash(&text);
+                    if self.last_query_hash == Some(hash) {
+                        tracing::debug!("same item re-copied — not re-searching");
+                    } else {
+                        self.last_query_hash = Some(hash);
                         self.item_text = text;
                         self.view = View::Item;
                         self.start_price_check(ctx);
@@ -609,23 +628,23 @@ impl QuickModeApp {
                 );
             }
             View::Item => {
-                if self.item_text.trim().is_empty() {
+                // Render from the already-parsed item — NOT a re-parse of the
+                // text every frame (that was a per-frame cost that made the
+                // continuously-redrawn overlay lag).
+                if let Some(item) = &self.item {
+                    item_card(ui, item, self.icon_url.as_deref());
+                } else if self.item_text.trim().is_empty() {
                     ui.label(
                         RichText::new("Hover an item in POE2 and press Ctrl+C to price it.")
                             .weak()
                             .italics(),
                     );
                 } else {
-                    match parser::parse_item(&self.item_text) {
-                        Ok(item) => item_card(ui, &item, self.icon_url.as_deref()),
-                        Err(e) => {
-                            ui.colored_label(
-                                Color32::from_rgb(0xff, 0x6b, 0x6b),
-                                format!("Can't render — not a POE2 item: {e}"),
-                            );
-                            ui.label(RichText::new("Switch to 📝 Text to edit.").weak());
-                        }
-                    }
+                    ui.label(
+                        RichText::new("Not a POE2 item — switch to 📝 Text to edit.")
+                            .weak()
+                            .italics(),
+                    );
                 }
             }
         }
@@ -686,15 +705,15 @@ impl QuickModeApp {
             Phase::Done(pc) => {
                 show_results(ui, pc, &mut copied);
                 ui.add_space(6.0);
-                // Deep link carries the FULL query (disabled filters included),
-                // so the trade site shows unticked filters greyed, not absent.
-                let url = self.trade_url();
                 if ui
                     .button("🌐 Open on trade site")
                     .on_hover_text("Opens your browser with this exact search")
                     .clicked()
                 {
-                    open_trade = Some(url);
+                    // Built only on click — the URL encodes the full query
+                    // (disabled filters included) and is too costly to rebuild
+                    // every frame.
+                    open_trade = Some(self.trade_url());
                 }
             }
         }

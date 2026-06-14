@@ -98,18 +98,18 @@ impl StatDefinitions {
     }
 
     /// Map all of an item's modifiers to GGG stat filters, deciding the
-    /// local-vs-global stat variant from the item's category (PRD §4.4).
+    /// local-vs-global stat variant per stat from the item's context (PRD §4.4).
     ///
-    /// On armour/weapons, GGG suffixes the *local* variant's text with
-    /// ` (Local)` — e.g. `#% increased Evasion Rating (Local)` is the armour
-    /// mod, `#% increased Evasion Rating` is the global passive-tree one. They
-    /// share display text but have different stat ids, so a search built from
-    /// the wrong one returns nothing. We prefer the local variant on gear.
+    /// GGG suffixes the *local* variant's text with ` (Local)` — e.g.
+    /// `#% increased Evasion Rating (Local)` is the armour mod,
+    /// `#% increased Evasion Rating` is the global passive-tree one. They share
+    /// display text but have different stat ids, so building a search from the
+    /// wrong one returns nothing. See [`LocalContext`] for the rule.
     pub fn map_item(&self, item: &Item) -> Vec<MappedStat> {
-        let local = item_has_local_stats(&item.item_class);
+        let ctx = LocalContext::for_item(item);
         item.modifiers
             .iter()
-            .flat_map(|m| self.map_modifier(m, local))
+            .flat_map(|m| self.map_modifier(m, ctx))
             .collect()
     }
 
@@ -117,13 +117,14 @@ impl StatDefinitions {
     ///
     /// A descriptor can grant several stat lines (a hybrid prefix), so this
     /// returns one [`MappedStat`] per line it could map; unmappable lines are
-    /// silently skipped (mirroring the parser's best-effort stance).
-    /// `prefer_local` selects the `(Local)` stat variant when one exists.
-    pub fn map_modifier(&self, modifier: &Modifier, prefer_local: bool) -> Vec<MappedStat> {
+    /// silently skipped (mirroring the parser's best-effort stance). The
+    /// local-vs-global choice is made per line from `ctx`.
+    pub fn map_modifier(&self, modifier: &Modifier, ctx: LocalContext) -> Vec<MappedStat> {
         modifier
             .stats
             .iter()
             .filter_map(|line| {
+                let prefer_local = ctx.prefer_local(line);
                 self.map_stat_line(&modifier.kind, modifier.source.as_ref(), line, prefer_local)
             })
             .collect()
@@ -179,18 +180,53 @@ impl StatDefinitions {
     }
 }
 
-/// Whether an item class can carry *local* stats (armour defences, weapon
-/// damage/speed/crit/accuracy). Used to prefer the `(Local)` stat variant.
+/// Item context for choosing local-vs-global stat variants (PRD §4.4).
 ///
-/// Quivers are the exception among `armour.*`: they hold no local defences and
-/// their accuracy/damage mods are global, so `+# to Accuracy Rating` on a quiver
-/// must map to the global stat, not the weapon-local one.
-fn item_has_local_stats(item_class: &str) -> bool {
-    match crate::query::category_for(item_class) {
-        Some("armour.quiver") => false,
-        Some(c) => c.starts_with("armour.") || c.starts_with("weapon."),
-        None => false,
+/// A stat is *local* when it modifies a property the item type actually has:
+///   * **defence** stats (armour / evasion / energy shield / block / ward) are
+///     local on armour pieces — but NOT quivers, which carry no defences;
+///   * **weapon** stats (accuracy, attack speed, crit, added/increased damage)
+///     are local on weapons.
+///
+/// Everywhere else the same display text is the *global* passive-tree stat
+/// (e.g. `+# to Accuracy Rating` on a quiver or body armour, evasion on a ring).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LocalContext {
+    is_weapon: bool,
+    is_armour_piece: bool,
+}
+
+impl LocalContext {
+    /// Derive the context from a parsed item's class.
+    pub fn for_item(item: &Item) -> Self {
+        match crate::query::category_for(&item.item_class) {
+            Some(c) => LocalContext {
+                is_weapon: c.starts_with("weapon."),
+                // Armour slots have local defences; quivers don't.
+                is_armour_piece: c.starts_with("armour.") && c != "armour.quiver",
+            },
+            None => LocalContext::default(),
+        }
     }
+
+    /// Whether the `(Local)` variant should be preferred for this stat line.
+    fn prefer_local(&self, line: &str) -> bool {
+        if is_defence_stat(line) {
+            self.is_armour_piece
+        } else {
+            self.is_weapon
+        }
+    }
+}
+
+/// Whether a stat line is a defence stat (armour / evasion / ES / block / ward),
+/// as opposed to a weapon stat — they take the local variant on different items.
+fn is_defence_stat(line: &str) -> bool {
+    line.contains("Armour")
+        || line.contains("Evasion Rating")
+        || line.contains("Energy Shield")
+        || line.contains("Block")
+        || line.contains("Ward")
 }
 
 /// The GGG stat-id prefixes to try for a parsed affix, most-specific first.
