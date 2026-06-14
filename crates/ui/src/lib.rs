@@ -9,6 +9,7 @@
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use egui::{Color32, RichText};
@@ -20,9 +21,12 @@ use trade_api::{
 
 const BASE_URL: &str = "https://www.pathofexile.com";
 const USER_AGENT: &str = "poe2-pricer/0.1 (+phase3 ui)";
-/// Fetch a sample of this many so the median is meaningful; show the cheapest 5.
+/// Fetch a sample of this many so the median is meaningful; show the cheapest N.
 const SAMPLE: usize = 10;
-const SHOWN: usize = 5;
+const SHOWN: usize = 7;
+/// How long to wait for POE2 to write the clipboard after Ctrl+C (PRD §4.2).
+const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(500);
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// In-game-ish colour for rolled mod text.
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
@@ -81,10 +85,17 @@ pub struct QuickModeApp {
     phase: Phase,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
+    /// Item text pushed in by the global-hotkey watcher (Ctrl+C in game).
+    hotkey_rx: Receiver<String>,
 }
 
 impl QuickModeApp {
-    fn new(rt: tokio::runtime::Runtime, client: Arc<Client>, league: String) -> Self {
+    fn new(
+        rt: tokio::runtime::Runtime,
+        client: Arc<Client>,
+        league: String,
+        hotkey_rx: Receiver<String>,
+    ) -> Self {
         let (tx, rx) = channel();
         QuickModeApp {
             rt,
@@ -97,6 +108,7 @@ impl QuickModeApp {
             phase: Phase::Idle,
             tx,
             rx,
+            hotkey_rx,
         }
     }
 
@@ -140,6 +152,15 @@ impl QuickModeApp {
 
 impl eframe::App for QuickModeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Ctrl+C in game → the watcher pushes the copied item text here; raise
+        // the window and price-check it automatically.
+        while let Ok(text) = self.hotkey_rx.try_recv() {
+            self.item_text = text;
+            self.view = View::Item;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.start_price_check(ctx);
+        }
+
         while let Ok(Msg::Result(result)) = self.rx.try_recv() {
             self.phase = match *result {
                 Ok(pc) => {
@@ -462,6 +483,48 @@ fn fmt_amount(amount: f64) -> String {
     }
 }
 
+/// Watch the global price-check hotkeys on a background thread. On each press
+/// we wait for POE2 to write the clipboard, then push the item text to the UI.
+/// If the watcher can't start (e.g. not in the `input` group), we log and carry
+/// on — the window still works manually (PRD §4.1).
+fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<String>) {
+    std::thread::spawn(move || {
+        let hotkeys = match platform_linux::watch_hotkeys() {
+            Ok(rx) => rx,
+            Err(e) => {
+                tracing::warn!(error = %e, "hotkey watcher disabled; use the buttons");
+                return;
+            }
+        };
+        tracing::info!("listening for Ctrl+C / Ctrl+Alt+C in game");
+        let mut last_seen = platform_linux::read_clipboard_text().unwrap_or(None);
+        for _event in hotkeys {
+            if let Some(text) = wait_for_new_clipboard(&last_seen) {
+                last_seen = Some(text.clone());
+                if tx.send(text).is_err() {
+                    return; // UI gone
+                }
+                ctx.request_repaint();
+            }
+        }
+    });
+}
+
+/// Poll the clipboard until it differs from `last_seen` or the timeout hits.
+fn wait_for_new_clipboard(last_seen: &Option<String>) -> Option<String> {
+    let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
+    loop {
+        match platform_linux::read_clipboard_text() {
+            Ok(Some(text)) if Some(&text) != last_seen.as_ref() => return Some(text),
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 fn configure_style(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
@@ -503,7 +566,9 @@ pub fn run() -> anyhow::Result<()> {
         Box::new(move |cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             configure_style(&cc.egui_ctx);
-            Ok(Box::new(QuickModeApp::new(rt, client, league)))
+            let (hk_tx, hk_rx) = channel::<String>();
+            spawn_hotkey_watcher(cc.egui_ctx.clone(), hk_tx);
+            Ok(Box::new(QuickModeApp::new(rt, client, league, hk_rx)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("eframe failed: {e}"))
