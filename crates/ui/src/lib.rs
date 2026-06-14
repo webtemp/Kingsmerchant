@@ -51,7 +51,7 @@ Item Level: 79
 { Suffix Modifier \"of the Thunderhead\" (Tier: 5) - Elemental, Lightning, Resistance }
 +23(21-25)% to Lightning Resistance";
 
-type Client = TradeClient<ReqwestTransport>;
+pub type Client = TradeClient<ReqwestTransport>;
 
 /// Result of a background price check, sent back to the UI thread.
 enum Msg {
@@ -59,7 +59,7 @@ enum Msg {
 }
 
 /// What the global-hotkey watcher observed after a Ctrl+C.
-enum Hotkey {
+pub enum Hotkey {
     /// A new item landed on the clipboard.
     Item(String),
     /// The clipboard never produced an item before the timeout — usually POE2
@@ -102,10 +102,14 @@ pub struct QuickModeApp {
     copy_status: Option<String>,
     /// Transient hint (e.g. a missed copy), shown near the top.
     hint: Option<String>,
+    /// Set when a Ctrl+C produced a fresh item — the overlay loop reads this to
+    /// (re)position and show the popup at the cursor. Harmless in the eframe
+    /// window (which is always visible).
+    pop_requested: bool,
 }
 
 impl QuickModeApp {
-    fn new(
+    pub fn new(
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
         league: String,
@@ -126,7 +130,13 @@ impl QuickModeApp {
             hotkey_rx,
             copy_status: None,
             hint: None,
+            pop_requested: false,
         }
+    }
+
+    /// Consume a pending "pop the overlay" request raised by the last Ctrl+C.
+    pub fn take_pop_request(&mut self) -> bool {
+        std::mem::take(&mut self.pop_requested)
     }
 
     fn start_price_check(&mut self, ctx: &egui::Context) {
@@ -169,6 +179,15 @@ impl QuickModeApp {
 
 impl eframe::App for QuickModeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ui(ctx);
+    }
+}
+
+impl QuickModeApp {
+    /// Build the whole quick-mode UI for one frame and pump the hotkey/result
+    /// channels. Window-system agnostic: the eframe window and the layer-shell
+    /// overlay both call this with their own `egui::Context`.
+    pub fn ui(&mut self, ctx: &egui::Context) {
         // Ctrl+C in game → the watcher pushes the copied item here; raise the
         // window and price-check it automatically. A missed copy gets a hint
         // instead of silently doing nothing.
@@ -178,6 +197,7 @@ impl eframe::App for QuickModeApp {
                     self.hint = None;
                     self.item_text = text;
                     self.view = View::Item;
+                    self.pop_requested = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     self.start_price_check(ctx);
                 }
@@ -544,7 +564,7 @@ fn fmt_amount(amount: f64) -> String {
 /// we wait for POE2 to write the clipboard, then push the item text to the UI.
 /// If the watcher can't start (e.g. not in the `input` group), we log and carry
 /// on — the window still works manually (PRD §4.1).
-fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
+pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
     std::thread::spawn(move || {
         let hotkeys = match platform_linux::watch_hotkeys() {
             Ok(rx) => rx,
@@ -596,7 +616,13 @@ fn wait_for_new_item(last_seen: &Option<String>) -> Option<String> {
     }
 }
 
-fn configure_style(ctx: &egui::Context) {
+/// Install the HTTP/image loaders egui_extras needs for item icons. Call once
+/// per `egui::Context` (eframe window or overlay).
+pub fn install_loaders(ctx: &egui::Context) {
+    egui_extras::install_image_loaders(ctx);
+}
+
+pub fn configure_style(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
@@ -608,11 +634,16 @@ fn configure_style(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
-/// Build the client (fetching live definitions) and run the window.
-pub fn run() -> anyhow::Result<()> {
-    let rt = tokio::runtime::Runtime::new()?;
-    let league = std::env::var("POE_LEAGUE").unwrap_or_else(|_| "Runes of Aldur".to_string());
+/// The trade league for this session (`POE_LEAGUE`, default `Runes of Aldur`).
+pub fn league_from_env() -> String {
+    std::env::var("POE_LEAGUE").unwrap_or_else(|_| "Runes of Aldur".to_string())
+}
 
+/// Build a ready-to-render [`QuickModeApp`]: spin up a tokio runtime, fetch the
+/// live trade definitions, and construct the API client. Shared by the eframe
+/// window ([`run`]) and the layer-shell overlay.
+pub fn build_app(league: String, hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<QuickModeApp> {
+    let rt = tokio::runtime::Runtime::new()?;
     let transport = ReqwestTransport::new(USER_AGENT)?;
     tracing::info!("fetching trade definitions…");
     let (stats, items) = rt
@@ -622,6 +653,14 @@ pub fn run() -> anyhow::Result<()> {
     let mut config = ClientConfig::new(&league);
     config.realm = std::env::var("POE_REALM").ok();
     let client = Arc::new(TradeClient::new(transport, config, stats, items));
+
+    Ok(QuickModeApp::new(rt, client, league, hotkey_rx))
+}
+
+/// Build the client (fetching live definitions) and run the plain eframe window
+/// (Phase 3). The Phase 4 overlay is a separate entry point (`overlay` crate).
+pub fn run() -> anyhow::Result<()> {
+    let league = league_from_env();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -635,11 +674,13 @@ pub fn run() -> anyhow::Result<()> {
         "poe2ddd",
         options,
         Box::new(move |cc| {
-            egui_extras::install_image_loaders(&cc.egui_ctx);
+            install_loaders(&cc.egui_ctx);
             configure_style(&cc.egui_ctx);
             let (hk_tx, hk_rx) = channel::<Hotkey>();
             spawn_hotkey_watcher(cc.egui_ctx.clone(), hk_tx);
-            Ok(Box::new(QuickModeApp::new(rt, client, league, hk_rx)))
+            let app = build_app(league, hk_rx)
+                .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!("{e:#}")))?;
+            Ok(Box::new(app))
         }),
     )
     .map_err(|e| anyhow::anyhow!("eframe failed: {e}"))

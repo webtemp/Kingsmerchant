@@ -1,0 +1,31 @@
+[package]
+name = "overlay-spike"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Phase 4 spike (throwaway): prove egui_glow rendering onto a wlr-layer-shell
+# overlay surface that takes NO keyboard focus, with working mouse input.
+# If this runs, approach (a) from the PRD is validated and we fold the pieces
+# into platform-linux (surface/GL) + ui (egui draw). Delete this crate after.
+
+[[bin]]
+name = "overlay-spike"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# Match winit's copy (0.19.2) so we share one sctk in the tree, not a 3rd.
+smithay-client-toolkit = "0.19"
+# `system` exposes ObjectId::as_ptr / Backend::display_ptr (raw libwayland
+# pointers) which EGL/glutin needs. dlopen (from winit) unions in, so no link.
+wayland-client = { version = "0.31", features = ["system"] }
+glutin = { version = "0.32", default-features = false, features = ["egl", "wayland"] }
+glow = "0.14"
+egui = "0.29"
+egui_glow = "0.29"
+raw-window-handle = "0.6"

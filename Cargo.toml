@@ -6,6 +6,8 @@ members = [
     "crates/platform-linux",
     "crates/trade-api",
     "crates/ui",
+    "crates/overlay",
+    "crates/overlay-spike",
 ]
 
 [workspace.package]

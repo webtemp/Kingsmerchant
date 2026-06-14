@@ -1,0 +1,30 @@
+[package]
+name = "overlay"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Phase 4: the price-check popup as a wlr-layer-shell *overlay* (PRD §4.5).
+# This crate is the glue between the windowing/GL layer (smithay-client-toolkit
+# + glutin EGL + egui_glow) and the egui draw code, which is reused unchanged
+# from the `ui` crate (QuickModeApp::ui). Per the chosen layout, platform crates
+# stay free of egui and `ui` stays free of Wayland.
+
+[[bin]]
+name = "poe2-overlay"
+path = "src/main.rs"
+
+[dependencies]
+ui = { path = "../ui" }
+platform-linux = { path = "../platform-linux" }
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+egui = "0.29"
+egui_glow = "0.29"
+glow = "0.14"
+glutin = { version = "0.32", default-features = false, features = ["egl", "wayland"] }
+smithay-client-toolkit = "0.19"
+wayland-client = { version = "0.31", features = ["system"] }
+raw-window-handle = "0.6"
