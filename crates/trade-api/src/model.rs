@@ -87,6 +87,14 @@ impl StatValue {
             max: None,
         }
     }
+
+    /// A `{ "min": .., "max": .. }` value from optional bounds (detailed mode).
+    pub fn range(min: Option<f64>, max: Option<f64>) -> Self {
+        StatValue {
+            min: min.and_then(number),
+            max: max.and_then(number),
+        }
+    }
 }
 
 fn number(v: f64) -> Option<serde_json::Number> {
@@ -101,11 +109,54 @@ fn number(v: f64) -> Option<serde_json::Number> {
 pub struct Filters {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_filters: Option<TypeFilters>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trade_filters: Option<TradeFilters>,
 }
 
 impl Filters {
     pub fn is_empty(&self) -> bool {
-        self.type_filters.is_none()
+        self.type_filters.is_none() && self.trade_filters.is_none()
+    }
+}
+
+/// The `trade_filters` group: seller/price constraints. We use it for the
+/// detailed-mode price-range filter (PRD §4.7).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TradeFilters {
+    pub filters: TradeFilterFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+pub struct TradeFilterFields {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price: Option<PriceRange>,
+}
+
+/// A `{ "min": .., "max": .., "option": "exalted" }` price filter.
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+pub struct PriceRange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<serde_json::Number>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<serde_json::Number>,
+    /// Currency the bounds are expressed in (`exalted`, `divine`, …). `None`
+    /// lets the trade site match across currencies (chaos-equivalent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub option: Option<String>,
+}
+
+impl PriceRange {
+    /// Build from optional float bounds + currency; whole numbers serialize as
+    /// integers. Returns `None` when there are no bounds at all.
+    pub fn new(min: Option<f64>, max: Option<f64>, option: Option<String>) -> Option<Self> {
+        if min.is_none() && max.is_none() {
+            return None;
+        }
+        Some(PriceRange {
+            min: min.and_then(number),
+            max: max.and_then(number),
+            option,
+        })
     }
 }
 

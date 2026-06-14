@@ -5,7 +5,8 @@
 
 use parser::parse_item;
 use trade_api::{
-    build_search_query, category_for, ItemDefinitions, ListingStatus, QueryOptions, StatDefinitions,
+    build_detailed_query, build_search_query, category_for, ItemDefinitions, ListingStatus,
+    PriceFilter, QueryOptions, StatDefinitions, StatSelection,
 };
 
 fn stats() -> StatDefinitions {
@@ -145,6 +146,121 @@ fn securable_status_selects_instant_buyout_listings() {
     // Default stays plain online.
     let online = build_search_query(&item, &stats(), &items(), QueryOptions::default());
     assert_eq!(online.query.status.option, "online");
+}
+
+// ---- detailed mode (PRD §4.7) ---------------------------------------------
+
+#[test]
+fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
+    let item = parse_item(RARE_RING).unwrap();
+    let selections = vec![
+        StatSelection {
+            id: "implicit.stat_1671376347".to_string(),
+            enabled: true,
+            min: Some(25.0),
+            max: None,
+        },
+        StatSelection {
+            id: "explicit.stat_2144192055".to_string(),
+            enabled: false,
+            min: None,
+            max: None,
+        },
+    ];
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        ListingStatus::Online,
+        &selections,
+        &PriceFilter::default(),
+    );
+
+    // Exact name/type/category match carries over from the quick query.
+    assert_eq!(req.query.type_.as_deref(), Some("Topaz Ring"));
+    let category = &req.query.filters.type_filters.as_ref().unwrap().filters.category;
+    assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
+
+    // Both selections appear; disabled mirrors !enabled.
+    let filters = &req.query.stats[0].filters;
+    assert_eq!(filters.len(), 2);
+    let enabled = filters
+        .iter()
+        .find(|f| f.id == "implicit.stat_1671376347")
+        .unwrap();
+    assert!(!enabled.disabled);
+    assert_eq!(
+        enabled.value.as_ref().unwrap().min.as_ref().unwrap().as_i64(),
+        Some(25)
+    );
+    let disabled = filters
+        .iter()
+        .find(|f| f.id == "explicit.stat_2144192055")
+        .unwrap();
+    assert!(disabled.disabled);
+    assert!(disabled.value.is_none());
+
+    // No price filter requested → no trade_filters group.
+    assert!(req.query.filters.trade_filters.is_none());
+}
+
+#[test]
+fn detailed_query_attaches_price_range_filter() {
+    let item = parse_item(RARE_RING).unwrap();
+    let price = PriceFilter {
+        min: Some(1.0),
+        max: Some(20.0),
+        currency: Some("exalted".to_string()),
+    };
+    let req = build_detailed_query(&item, &items(), ListingStatus::Online, &[], &price);
+
+    let price = req
+        .query
+        .filters
+        .trade_filters
+        .as_ref()
+        .unwrap()
+        .filters
+        .price
+        .as_ref()
+        .unwrap();
+    assert_eq!(price.min.as_ref().unwrap().as_i64(), Some(1));
+    assert_eq!(price.max.as_ref().unwrap().as_i64(), Some(20));
+    assert_eq!(price.option.as_deref(), Some("exalted"));
+    // No selections → no stat group.
+    assert!(req.query.stats.is_empty());
+}
+
+#[test]
+fn detailed_query_with_nothing_active_is_a_bare_base_search() {
+    let item = parse_item(RARE_RING).unwrap();
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        ListingStatus::Online,
+        &[],
+        &PriceFilter::default(),
+    );
+    assert!(req.query.stats.is_empty());
+    assert!(req.query.filters.trade_filters.is_none());
+    assert_eq!(req.query.type_.as_deref(), Some("Topaz Ring"));
+}
+
+#[test]
+fn detailed_query_snapshot() {
+    let item = parse_item(RARE_RING).unwrap();
+    let selections = vec![StatSelection {
+        id: "implicit.stat_1671376347".to_string(),
+        enabled: true,
+        min: Some(25.0),
+        max: Some(30.0),
+    }];
+    let price = PriceFilter {
+        min: Some(5.0),
+        max: None,
+        currency: Some("exalted".to_string()),
+    };
+    let req = build_detailed_query(&item, &items(), ListingStatus::Online, &selections, &price);
+    insta::assert_json_snapshot!(req);
 }
 
 #[test]

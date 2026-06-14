@@ -1,0 +1,47 @@
+---
+source: crates/trade-api/tests/query_builder.rs
+expression: req
+---
+{
+  "query": {
+    "status": {
+      "option": "online"
+    },
+    "type": "Topaz Ring",
+    "stats": [
+      {
+        "type": "and",
+        "filters": [
+          {
+            "id": "implicit.stat_1671376347",
+            "value": {
+              "min": 25,
+              "max": 30
+            },
+            "disabled": false
+          }
+        ]
+      }
+    ],
+    "filters": {
+      "type_filters": {
+        "filters": {
+          "category": {
+            "option": "accessory.ring"
+          }
+        }
+      },
+      "trade_filters": {
+        "filters": {
+          "price": {
+            "min": 5,
+            "option": "exalted"
+          }
+        }
+      }
+    }
+  },
+  "sort": {
+    "price": "asc"
+  }
+}

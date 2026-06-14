@@ -12,7 +12,10 @@ use crate::error::Error;
 use crate::http::{HttpRequest, HttpResponse, HttpTransport, Method};
 use crate::model::{FetchResponse, Price, ResultEntry, SearchRequest, SearchResponse};
 use crate::price;
-use crate::query::{build_search_query, QueryOptions};
+use crate::query::{
+    build_detailed_query, build_search_query, ListingStatus, PriceFilter, QueryOptions,
+    StatSelection,
+};
 use crate::rate_limit::RateLimiter;
 
 /// The trade API only ever hands back ≤ 10 listings per fetch.
@@ -172,7 +175,31 @@ impl<T: HttpTransport> TradeClient<T> {
         max_listings: usize,
     ) -> Result<PriceCheck, Error> {
         let request = build_search_query(item, &self.stats, &self.items, opts);
-        let search = self.search(&request).await?;
+        self.run_query(&request, max_listings).await
+    }
+
+    /// Detailed-mode price check (PRD §4.7): the stat filters come from explicit
+    /// per-stat `selections` (toggled in the UI) plus an optional price range,
+    /// instead of the quick query's base-type-only defaults.
+    pub async fn price_check_detailed(
+        &self,
+        item: &Item,
+        status: ListingStatus,
+        selections: &[StatSelection],
+        price: &PriceFilter,
+        max_listings: usize,
+    ) -> Result<PriceCheck, Error> {
+        let request = build_detailed_query(item, &self.items, status, selections, price);
+        self.run_query(&request, max_listings).await
+    }
+
+    /// Search then fetch the cheapest `max_listings` for a built request.
+    async fn run_query(
+        &self,
+        request: &SearchRequest,
+        max_listings: usize,
+    ) -> Result<PriceCheck, Error> {
+        let search = self.search(request).await?;
         let ids: Vec<String> = search.result.iter().take(max_listings).cloned().collect();
         let listings = self.fetch(&ids, &search.id).await?;
         Ok(PriceCheck {

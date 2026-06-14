@@ -9,8 +9,8 @@ use parser::{Item, Rarity};
 
 use crate::definitions::{ItemDefinitions, StatDefinitions};
 use crate::model::{
-    Filters, OptionFilter, Query, SearchRequest, Sort, StatFilter, StatGroup, StatValue, Status,
-    TypeFilterFields, TypeFilters,
+    Filters, OptionFilter, PriceRange, Query, SearchRequest, Sort, StatFilter, StatGroup, StatValue,
+    Status, TradeFilterFields, TradeFilters, TypeFilterFields, TypeFilters,
 };
 
 /// Which listings a search should return, by seller/trade availability.
@@ -78,6 +78,7 @@ pub fn build_search_query(
                 rarity: None,
             },
         }),
+        trade_filters: None,
     };
 
     let stat_filters = if opts.include_stats {
@@ -102,6 +103,95 @@ pub fn build_search_query(
     SearchRequest {
         query: Query {
             status: Status::new(opts.status.as_option()),
+            type_,
+            name,
+            stats: stat_groups,
+            filters,
+        },
+        sort: Some(Sort::price_asc()),
+    }
+}
+
+/// One per-stat filter the user can toggle in detailed mode (PRD §4.7), built
+/// from the item's mapped stats. `min`/`max` are the active range bounds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatSelection {
+    pub id: String,
+    pub enabled: bool,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+}
+
+impl StatSelection {
+    fn to_filter(&self) -> StatFilter {
+        let value = if self.min.is_none() && self.max.is_none() {
+            None
+        } else {
+            Some(StatValue::range(self.min, self.max))
+        };
+        StatFilter {
+            id: self.id.clone(),
+            value,
+            disabled: !self.enabled,
+        }
+    }
+}
+
+/// Detailed-mode price-range filter (PRD §4.7).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PriceFilter {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    /// Currency the bounds are in (`exalted`, `divine`, …); `None` = any.
+    pub currency: Option<String>,
+}
+
+impl PriceFilter {
+    pub fn is_empty(&self) -> bool {
+        self.min.is_none() && self.max.is_none()
+    }
+}
+
+/// Build the detailed-mode search request (PRD §4.7): same exact name / type /
+/// category as the quick query, but the stat filters come from explicit
+/// per-stat `selections` (each emitted with `disabled = !enabled`, so the
+/// resulting trade-site link mirrors exactly what the user sees), plus an
+/// optional price-range filter.
+pub fn build_detailed_query(
+    item: &Item,
+    items: &ItemDefinitions,
+    status: ListingStatus,
+    selections: &[StatSelection],
+    price: &PriceFilter,
+) -> SearchRequest {
+    let (name, type_) = name_and_type(item, items);
+    let category = category_for(&item.item_class).map(OptionFilter::new);
+
+    let trade_filters = PriceRange::new(price.min, price.max, price.currency.clone())
+        .map(|price| TradeFilters {
+            filters: TradeFilterFields { price: Some(price) },
+        });
+
+    let filters = Filters {
+        type_filters: category.map(|category| TypeFilters {
+            filters: TypeFilterFields {
+                category: Some(category),
+                rarity: None,
+            },
+        }),
+        trade_filters,
+    };
+
+    let stat_filters: Vec<StatFilter> = selections.iter().map(StatSelection::to_filter).collect();
+    let stat_groups = if stat_filters.is_empty() {
+        Vec::new()
+    } else {
+        vec![StatGroup::and(stat_filters)]
+    };
+
+    SearchRequest {
+        query: Query {
+            status: Status::new(status.as_option()),
             type_,
             name,
             stats: stat_groups,
