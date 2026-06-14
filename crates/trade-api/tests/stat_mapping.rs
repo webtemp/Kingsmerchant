@@ -1,7 +1,7 @@
 //! Stat-id mapping + base-type splitting against the recorded (real) snapshot
 //! subsets in `tests/fixtures/api/` (PRD §4.3, §4.4, §7).
 
-use parser::{ModKind, ModSource, Modifier};
+use parser::{parse_item, ModKind, ModSource, Modifier};
 use trade_api::{ItemDefinitions, StatDefinitions};
 
 fn stats() -> StatDefinitions {
@@ -128,6 +128,29 @@ fn prefer_local_picks_the_local_stat_variant() {
         .map_stat_line(&ModKind::Prefix, None, "103(101-110)% increased Evasion Rating", false)
         .unwrap();
     assert_eq!(global.id, "explicit.stat_2106365538");
+}
+
+#[test]
+fn quiver_accuracy_is_global_not_local() {
+    // Accuracy is local on weapons but global on quivers (they have no accuracy
+    // of their own). map_item must pick the non-local id for a quiver.
+    let json = r##"{"result":[{"id":"explicit","entries":[
+        {"id":"explicit.stat_803737631","text":"# to Accuracy Rating","type":"explicit"},
+        {"id":"explicit.stat_691932474","text":"# to Accuracy Rating (Local)","type":"explicit"}
+    ]}]}"##;
+    let defs = StatDefinitions::from_json(json).unwrap();
+    let quiver = parse_item(
+        "Item Class: Quivers\nRarity: Rare\nCorpse Bolt\nToxic Quiver\n--------\n\
+         { Prefix Modifier \"Hunter's\" — Attack }\n+257 to Accuracy Rating",
+    )
+    .unwrap();
+
+    let mapped = defs.map_item(&quiver);
+    let acc = mapped
+        .iter()
+        .find(|m| m.id.contains("803737631") || m.id.contains("691932474"))
+        .expect("accuracy maps");
+    assert_eq!(acc.id, "explicit.stat_803737631", "quiver accuracy must be global");
 }
 
 #[test]

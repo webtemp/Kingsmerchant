@@ -495,10 +495,16 @@ impl QuickModeApp {
             match event {
                 Hotkey::Item { text } => {
                     self.hint = None;
-                    self.item_text = text;
-                    self.view = View::Item;
                     self.pop_requested = true;
-                    self.start_price_check(ctx);
+                    // Same item re-copied → just (re)show; don't fire another
+                    // search (saves a request / rate limit).
+                    let unchanged =
+                        self.item.is_some() && text.trim() == self.item_text.trim();
+                    if !unchanged {
+                        self.item_text = text;
+                        self.view = View::Item;
+                        self.start_price_check(ctx);
+                    }
                 }
                 Hotkey::Missed => {
                     self.hint = Some(
@@ -1276,9 +1282,12 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
 /// fail while the second worked).
 fn wait_for_new_item(last_seen: &Option<String>) -> Option<String> {
     let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
+    // Compare trimmed: a same item re-copied can differ only by trailing
+    // whitespace, which must NOT count as a new item (else it re-searches).
+    let last = last_seen.as_deref().map(str::trim);
     loop {
         if let Ok(Some(text)) = platform_linux::read_clipboard_text() {
-            if Some(&text) != last_seen.as_ref() && parser::parse_item(&text).is_ok() {
+            if last != Some(text.trim()) && parser::parse_item(&text).is_ok() {
                 return Some(text);
             }
         }

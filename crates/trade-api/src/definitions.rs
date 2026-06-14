@@ -180,11 +180,17 @@ impl StatDefinitions {
 }
 
 /// Whether an item class can carry *local* stats (armour defences, weapon
-/// damage/speed/crit). Used to prefer the `(Local)` stat variant.
+/// damage/speed/crit/accuracy). Used to prefer the `(Local)` stat variant.
+///
+/// Quivers are the exception among `armour.*`: they hold no local defences and
+/// their accuracy/damage mods are global, so `+# to Accuracy Rating` on a quiver
+/// must map to the global stat, not the weapon-local one.
 fn item_has_local_stats(item_class: &str) -> bool {
-    crate::query::category_for(item_class)
-        .map(|c| c.starts_with("armour.") || c.starts_with("weapon."))
-        .unwrap_or(false)
+    match crate::query::category_for(item_class) {
+        Some("armour.quiver") => false,
+        Some(c) => c.starts_with("armour.") || c.starts_with("weapon."),
+        None => false,
+    }
 }
 
 /// The GGG stat-id prefixes to try for a parsed affix, most-specific first.
