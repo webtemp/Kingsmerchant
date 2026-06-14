@@ -3,13 +3,13 @@
 A native, lightweight POE2 price-check overlay for KDE Plasma 6 Wayland.
 See [PRD.md](PRD.md) for the full spec and phasing.
 
-## Status: Phase 3 (quick-mode window)
+## Status: quick-mode overlay
 
-Phases 0–2 done (hotkey→clipboard spike, item parser, trade-API client). Phase 3
-is a plain egui window showing quick-mode results: press **Ctrl+C** on an item
-in game and the window pops with the median asking price and the cheapest
-listings, each with Whisper / Invite / Hideout / Trade buttons. Phase 4 turns
-this into a `wlr-layer-shell` overlay at the cursor.
+A `wlr-layer-shell` overlay that prices the hovered item: press **Ctrl+C** on an
+item in game and a translucent popup appears with the median asking price and
+the cheapest listings, each with Whisper / Invite / Hideout / Trade buttons, a
+league selector, and an "open on trade site" link. The overlay takes no keyboard
+focus (POE2 stays focused) and starts hidden until the first valid copy.
 
 ## Running
 
@@ -17,15 +17,13 @@ Requires the Rust toolchain and membership in the `input` group (to read the
 keyboard event devices).
 
 ```sh
-POE_LEAGUE="Runes of Aldur" cargo run -p ui
+cargo run
 ```
 
-Then alt-tab into POE2, hover an item, and press **Ctrl+C**. The window raises
-and prices the item. You can also paste an item or use **Read clipboard**, then
-**Price check**. `POE_REALM` (pc/sony/xbox) is optional. Set `RUST_LOG=debug`
-for detail.
-
-The Phase 0 stdout spike still lives in `app/` (`cargo run -p poe2ddd`).
+Then alt-tab into POE2, hover an item, and press **Ctrl+C**. The league is read
+from `~/.config/poe2ddd/config.json` (seeded on first run, switchable from the
+selector); `POE_LEAGUE` / `POE_REALM` override it for one run. Set
+`RUST_LOG=debug` for detail.
 
 ## Platform notes
 

@@ -1,8 +1,8 @@
-//! Phase 3 UI: a plain egui window (not an overlay yet — that's Phase 4) that
-//! shows quick-mode price-check results (PRD §4.6).
+//! Quick-mode price-check UI (PRD §4.6): the egui view + app logic, windowing
+//! agnostic so the `overlay` crate can drive it on a layer surface.
 //!
-//! Flow: paste/copy a POE2 item → parse it → search + fetch via `trade-api` on
-//! a background tokio task → show the median asking price and the cheapest
+//! Flow: Ctrl+C on an item → parse it → search + fetch via `trade-api` on a
+//! background tokio task → show the median asking price and the cheapest
 //! listings, each with Whisper / Invite / Hideout / Trade-with buttons that copy
 //! the chat command to the clipboard (we can't type into POE2 on Wayland, so
 //! the user pastes — PRD §4.6, §9.1).
@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use config::Config;
-use eframe::egui;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
@@ -91,9 +90,8 @@ pub struct QuickModeApp {
     copy_status: Option<String>,
     /// Transient hint (e.g. a missed copy), shown near the top.
     hint: Option<String>,
-    /// Set when a Ctrl+C produced a fresh item — the overlay loop reads this to
-    /// (re)position and show the popup at the cursor. Harmless in the eframe
-    /// window (which is always visible).
+    /// Set when a Ctrl+C produced a fresh item — the overlay loop reads this
+    /// (via [`take_pop_request`](Self::take_pop_request)) to show the popup.
     pop_requested: bool,
 }
 
@@ -168,16 +166,6 @@ impl QuickModeApp {
     }
 }
 
-impl eframe::App for QuickModeApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.pump(ctx);
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(6.0);
-            self.content(ui);
-        });
-    }
-}
-
 impl QuickModeApp {
     /// Drain the hotkey + price-check channels. Side-effect only (no drawing),
     /// so the overlay can call it every frame — even while hidden — to notice a
@@ -193,7 +181,6 @@ impl QuickModeApp {
                     self.item_text = text;
                     self.view = View::Item;
                     self.pop_requested = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     self.start_price_check(ctx);
                 }
                 Hotkey::Missed => {
@@ -222,9 +209,9 @@ impl QuickModeApp {
         }
     }
 
-    /// Render the popup body into the given `Ui`. No panels — the caller frames
-    /// it (the eframe window uses a `CentralPanel`; the overlay an auto-sizing
-    /// translucent `Area`). Call [`pump`](Self::pump) first.
+    /// Render the popup body into the given `Ui`. No panels — the overlay
+    /// frames it in an auto-sizing translucent `Area`. Call
+    /// [`pump`](Self::pump) first.
     pub fn content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
@@ -679,7 +666,7 @@ fn wait_for_new_item(last_seen: &Option<String>) -> Option<String> {
 }
 
 /// Install the HTTP/image loaders egui_extras needs for item icons. Call once
-/// per `egui::Context` (eframe window or overlay).
+/// per `egui::Context`.
 pub fn install_loaders(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
 }
@@ -698,7 +685,7 @@ pub fn configure_style(ctx: &egui::Context) {
 
 /// Build a ready-to-render [`QuickModeApp`]: load settings, spin up a tokio
 /// runtime, fetch the live trade definitions + leagues, and construct the API
-/// client. Shared by the eframe window ([`run`]) and the layer-shell overlay.
+/// client for the layer-shell overlay.
 ///
 /// The league comes from `config.json` (PRD §4.8), so no env var is needed.
 /// `POE_LEAGUE` / `POE_REALM`, if set, still override for that run (handy for
@@ -737,29 +724,3 @@ pub fn build_app(hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<QuickModeApp> {
     Ok(QuickModeApp::new(rt, client, config, leagues, hotkey_rx))
 }
 
-/// Build the client (fetching live definitions) and run the plain eframe window
-/// (Phase 3). The Phase 4 overlay is a separate entry point (`overlay` crate).
-pub fn run() -> anyhow::Result<()> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 720.0])
-            .with_min_inner_size([440.0, 380.0])
-            .with_title("poe2ddd"),
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "poe2ddd",
-        options,
-        Box::new(move |cc| {
-            install_loaders(&cc.egui_ctx);
-            configure_style(&cc.egui_ctx);
-            let (hk_tx, hk_rx) = channel::<Hotkey>();
-            spawn_hotkey_watcher(cc.egui_ctx.clone(), hk_tx);
-            let app = build_app(hk_rx)
-                .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(format!("{e:#}")))?;
-            Ok(Box::new(app))
-        }),
-    )
-    .map_err(|e| anyhow::anyhow!("eframe failed: {e}"))
-}

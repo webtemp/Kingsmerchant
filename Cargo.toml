@@ -7,7 +7,6 @@ members = [
     "crates/trade-api",
     "crates/ui",
     "crates/overlay",
-    "crates/overlay-spike",
 ]
 # Plain `cargo run` launches the app (the `poe2ddd` overlay binary) instead of
 # erroring on which of the workspace's binaries to run.

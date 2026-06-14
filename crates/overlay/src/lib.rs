@@ -1,14 +1,13 @@
-//! Phase 4: the quick-mode price popup rendered onto a `wlr-layer-shell`
-//! *overlay* surface (PRD §4.5).
+//! The quick-mode price popup rendered onto a `wlr-layer-shell` *overlay*
+//! surface (PRD §4.5).
 //!
-//! The windowing layer (smithay-client-toolkit layer surface + glutin EGL +
-//! egui_glow) is validated by `crates/overlay-spike`. Here we render the real
-//! UI by reusing [`ui::QuickModeApp::ui`] — the exact egui draw code from the
-//! Phase 3 window — so only the surface underneath changes.
+//! The windowing layer is a smithay-client-toolkit layer surface + glutin EGL +
+//! egui_glow; the UI itself reuses [`ui::QuickModeApp`] so only the surface
+//! underneath differs from a normal window. The surface takes NO keyboard focus
+//! (POE2 stays focused), starts hidden until the first valid Ctrl+C, and is
+//! centered on the output.
 //!
-//! Increment 1 (this file): the overlay maps at a fixed position, takes NO
-//! keyboard focus, and prices the item copied by the in-game Ctrl+C. Cursor
-//! positioning, Alt-drag, and Esc-dismiss land in later increments.
+//! Still to come: cursor-relative placement, Alt-drag to move, and Esc-dismiss.
 //!
 //! Entry point is [`run`], shared by the `poe2ddd` binary (`cargo run`) and the
 //! `poe2-overlay` binary (`cargo run -p overlay`). The league comes from
@@ -66,13 +65,12 @@ const INITIAL_HEIGHT: u32 = 200;
 const LAYOUT_HEIGHT: f32 = 1600.0;
 const MIN_HEIGHT: u32 = 80;
 const MAX_HEIGHT: u32 = 1300;
-/// Fixed placement for now (cursor-relative placement is a later increment).
-const MARGIN_TOP: i32 = 120;
-const MARGIN_LEFT: i32 = 120;
-/// Popup backing: deliberately very translucent so the game shows through
-/// (~80% transparent per the design). Text/widgets paint opaque on top.
-const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 11, 15, 52);
-const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x3a, 0x3a, 0x46);
+/// Corner radius of the popup card.
+const CORNER_RADIUS: f32 = 14.0;
+/// Popup backing: a solid grey card, slightly translucent so the game is just
+/// visible behind it. Text/widgets paint opaque on top.
+const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(32, 33, 38, 240);
+const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x4a, 0x4b, 0x55);
 
 /// Launch the price-check overlay: build the egui app, bind the layer surface,
 /// and run the Wayland event loop until the popup is closed.
@@ -113,8 +111,10 @@ pub fn run() -> Result<()> {
         None,
     );
     layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-    layer.set_anchor(Anchor::TOP | Anchor::LEFT);
-    layer.set_margin(MARGIN_TOP, 0, 0, MARGIN_LEFT);
+    // No anchored edges → the compositor centers the surface on the output, and
+    // re-centers as the height changes (PRD §4.5: pop near the action; centered
+    // reads cleanly until cursor-relative placement lands).
+    layer.set_anchor(Anchor::empty());
     layer.set_size(WIDTH, INITIAL_HEIGHT);
     layer.commit();
 
@@ -286,10 +286,10 @@ impl App {
                     egui::Frame::none()
                         .fill(OVERLAY_FILL)
                         .stroke(egui::Stroke::new(1.0, OVERLAY_STROKE))
-                        .rounding(8.0)
-                        .inner_margin(egui::Margin::same(10.0))
+                        .rounding(CORNER_RADIUS)
+                        .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
-                            ui.set_width(width - 20.0);
+                            ui.set_width(width - 24.0);
                             self.quick.content(ui);
                         });
                 });
