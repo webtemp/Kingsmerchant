@@ -39,11 +39,17 @@ pub fn parse_item(input: &str) -> Result<Item, ParseError> {
     let mut item_class = None;
     let mut rarity = None;
     let mut name_lines: Vec<&str> = Vec::new();
+    let mut unusable = false;
     for &line in header {
         if let Some(v) = line.strip_prefix("Item Class:") {
             item_class = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("Rarity:") {
             rarity = Some(Rarity::parse(v.trim()));
+        } else if line.trim().starts_with("You cannot use this item") {
+            // POE2 inserts this usability note (when the current character can't
+            // use the item) into the header AND a separator after it, pushing
+            // the real name/base into the next section. It is NOT the base type.
+            unusable = true;
         } else if !line.trim().is_empty() {
             name_lines.push(line.trim());
         }
@@ -54,6 +60,23 @@ pub fn parse_item(input: &str) -> Result<Item, ParseError> {
     // trade site) omit it, so it's optional.
     let rarity = rarity.ok_or(ParseError::NotAnItem)?;
     let item_class = item_class.unwrap_or_default();
+
+    // When the usability note occupied the header, the name/base were split off
+    // into the next section — adopt it as the name lines (and skip re-parsing it
+    // as a property section below). A valid item always carries its name in the
+    // header, so an empty header-name only happens in this note case.
+    let mut name_section = None;
+    if name_lines.is_empty() && unusable {
+        if let Some(section) = sections.get(1) {
+            name_lines = section
+                .iter()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .collect();
+            name_section = Some(1);
+        }
+    }
+
     let (name, base_type) = split_name(&rarity, &name_lines);
 
     let mut item = Item {
@@ -77,8 +100,15 @@ pub fn parse_item(input: &str) -> Result<Item, ParseError> {
         fractured: false,
         flags: Vec::new(),
     };
+    if unusable {
+        item.flags.push("Unusable".to_string());
+    }
 
-    for section in sections.iter().skip(1) {
+    for (i, section) in sections.iter().enumerate().skip(1) {
+        // Skip the section we adopted as the name/base above.
+        if Some(i) == name_section {
+            continue;
+        }
         classify_section(section, &mut item);
     }
 
@@ -397,6 +427,35 @@ mod tests {
         assert_eq!(item.item_class, "");
         assert_eq!(item.rarity, Rarity::Gem);
         assert_eq!(item.name.as_deref(), Some("Animus Splinters"));
+    }
+
+    #[test]
+    fn unusable_item_keeps_its_name_and_base() {
+        // When the character can't use an item, POE2 inserts "You cannot use
+        // this item…" into the header + a separator, pushing the name/base into
+        // the next section. The name/base must still be read (else a unique is
+        // searched by garbage and finds nothing).
+        let text = "Item Class: Sceptres\n\
+            Rarity: Unique\n\
+            You cannot use this item. Its stats will be ignored\n\
+            --------\n\
+            Sylvan's Effigy\n\
+            Stoic Sceptre\n\
+            --------\n\
+            Item Level: 84\n\
+            --------\n\
+            Grants Skill: Level 19 Discipline\n\
+            Grants Skill: Level 19 Azmerian Wolf";
+        let item = parse_item(text).unwrap();
+        assert_eq!(item.name.as_deref(), Some("Sylvan's Effigy"));
+        assert_eq!(item.base_type.as_deref(), Some("Stoic Sceptre"));
+        assert!(item.flags.iter().any(|f| f == "Unusable"));
+        assert_eq!(item.item_level, Some(84));
+        // The granted skills are still captured (as properties).
+        assert_eq!(
+            item.properties.iter().filter(|p| p.name == "Grants Skill").count(),
+            2
+        );
     }
 
     #[test]
