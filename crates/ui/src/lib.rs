@@ -1062,9 +1062,11 @@ impl QuickModeApp {
                 egui::CollapsingHeader::new(RichText::new("Miscellaneous").strong())
                     .default_open(false)
                     .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            for m in &mut self.misc {
-                                changed |= ui.checkbox(&mut m.on, m.label).changed();
+                        // Two even columns of four (4 + 4), evenly spaced.
+                        ui.columns(2, |cols| {
+                            for (i, m) in self.misc.iter_mut().enumerate() {
+                                let col = if i < 4 { 0 } else { 1 };
+                                changed |= cols[col].checkbox(&mut m.on, m.label).changed();
                             }
                         });
                     });
