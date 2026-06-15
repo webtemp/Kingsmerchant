@@ -18,6 +18,7 @@ use std::collections::HashSet;
 
 use config::Config;
 use egui::{Color32, RichText};
+use egui_phosphor::regular as ph;
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
     build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, DetailedFilters,
@@ -1127,7 +1128,7 @@ impl QuickModeApp {
                 {
                     self.close_requested = true;
                 }
-                if ui.button("Settings").on_hover_text("Open settings").clicked() {
+                if ui.button(ph::GEAR).on_hover_text("Open settings").clicked() {
                     self.settings_requested = true;
                 }
                 self.league_selector(ui, &ctx);
@@ -1138,10 +1139,10 @@ impl QuickModeApp {
         // View toggle (Item ⇄ Text). Pricing is driven by Ctrl+C / the filters,
         // so there's no manual "price check" button any more.
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.view, View::Item, "Item");
-            ui.selectable_value(&mut self.view, View::Text, "Text");
+            ui.selectable_value(&mut self.view, View::Item, format!("{} Item", ph::SHIELD));
+            ui.selectable_value(&mut self.view, View::Text, format!("{} Text", ph::NOTE_PENCIL));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Read clipboard").clicked() {
+                if ui.button(format!("{} Read clipboard", ph::CLIPBOARD)).clicked() {
                     self.read_clipboard();
                     self.start_price_check(&ctx);
                 }
@@ -1161,7 +1162,7 @@ impl QuickModeApp {
 
         if let Some(hint) = &self.hint {
             ui.add_space(4.0);
-            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("! {hint}"));
+            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("{} {hint}", ph::WARNING));
         }
 
         ui.add_space(4.0);
@@ -1205,7 +1206,7 @@ impl QuickModeApp {
             let secs = (wait.as_millis() as u64).div_ceil(1000);
             ui.colored_label(
                 Color32::from_rgb(0xff, 0xc8, 0x4b),
-                format!("Rate limited — retrying in {secs}s"),
+                format!("{} Rate limited — retrying in {secs}s", ph::HOURGLASS),
             );
         }
 
@@ -1252,7 +1253,7 @@ impl QuickModeApp {
                         show_results(ui, pc, &mut copied);
                         ui.add_space(6.0);
                         if ui
-                            .button("Open on trade site")
+                            .button(format!("{} Open on trade site", ph::GLOBE))
                             .on_hover_text("Opens your browser with this exact search")
                             .clicked()
                         {
@@ -1281,7 +1282,7 @@ impl QuickModeApp {
             ui.add_space(4.0);
             ui.colored_label(
                 Color32::from_rgb(0x4c, 0xd1, 0x37),
-                format!("Sent {status} to POE2"),
+                format!("{} Sent {status} to POE2", ph::CHECK_CIRCLE),
             );
         }
     }
@@ -1319,6 +1320,16 @@ impl QuickModeApp {
                 ui.label("checking exchange…");
             });
         }
+        // Player exchange listings are frequently stale/unreliable for currency
+        // — point the user at the in-game Currency Exchange (PRD currency notes).
+        ui.colored_label(
+            Color32::from_rgb(0xff, 0xc8, 0x4b),
+            format!(
+                "{} These player prices are often stale. For currency, the in-game \
+                 Currency Exchange is more reliable.",
+                ph::WARNING
+            ),
+        );
         ui.separator();
 
         match &self.exchange_phase {
@@ -1357,19 +1368,12 @@ impl QuickModeApp {
                     .weak(),
                 );
                 ui.add_space(6.0);
-                egui::Grid::new("exchange-offers")
-                    .striped(true)
-                    .num_columns(3)
-                    .spacing([10.0, 10.0])
-                    .show(ui, |ui| {
-                        for offer in ex.cheapest(SHOWN) {
-                            exchange_row(ui, offer, pay, copied);
-                            ui.end_row();
-                        }
-                    });
+                for offer in ex.cheapest(SHOWN) {
+                    exchange_row(ui, offer, pay, copied);
+                }
                 ui.add_space(6.0);
                 if ui
-                    .button("Open exchange page")
+                    .button(format!("{} Open exchange page", ph::GLOBE))
                     .on_hover_text("Opens the in-game-style currency exchange in your browser")
                     .clicked()
                 {
@@ -1656,7 +1660,7 @@ impl QuickModeApp {
     fn filter_panel(&mut self, ui: &mut egui::Ui) -> bool {
         let mut requery = false;
         let mut changed = false;
-        egui::CollapsingHeader::new(RichText::new("Filters").strong())
+        egui::CollapsingHeader::new(RichText::new(format!("{} Filters", ph::FUNNEL)).strong())
             .default_open(true)
             .show(ui, |ui| {
                 // Price range (PRD §4.7 price-range filter), right-aligned.
@@ -1762,13 +1766,13 @@ impl QuickModeApp {
 
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Apply now").clicked() {
+                    if ui.button(format!("{} Apply now", ph::ARROW_CLOCKWISE)).clicked() {
                         requery = true;
                     }
                     // "Similar item" (PRD §4.7): same base, every mapped mod
                     // enabled at ~80% of its roll — find comparable items.
                     if ui
-                        .button("Similar item")
+                        .button(format!("{} Similar item", ph::MAGNIFYING_GLASS))
                         .on_hover_text("Same base, every mod present at ~80% of its roll")
                         .clicked()
                     {
@@ -1816,7 +1820,8 @@ impl QuickModeApp {
             .map(|c| format!("  ·  {c:.0}% confidence"))
             .unwrap_or_default();
         let text = format!(
-            "poeprices ML: {}-{} {}{}",
+            "{} poeprices ML: {}-{} {}{}",
+            ph::ROBOT,
             fmt_amount(est.min),
             fmt_amount(est.max),
             est.currency,
@@ -1982,6 +1987,12 @@ fn thin_separator(ui: &mut egui::Ui) {
     ui.add_space(2.0);
 }
 
+/// Row height + fixed column widths so result rows align and fill the popup.
+const ROW_H: f32 = 26.0;
+const PRICE_COL_W: f32 = 96.0;
+const ACTIONS_COL_W: f32 = 172.0;
+const ONLINE_DOT: Color32 = Color32::from_rgb(0x4c, 0xd1, 0x37);
+
 fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>) {
     match pc.median_price() {
         Some(p) => {
@@ -2003,64 +2014,91 @@ fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>)
         .weak(),
     );
     ui.add_space(6.0);
-
-    let cheapest = pc.cheapest(SHOWN);
-    if cheapest.is_empty() {
-        return;
+    for entry in pc.cheapest(SHOWN) {
+        listing_row(ui, entry, copied);
     }
+}
 
-    egui::Grid::new("listings")
-        .striped(true)
-        .num_columns(3)
-        .spacing([10.0, 10.0])
-        .show(ui, |ui| {
-            for entry in cheapest {
-                listing_row(ui, entry, copied);
-                ui.end_row();
-            }
-        });
+/// One result row, laid out across the FULL width with aligned columns: price
+/// (left), seller + online dot (fills the middle, truncates), action buttons
+/// (right). Fixed price/action columns so rows line up.
+fn result_row(
+    ui: &mut egui::Ui,
+    price: &str,
+    online: bool,
+    seller: &str,
+    seller_hover: Option<String>,
+    actions: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal(|ui| {
+        let total = ui.available_width();
+        let seller_w = (total - PRICE_COL_W - ACTIONS_COL_W - 16.0).max(48.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(PRICE_COL_W, ROW_H),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(RichText::new(price).strong());
+            },
+        );
+        ui.allocate_ui_with_layout(
+            egui::vec2(seller_w, ROW_H),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.colored_label(if online { ONLINE_DOT } else { Color32::DARK_GRAY }, "●");
+                let lbl = ui.add(egui::Label::new(seller).truncate());
+                if let Some(h) = seller_hover {
+                    lbl.on_hover_text(h);
+                }
+            },
+        );
+        ui.allocate_ui_with_layout(
+            egui::vec2(ACTIONS_COL_W, ROW_H),
+            egui::Layout::left_to_right(egui::Align::Center),
+            actions,
+        );
+    });
+}
+
+/// The four chat-action buttons (Whisper / Invite / Hideout / Trade) shared by
+/// item listings and exchange offers — Phosphor icons with hover labels.
+fn action_buttons(
+    ui: &mut egui::Ui,
+    whisper: Option<&str>,
+    character: Option<&str>,
+    seller: &str,
+    copied: &mut Option<String>,
+) {
+    if let Some(w) = whisper {
+        if ui
+            .button(ph::CHAT_CIRCLE_DOTS)
+            .on_hover_text("Whisper (sends in POE2)")
+            .clicked()
+        {
+            send_chat_to_poe2(w.to_string());
+            *copied = Some(format!("whisper to {seller}"));
+        }
+    } else {
+        ui.add_enabled(false, egui::Button::new(ph::CHAT_CIRCLE_DOTS))
+            .on_hover_text("Whisper (unavailable)");
+    }
+    chat_button(ui, ph::USER_PLUS, "Invite", character.map(|c| format!("/invite {c}")), copied);
+    chat_button(ui, ph::HOUSE, "Hideout", character.map(|c| format!("/hideout {c}")), copied);
+    chat_button(ui, ph::HANDSHAKE, "Trade", character.map(|c| format!("/tradewith {c}")), copied);
 }
 
 fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<String>) {
-    let listing = &entry.listing;
-
-    let price = listing
+    let l = &entry.listing;
+    let price = l
         .price
         .as_ref()
         .map(|p| format!("{} {}", fmt_amount(p.amount), p.currency))
         .unwrap_or_else(|| "—".to_string());
-    ui.label(RichText::new(price).strong());
-
-    let dot = if listing.is_online() {
-        Color32::from_rgb(0x4c, 0xd1, 0x37)
-    } else {
-        Color32::DARK_GRAY
-    };
-    ui.horizontal(|ui| {
-        ui.colored_label(dot, "●");
-        let label = ui.label(&listing.account.name);
-        if let Some(indexed) = &listing.indexed {
-            label.on_hover_text(format!("listed {indexed}"));
-        }
-    });
-
-    let character = listing.account.last_character_name.clone();
-    let seller = listing.account.name.clone();
-    // Icon buttons (the row is too narrow for text labels); the action name is
-    // the hover tooltip.
-    ui.horizontal(|ui| {
-        if let Some(whisper) = &listing.whisper {
-            if ui.button("wtb").on_hover_text("Whisper (sends in POE2)").clicked() {
-                send_chat_to_poe2(whisper.clone());
-                *copied = Some(format!("whisper to {seller}"));
-            }
-        } else {
-            ui.add_enabled(false, egui::Button::new("wtb"))
-                .on_hover_text("Whisper (unavailable)");
-        }
-        chat_button(ui, "inv", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
-        chat_button(ui, "ho", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
-        chat_button(ui, "trade", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
+    let hover = l.indexed.as_ref().map(|i| format!("listed {i}"));
+    let whisper = l.whisper.clone();
+    let character = l.account.last_character_name.clone();
+    let seller = l.account.name.clone();
+    result_row(ui, &price, l.is_online(), &seller, hover, |ui| {
+        action_buttons(ui, whisper.as_deref(), character.as_deref(), &seller, copied);
     });
 }
 
@@ -2091,36 +2129,13 @@ fn exchange_url(league: &str, id: &str) -> String {
 /// One bulk-exchange offer row: unit price, seller (+ online dot / stock), and
 /// Whisper / Invite / Hideout / Trade buttons (the whisper is pre-filled).
 fn exchange_row(ui: &mut egui::Ui, offer: &ExchangeOffer, pay: &str, copied: &mut Option<String>) {
-    ui.label(RichText::new(format!("{} {}", fmt_amount(offer.unit_price), pay)).strong());
-
-    let dot = if offer.online {
-        Color32::from_rgb(0x4c, 0xd1, 0x37)
-    } else {
-        Color32::DARK_GRAY
-    };
-    ui.horizontal(|ui| {
-        ui.colored_label(dot, "●");
-        let label = ui.label(&offer.account);
-        if let Some(stock) = offer.stock {
-            label.on_hover_text(format!("stock: {}", fmt_amount(stock)));
-        }
-    });
-
+    let price = format!("{} {}", fmt_amount(offer.unit_price), pay);
+    let hover = offer.stock.map(|s| format!("stock: {}", fmt_amount(s)));
+    let whisper = offer.whisper.clone();
     let character = offer.character.clone();
     let seller = offer.account.clone();
-    ui.horizontal(|ui| {
-        if let Some(whisper) = &offer.whisper {
-            if ui.button("wtb").on_hover_text("Whisper (sends in POE2)").clicked() {
-                send_chat_to_poe2(whisper.clone());
-                *copied = Some(format!("whisper to {seller}"));
-            }
-        } else {
-            ui.add_enabled(false, egui::Button::new("wtb"))
-                .on_hover_text("Whisper (unavailable)");
-        }
-        chat_button(ui, "inv", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
-        chat_button(ui, "ho", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
-        chat_button(ui, "trade", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
+    result_row(ui, &price, offer.online, &seller, hover, |ui| {
+        action_buttons(ui, whisper.as_deref(), character.as_deref(), &seller, copied);
     });
 }
 
@@ -2476,6 +2491,13 @@ pub fn install_loaders(ctx: &egui::Context) {
 }
 
 pub fn configure_style(ctx: &egui::Context) {
+    // Add the Phosphor icon font so the button glyphs render (the default egui
+    // font has no emoji — that's why they were tofu squares). Keep the default
+    // fonts for text; phosphor is an extra family the `ph::*` constants use.
+    let mut fonts = egui::FontDefinitions::default();
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    ctx.set_fonts(fonts);
+
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
