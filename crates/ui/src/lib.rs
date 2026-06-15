@@ -2071,9 +2071,13 @@ fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String
     if rows.is_empty() {
         return;
     }
+    // Hovering ANYWHERE on a row shows the item preview, anchored just above-left
+    // of the cursor (so it never covers the action buttons under the pointer).
+    let ctx = ui.ctx().clone();
     TableBuilder::new(ui)
         .striped(true)
         .vscroll(false)
+        .sense(egui::Sense::hover())
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::auto().at_least(70.0))
         .column(Column::remainder().clip(true))
@@ -2090,63 +2094,101 @@ fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String
                             "●",
                         );
                         let lbl = ui.add(egui::Label::new(&r.seller).truncate());
-                        if let Some(h) = &r.seller_hover {
-                            lbl.on_hover_text(h);
+                        // Seller hover (listed-date / stock) only when there's no
+                        // item preview to compete with it (i.e. exchange offers).
+                        if r.item.is_none() {
+                            if let Some(h) = &r.seller_hover {
+                                lbl.on_hover_text(h);
+                            }
                         }
                     });
                     row.col(|ui| {
-                        if let Some(item) = &r.item {
-                            item_info_button(ui, item);
-                        }
                         action_buttons(ui, r.whisper.as_deref(), r.character.as_deref(), &r.seller, copied);
                     });
+                    if let Some(item) = &r.item {
+                        if row.response().hovered() {
+                            show_item_preview_at_cursor(&ctx, item);
+                        }
+                    }
                 });
             }
         });
 }
 
-/// An (i) button whose hover preview shows the actual item for this listing —
-/// its icon image plus name / base / mods (great for rares, where every listing
-/// is a different roll).
-fn item_info_button(ui: &mut egui::Ui, item: &ItemPreview) {
-    ui.button(ph::INFO)
-        .on_hover_text("Show item")
-        .on_hover_ui(|ui| {
-            // Frame it like an in-game tooltip: rarity-coloured border + name.
-            let color = frame_color(item.frame_type);
-            egui::Frame::none()
-                .fill(HEADER_BG)
-                .stroke(egui::Stroke::new(1.5, color))
-                .rounding(6.0)
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                .show(ui, |ui| {
-                    ui.set_max_width(300.0);
-                    ui.horizontal(|ui| {
-                        if let Some(icon) = &item.icon {
-                            ui.add(
-                                egui::Image::new(icon)
-                                    .fit_to_exact_size(egui::vec2(52.0, 52.0))
-                                    .rounding(4.0),
-                            );
-                            ui.add_space(4.0);
-                        }
-                        ui.vertical(|ui| {
-                            if let Some(name) = &item.name {
-                                ui.label(RichText::new(name).color(color).strong().size(15.0));
-                            }
-                            if let Some(base) = &item.base {
-                                ui.label(RichText::new(base).color(color).weak());
-                            }
-                        });
-                    });
-                    if !item.mods.is_empty() {
-                        thin_separator(ui);
-                        for m in &item.mods {
-                            ui.label(RichText::new(m).color(AFFIX_BLUE));
-                        }
+/// Show the item preview anchored so its bottom-right corner sits ~5px up-left of
+/// the cursor — a non-interactive, top-most tooltip that follows the mouse but
+/// leaves the row (and its buttons, under the pointer) free to click.
+fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPreview) {
+    let Some(pos) = ctx.pointer_latest_pos() else {
+        return;
+    };
+    egui::Area::new(egui::Id::new("item-preview"))
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .fixed_pos(pos - egui::vec2(5.0, 5.0))
+        .pivot(egui::Align2::RIGHT_BOTTOM)
+        .show(ctx, |ui| {
+            render_item_preview(ui, item);
+        });
+}
+
+/// The in-game-style item card (rarity-coloured border + name, icon, mods).
+fn render_item_preview(ui: &mut egui::Ui, item: &ItemPreview) {
+    let color = frame_color(item.frame_type);
+    egui::Frame::none()
+        .fill(HEADER_BG)
+        .stroke(egui::Stroke::new(1.5, color))
+        .rounding(6.0)
+        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .show(ui, |ui| {
+            ui.set_max_width(320.0);
+            ui.horizontal(|ui| {
+                if let Some(icon) = &item.icon {
+                    ui.add(
+                        egui::Image::new(icon)
+                            .fit_to_exact_size(egui::vec2(52.0, 52.0))
+                            .rounding(4.0),
+                    );
+                    ui.add_space(4.0);
+                }
+                ui.vertical(|ui| {
+                    if let Some(name) = &item.name {
+                        ui.label(RichText::new(name).color(color).strong().size(15.0));
+                    }
+                    if let Some(base) = &item.base {
+                        ui.label(RichText::new(base).color(color).weak());
                     }
                 });
+            });
+            if !item.mods.is_empty() {
+                thin_separator(ui);
+                for m in &item.mods {
+                    ui.label(RichText::new(clean_mod_markup(m)).color(AFFIX_BLUE));
+                }
+            }
         });
+}
+
+/// Strip POE2 fetch-text reference markup: `[link|display]` → `display`,
+/// `[text]` → `text` (the API returns e.g. `[Resistances|Fire Resistance]`).
+fn clean_mod_markup(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(open) = rest.find('[') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        if let Some(close) = after.find(']') {
+            let inner = &after[..close];
+            // Display text is the part after the last '|' (or the whole thing).
+            out.push_str(inner.rsplit('|').next().unwrap_or(inner));
+            rest = &after[close + 1..];
+        } else {
+            out.push_str(&rest[open..]);
+            return out;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Trade `frameType` → its in-game rarity colour (mirrors [`rarity_color`]).
@@ -2701,5 +2743,23 @@ mod tests {
     #[test]
     fn non_item_clipboard_is_ignored() {
         assert_eq!(clip_step("https://example.com/not-an-item", None), ClipStep::NotItem);
+    }
+
+    #[test]
+    fn strips_fetch_text_markup() {
+        use super::clean_mod_markup;
+        assert_eq!(clean_mod_markup("+162 to [Evasion] Rating"), "+162 to Evasion Rating");
+        assert_eq!(
+            clean_mod_markup("36% increased [Evasion|Evasion] Rating"),
+            "36% increased Evasion Rating"
+        );
+        // The display text is the part after '|'.
+        assert_eq!(
+            clean_mod_markup("+33% to [Resistances|Fire Resistance]"),
+            "+33% to Fire Resistance"
+        );
+        assert_eq!(clean_mod_markup("no markup here"), "no markup here");
+        // Unbalanced bracket is left as-is (no panic).
+        assert_eq!(clean_mod_markup("oops [unclosed"), "oops [unclosed");
     }
 }
