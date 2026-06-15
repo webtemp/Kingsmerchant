@@ -23,7 +23,7 @@ use parser::{Item, ModKind, Rarity};
 use trade_api::{
     build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, DetailedFilters,
     EquipmentSelection, ExchangeCheck, ExchangeOffer, League, ListingStatus, MiscSelection,
-    PriceCheck, PriceEstimate, PriceFilter, ReqwestTransport, ResultEntry, StatSelection,
+    PriceCheck, PriceEstimate, PriceFilter, ReqwestTransport, StatSelection,
     TradeClient,
 };
 
@@ -1368,9 +1368,8 @@ impl QuickModeApp {
                     .weak(),
                 );
                 ui.add_space(6.0);
-                for offer in ex.cheapest(SHOWN) {
-                    exchange_row(ui, offer, pay, copied);
-                }
+                let rows = exchange_rows(ex.cheapest(SHOWN), pay);
+                results_table(ui, &rows, copied);
                 ui.add_space(6.0);
                 if ui
                     .button(format!("{} Open exchange page", ph::GLOBE))
@@ -1987,11 +1986,30 @@ fn thin_separator(ui: &mut egui::Ui) {
     ui.add_space(2.0);
 }
 
-/// Row height + fixed column widths so result rows align and fill the popup.
+/// Height of a results-table row.
 const ROW_H: f32 = 26.0;
-const PRICE_COL_W: f32 = 96.0;
-const ACTIONS_COL_W: f32 = 172.0;
 const ONLINE_DOT: Color32 = Color32::from_rgb(0x4c, 0xd1, 0x37);
+
+/// One row of the results table (an item listing or an exchange offer).
+struct RowData {
+    price: String,
+    online: bool,
+    seller: String,
+    seller_hover: Option<String>,
+    whisper: Option<String>,
+    character: Option<String>,
+    /// The actual item for this listing (icon + mods), for the (i) preview.
+    /// `None` for currency-exchange offers.
+    item: Option<ItemPreview>,
+}
+
+/// The bits of a listing's item shown in the (i) hover preview.
+struct ItemPreview {
+    icon: Option<String>,
+    name: Option<String>,
+    base: Option<String>,
+    mods: Vec<String>,
+}
 
 fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>) {
     match pc.median_price() {
@@ -2014,49 +2032,123 @@ fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>)
         .weak(),
     );
     ui.add_space(6.0);
-    for entry in pc.cheapest(SHOWN) {
-        listing_row(ui, entry, copied);
-    }
+
+    let rows: Vec<RowData> = pc
+        .cheapest(SHOWN)
+        .into_iter()
+        .map(|e| {
+            let l = &e.listing;
+            RowData {
+                price: l
+                    .price
+                    .as_ref()
+                    .map(|p| format!("{} {}", fmt_amount(p.amount), p.currency))
+                    .unwrap_or_else(|| "—".to_string()),
+                online: l.is_online(),
+                seller: l.account.name.clone(),
+                seller_hover: l.indexed.as_ref().map(|i| format!("listed {i}")),
+                whisper: l.whisper.clone(),
+                character: l.account.last_character_name.clone(),
+                item: Some(item_preview(&e.item)),
+            }
+        })
+        .collect();
+    results_table(ui, &rows, copied);
 }
 
-/// One result row, laid out across the FULL width with aligned columns: price
-/// (left), seller + online dot (fills the middle, truncates), action buttons
-/// (right). Fixed price/action columns so rows line up.
-fn result_row(
-    ui: &mut egui::Ui,
-    price: &str,
-    online: bool,
-    seller: &str,
-    seller_hover: Option<String>,
-    actions: impl FnOnce(&mut egui::Ui),
-) {
-    ui.horizontal(|ui| {
-        let total = ui.available_width();
-        let seller_w = (total - PRICE_COL_W - ACTIONS_COL_W - 16.0).max(48.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(PRICE_COL_W, ROW_H),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.label(RichText::new(price).strong());
-            },
-        );
-        ui.allocate_ui_with_layout(
-            egui::vec2(seller_w, ROW_H),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.colored_label(if online { ONLINE_DOT } else { Color32::DARK_GRAY }, "●");
-                let lbl = ui.add(egui::Label::new(seller).truncate());
-                if let Some(h) = seller_hover {
-                    lbl.on_hover_text(h);
+/// The shared results table (item listings and exchange offers): striped,
+/// full-width, aligned columns — price (auto) · seller (fills, truncates) ·
+/// actions (auto). `vscroll(false)` so it sizes to content in the auto-height
+/// popup instead of scrolling.
+fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String>) {
+    use egui_extras::{Column, TableBuilder};
+    if rows.is_empty() {
+        return;
+    }
+    TableBuilder::new(ui)
+        .striped(true)
+        .vscroll(false)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::remainder().clip(true))
+        .column(Column::auto())
+        .body(|mut body| {
+            for r in rows {
+                body.row(ROW_H, |mut row| {
+                    row.col(|ui| {
+                        ui.label(RichText::new(&r.price).strong());
+                    });
+                    row.col(|ui| {
+                        ui.colored_label(
+                            if r.online { ONLINE_DOT } else { Color32::DARK_GRAY },
+                            "●",
+                        );
+                        let lbl = ui.add(egui::Label::new(&r.seller).truncate());
+                        if let Some(h) = &r.seller_hover {
+                            lbl.on_hover_text(h);
+                        }
+                    });
+                    row.col(|ui| {
+                        if let Some(item) = &r.item {
+                            item_info_button(ui, item);
+                        }
+                        action_buttons(ui, r.whisper.as_deref(), r.character.as_deref(), &r.seller, copied);
+                    });
+                });
+            }
+        });
+}
+
+/// An (i) button whose hover preview shows the actual item for this listing —
+/// its icon image plus name / base / mods (great for rares, where every listing
+/// is a different roll).
+fn item_info_button(ui: &mut egui::Ui, item: &ItemPreview) {
+    ui.button(ph::INFO)
+        .on_hover_text("Show item")
+        .on_hover_ui(|ui| {
+            ui.set_max_width(280.0);
+            if let Some(icon) = &item.icon {
+                ui.add(
+                    egui::Image::new(icon)
+                        .fit_to_exact_size(egui::vec2(64.0, 64.0))
+                        .rounding(4.0),
+                );
+            }
+            if let Some(name) = &item.name {
+                ui.label(RichText::new(name).strong().size(15.0));
+            }
+            if let Some(base) = &item.base {
+                ui.label(RichText::new(base).weak());
+            }
+            if !item.mods.is_empty() {
+                ui.separator();
+                for m in &item.mods {
+                    ui.label(RichText::new(m).color(AFFIX_BLUE));
                 }
-            },
-        );
-        ui.allocate_ui_with_layout(
-            egui::vec2(ACTIONS_COL_W, ROW_H),
-            egui::Layout::left_to_right(egui::Align::Center),
-            actions,
-        );
-    });
+            }
+        });
+}
+
+/// Pull the previewable fields out of a fetch result's raw `item` JSON.
+fn item_preview(item: &serde_json::Value) -> ItemPreview {
+    let s = |k: &str| {
+        item.get(k)
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .filter(|t| !t.is_empty())
+    };
+    let mut mods = Vec::new();
+    for key in ["implicitMods", "explicitMods", "runeMods"] {
+        if let Some(arr) = item.get(key).and_then(|v| v.as_array()) {
+            mods.extend(arr.iter().filter_map(|v| v.as_str()).map(str::to_string));
+        }
+    }
+    ItemPreview {
+        icon: s("icon"),
+        name: s("name"),
+        base: s("typeLine"),
+        mods,
+    }
 }
 
 /// The four chat-action buttons (Whisper / Invite / Hideout / Trade) shared by
@@ -2086,22 +2178,6 @@ fn action_buttons(
     chat_button(ui, ph::HANDSHAKE, "Trade", character.map(|c| format!("/tradewith {c}")), copied);
 }
 
-fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<String>) {
-    let l = &entry.listing;
-    let price = l
-        .price
-        .as_ref()
-        .map(|p| format!("{} {}", fmt_amount(p.amount), p.currency))
-        .unwrap_or_else(|| "—".to_string());
-    let hover = l.indexed.as_ref().map(|i| format!("listed {i}"));
-    let whisper = l.whisper.clone();
-    let character = l.account.last_character_name.clone();
-    let seller = l.account.name.clone();
-    result_row(ui, &price, l.is_online(), &seller, hover, |ui| {
-        action_buttons(ui, whisper.as_deref(), character.as_deref(), &seller, copied);
-    });
-}
-
 /// Currencies offered in the exchange "pay with" selector (id, label).
 const PAY_CURRENCIES: &[(&str, &str)] = &[
     ("exalted", "Exalted"),
@@ -2128,15 +2204,20 @@ fn exchange_url(league: &str, id: &str) -> String {
 
 /// One bulk-exchange offer row: unit price, seller (+ online dot / stock), and
 /// Whisper / Invite / Hideout / Trade buttons (the whisper is pre-filled).
-fn exchange_row(ui: &mut egui::Ui, offer: &ExchangeOffer, pay: &str, copied: &mut Option<String>) {
-    let price = format!("{} {}", fmt_amount(offer.unit_price), pay);
-    let hover = offer.stock.map(|s| format!("stock: {}", fmt_amount(s)));
-    let whisper = offer.whisper.clone();
-    let character = offer.character.clone();
-    let seller = offer.account.clone();
-    result_row(ui, &price, offer.online, &seller, hover, |ui| {
-        action_buttons(ui, whisper.as_deref(), character.as_deref(), &seller, copied);
-    });
+/// Build the results-table rows for bulk-exchange offers (no item preview).
+fn exchange_rows(offers: &[ExchangeOffer], pay: &str) -> Vec<RowData> {
+    offers
+        .iter()
+        .map(|o| RowData {
+            price: format!("{} {}", fmt_amount(o.unit_price), pay),
+            online: o.online,
+            seller: o.account.clone(),
+            seller_hover: o.stock.map(|s| format!("stock: {}", fmt_amount(s))),
+            whisper: o.whisper.clone(),
+            character: o.character.clone(),
+            item: None,
+        })
+        .collect()
 }
 
 /// An icon button that sends a chat `command` into POE2. `name` is the hover
