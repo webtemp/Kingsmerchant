@@ -2089,10 +2089,7 @@ fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String
                         ui.label(RichText::new(&r.price).strong());
                     });
                     row.col(|ui| {
-                        ui.colored_label(
-                            if r.online { ONLINE_DOT } else { Color32::DARK_GRAY },
-                            "●",
-                        );
+                        online_dot(ui, r.online);
                         let lbl = ui.add(egui::Label::new(&r.seller).truncate());
                         // Seller hover (listed-date / stock) only when there's no
                         // item preview to compete with it (i.e. exchange offers).
@@ -2115,9 +2112,20 @@ fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String
         });
 }
 
+/// A painted online-status dot (a glyph rendered as tofu in the default font —
+/// paint it directly so it always shows). Green = online, grey = offline.
+fn online_dot(ui: &mut egui::Ui, online: bool) {
+    let color = if online { ONLINE_DOT } else { Color32::from_gray(0x70) };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, ROW_H), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 4.0, color);
+}
+
 /// Show the item preview anchored so its bottom-right corner sits ~5px up-left of
 /// the cursor — a non-interactive, top-most tooltip that follows the mouse but
 /// leaves the row (and its buttons, under the pointer) free to click.
+/// `constrain(true)` keeps it inside the surface so it's never clipped away when
+/// hovering near an edge (the popup is one layer-shell surface — it can't draw
+/// outside its own bounds).
 fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPreview) {
     let Some(pos) = ctx.pointer_latest_pos() else {
         return;
@@ -2125,6 +2133,7 @@ fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPreview) {
     egui::Area::new(egui::Id::new("item-preview"))
         .order(egui::Order::Tooltip)
         .interactable(false)
+        .constrain(true)
         .fixed_pos(pos - egui::vec2(5.0, 5.0))
         .pivot(egui::Align2::RIGHT_BOTTOM)
         .show(ctx, |ui| {
