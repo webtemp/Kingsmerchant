@@ -13,7 +13,7 @@ members = [
 default-members = ["app"]
 
 [workspace.package]
-version = "0.1.0"
+# Each crate sets its own `version` and is bumped when its source changes.
 edition = "2021"
 license = "MIT OR GPL-3.0-or-later"
 rust-version = "1.96"
