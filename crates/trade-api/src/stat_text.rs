@@ -53,6 +53,9 @@ pub fn canonical_ggg(template: &str) -> String {
 /// replaces every number. They're deduplicated, so a line whose every number
 /// is ranged — or one with no numbers at all — yields a single candidate.
 pub fn candidates(stat: &str) -> Vec<Normalized> {
+    // POE2 appends " — Unscalable Value" to mods whose shown value is fixed
+    // (e.g. crafted/desecrated mods); the trade stat templates don't include it.
+    let stat = strip_value_annotation(stat);
     let mut out = Vec::new();
 
     // Rolls-only: replace `N(min-max)` with `#`, keep bare constants.
@@ -66,6 +69,22 @@ pub fn candidates(stat: &str) -> Vec<Normalized> {
     }
 
     out
+}
+
+/// Strip a trailing `— Unscalable Value` annotation (any dash) that POE2 adds to
+/// fixed-value mods, so the line matches the GGG stat template.
+fn strip_value_annotation(stat: &str) -> &str {
+    for dash in ['—', '–', '-'] {
+        if let Some(idx) = stat.rfind(dash) {
+            if stat[idx + dash.len_utf8()..]
+                .trim()
+                .eq_ignore_ascii_case("unscalable value")
+            {
+                return stat[..idx].trim_end();
+            }
+        }
+    }
+    stat
 }
 
 fn roll_only(stat: &str) -> Normalized {
@@ -142,6 +161,19 @@ mod tests {
         assert!(cands
             .iter()
             .any(|c| c.template == "# to Level of all Tornado Shot Skills"));
+    }
+
+    #[test]
+    fn strips_unscalable_value_annotation() {
+        // POE2's "— Unscalable Value" suffix must be removed so the line matches
+        // GGG's stat text (e.g. crafted "Minions' Strikes have Melee Splash").
+        let n = primary("Minions' Strikes have Melee Splash — Unscalable Value");
+        assert_eq!(n.template, "Minions' Strikes have Melee Splash");
+        assert!(n.values.is_empty());
+        // A ranged value before the annotation still parses.
+        let r = primary("Gains 0.17(0.15-0.20) Charges per Second — Unscalable Value");
+        assert_eq!(r.template, "Gains # Charges per Second");
+        assert_eq!(r.values, [0.17]);
     }
 
     #[test]
