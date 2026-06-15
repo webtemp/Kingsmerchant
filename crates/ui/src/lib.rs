@@ -35,6 +35,10 @@ const SHOWN: usize = 7;
 /// budget was 500ms; we're more patient (1s) because POE2's write latency is
 /// variable, and a too-short window is what made some presses "do nothing".
 const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(1000);
+/// How long a price-check result stays "fresh": re-viewing the same item within
+/// this window re-shows the cached results without hitting the API again (PRD
+/// §4.4 rate-limit care); after it, a re-view refreshes.
+const CACHE_TTL: Duration = Duration::from_secs(120);
 const POLL_INTERVAL: Duration = Duration::from_millis(8);
 /// Quiet period after the last filter edit before a live re-query fires (PRD
 /// §4.7 "debounced"). Deliberately long so toggling several filters fires one
@@ -503,8 +507,11 @@ pub struct QuickModeApp {
     ctrl_held: bool,
     alt_held: bool,
     /// Hash of the last item we actually searched. A Ctrl+C whose clipboard
-    /// hashes the same is a duplicate of the loaded item → no new request.
+    /// hashes the same is a duplicate of the loaded item → re-show, no request.
     last_query_hash: Option<u64>,
+    /// When the loaded item was last actually queried (cache freshness). A
+    /// re-view within [`CACHE_TTL`] shows the cached results without re-querying.
+    last_query_at: Option<Instant>,
     /// Tray handle for pushing the current state to the tooltip (PRD §4.9).
     /// `None` if the tray failed to start (no SNI host).
     tray: Option<platform_linux::TrayHandle>,
@@ -602,6 +609,7 @@ impl QuickModeApp {
             ctrl_held: false,
             alt_held: false,
             last_query_hash: None,
+            last_query_at: None,
             tray,
             settings_requested: false,
             settings_close_requested: false,
@@ -747,6 +755,7 @@ impl QuickModeApp {
     /// paying in the currently-selected `pay_currency`.
     fn spawn_exchange_query(&mut self, ctx: &egui::Context) {
         self.exchange_phase = ExchangePhase::Loading;
+        self.last_query_at = Some(Instant::now());
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
@@ -819,6 +828,7 @@ impl QuickModeApp {
             "search"
         );
         self.phase = Phase::Loading;
+        self.last_query_at = Some(Instant::now());
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
@@ -893,12 +903,25 @@ impl QuickModeApp {
             match event {
                 Hotkey::Item { text } => {
                     self.hint = None;
+                    // ALWAYS re-show the popup — even for the same item (the user
+                    // closed it and looked again). This is the fix for "re-view
+                    // does nothing": the API call is what we de-dup, not the pop.
                     self.pop_requested = true;
-                    // De-dup by hash: a Ctrl+C on the SAME item just re-shows the
-                    // popup, never fires another request (saves rate limit).
                     let hash = item_hash(&text);
                     if self.last_query_hash == Some(hash) {
-                        tracing::debug!("same item re-copied — not re-searching");
+                        // Same item as loaded → keep the cached results (and any
+                        // filter state). Only refresh from the API if the cache
+                        // has gone stale (older than CACHE_TTL).
+                        let stale = self
+                            .last_query_at
+                            .map(|t| t.elapsed() >= CACHE_TTL)
+                            .unwrap_or(true);
+                        if stale {
+                            tracing::info!("same item, cache stale → refreshing");
+                            self.rerun_query(ctx);
+                        } else {
+                            tracing::info!("same item, cache fresh → re-showing cached results");
+                        }
                     } else {
                         self.last_query_hash = Some(hash);
                         self.item_text = text;
@@ -2213,18 +2236,18 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                         }
                         let prev = last.lock().expect("last_seen lock").clone();
                         let start = Instant::now();
-                        let outcome = match wait_for_new_item(&prev) {
+                        let outcome = match wait_for_item(&prev) {
                             Some(text) => {
                                 tracing::info!(
                                     elapsed_ms = start.elapsed().as_millis(),
                                     hash = item_hash(&text),
-                                    "clipboard: NEW item → pricing"
+                                    "clipboard: item → showing (UI de-dups the query)"
                                 );
                                 *last.lock().expect("last_seen lock") = Some(text.clone());
                                 Hotkey::Item { text }
                             }
                             None => {
-                                tracing::info!("clipboard: same/no item → ignored");
+                                tracing::info!("clipboard: no item → ignored");
                                 Hotkey::Missed
                             }
                         };
@@ -2306,22 +2329,51 @@ pub fn spawn_config_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
 /// avoids grabbing the transient/stale clipboard value the X11↔Wayland bridge
 /// can briefly expose before POE2 finishes writing (which made the first Ctrl+C
 /// fail while the second worked).
-fn wait_for_new_item(last_seen: &Option<String>) -> Option<String> {
+fn wait_for_item(last_seen: &Option<String>) -> Option<String> {
     let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
-    // Compare whitespace-normalised: a same item re-copied must NOT count as a
-    // new item (else it re-searches and burns the rate limit).
     let last = last_seen.as_deref().map(normalize_item_text);
+    // If the clipboard only ever holds the SAME item as before, that's a
+    // *re-view* of the loaded item — return it so the popup re-shows (the UI
+    // de-dups the API call via a short cache). We still poll the full window
+    // first: a genuine switch to a different item must win, and POE2's write of
+    // the new item can lag the keypress. Returning `None` only when the
+    // clipboard never holds a parseable item at all (a truly missed copy).
+    let mut same: Option<String> = None;
     loop {
         if let Ok(Some(text)) = platform_linux::read_clipboard_text() {
-            let is_new = last.as_deref() != Some(normalize_item_text(&text).as_str());
-            if is_new && parser::parse_item(&text).is_ok() {
-                return Some(text);
+            match clip_step(&text, last.as_deref()) {
+                ClipStep::Different => return Some(text), // a new item appeared → use it now
+                ClipStep::Same => same = Some(text), // same as loaded; keep watching for a switch
+                ClipStep::NotItem => {}
             }
         }
         if Instant::now() >= deadline {
-            return None;
+            return same;
         }
         std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// What a single clipboard read means relative to the last-seen item.
+#[derive(Debug, PartialEq, Eq)]
+enum ClipStep {
+    /// A different parseable item than last seen — show it now.
+    Different,
+    /// The same item as last seen — a re-view (show it; the UI caches the query).
+    Same,
+    /// Not a POE2 item (ignore this read).
+    NotItem,
+}
+
+/// Classify a clipboard read against the whitespace-normalised last-seen item.
+fn clip_step(text: &str, last_normalized: Option<&str>) -> ClipStep {
+    if parser::parse_item(text).is_err() {
+        return ClipStep::NotItem;
+    }
+    if last_normalized == Some(normalize_item_text(text).as_str()) {
+        ClipStep::Same
+    } else {
+        ClipStep::Different
     }
 }
 
@@ -2395,3 +2447,31 @@ pub fn build_app(
     ))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{clip_step, ClipStep};
+
+    const RING: &str = "Item Class: Rings\nRarity: Rare\nHonour Spiral\nTopaz Ring\n--------\n+30% to Lightning Resistance";
+    const RUNE: &str = "Item Class: Augment\nRarity: Currency\nFarrul's Rune of the Chase\n--------\nStack Size: 1/10\nRune";
+
+    #[test]
+    fn reviewing_the_same_item_is_not_ignored() {
+        let last = super::normalize_item_text(RING);
+        // Re-copying the SAME item must classify as Same (so the popup re-shows),
+        // NOT be dropped — this was the "re-view does nothing" bug.
+        assert_eq!(clip_step(RING, Some(&last)), ClipStep::Same);
+    }
+
+    #[test]
+    fn a_different_item_is_new() {
+        let last = super::normalize_item_text(RING);
+        assert_eq!(clip_step(RUNE, Some(&last)), ClipStep::Different);
+        // With nothing seen yet, any item is new.
+        assert_eq!(clip_step(RING, None), ClipStep::Different);
+    }
+
+    #[test]
+    fn non_item_clipboard_is_ignored() {
+        assert_eq!(clip_step("https://example.com/not-an-item", None), ClipStep::NotItem);
+    }
+}
