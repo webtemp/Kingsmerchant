@@ -36,16 +36,6 @@ static DEVICE: OnceLock<Mutex<VirtualDevice>> = OnceLock::new();
 /// existing text with Ctrl+A first (mirrors EE2's `AUTO_CLEAR`).
 const AUTO_CLEAR_PREFIXES: &[char] = &['#', '%', '@', '$', '&', '/'];
 
-/// Gap between the *visible* keystrokes (open chat → paste → send). Small but
-/// non-zero so POE2 registers the chat opening before we paste — this mimics the
-/// fast, barely-visible feel of Exiled-Exchange-2, whose separate `ydotool`
-/// invocations space keys only ~15-30ms apart. The old 40ms gaps left the chat
-/// box visibly sitting open mid-sequence, which is what looked clunky.
-const KEY_GAP: Duration = Duration::from_millis(18);
-/// Gap right after the chat-opening Enter — a touch larger, since the chat input
-/// must actually be open and focused before we Ctrl+A / Ctrl+V, or those keys
-/// leak into the game. One frame at 60fps is ~16ms; 35ms tolerates a couple.
-const CHAT_OPEN_GAP: Duration = Duration::from_millis(35);
 /// Brief settle so the xclip selection helper is serving before the FIRST
 /// keystroke. `write_clipboard_text` already blocks until xclip forks and owns
 /// the selection, so this is just a safety margin — and it's BEFORE chat opens,
@@ -67,17 +57,23 @@ pub fn send_chat_command(command: &str) -> Result<()> {
         .is_some_and(|c| AUTO_CLEAR_PREFIXES.contains(&c));
     {
         let mut device = device()?.lock().expect("inject device lock");
-        // Settle the clipboard BEFORE opening chat, so the visible part stays
-        // fast.
+        // Settle the clipboard BEFORE the burst — invisible (no key sent yet), and
+        // it guarantees the paste reads our text rather than stale content.
         thread::sleep(CLIPBOARD_SETTLE);
+        // Fire the whole sequence with NO gaps between keys, so POE2 receives it
+        // within a single input tick: it drains the queue in order (open chat →
+        // [clear] → paste → send) and closes the input before ever drawing a frame
+        // with the chat box open — the EE2 "chat never appears" effect. We do NOT
+        // pace with thread::sleep: tiny sleeps overshoot (scheduler granularity)
+        // and would push a key into the next frame, which is exactly the visible
+        // flash we're removing. Ordering is preserved by the kernel (uinput emits
+        // are delivered in order), so a same-tick burst still pastes into the
+        // now-open chat, not the game.
         tap(&mut device, Key::KEY_ENTER)?; // open chat
-        thread::sleep(CHAT_OPEN_GAP);
         if !auto_clear {
-            ctrl_tap(&mut device, Key::KEY_A)?; // clear any leftover text
-            thread::sleep(KEY_GAP);
+            ctrl_tap(&mut device, Key::KEY_A)?; // clear any leftover text first
         }
         ctrl_tap(&mut device, Key::KEY_V)?; // paste the whole command at once
-        thread::sleep(KEY_GAP);
         tap(&mut device, Key::KEY_ENTER)?; // send (POE2 closes the chat input)
     }
 
