@@ -1,17 +1,20 @@
-//! The price-check popup rendered onto a `wlr-layer-shell` *overlay* surface
-//! (PRD §4.5), in both quick (Ctrl+C) and detailed (Ctrl+Alt+C) modes.
+//! The price-check popup and the settings panel, each rendered onto its own
+//! `wlr-layer-shell` *overlay* surface (PRD §4.5, §4.8).
 //!
-//! The windowing layer is a smithay-client-toolkit layer surface + glutin EGL +
-//! egui_glow; the UI itself reuses [`ui::QuickModeApp`] so only the surface
-//! underneath differs from a normal window. The surface takes NO keyboard focus
-//! (POE2 stays focused), starts hidden until the first valid Ctrl+C, and is
-//! centered on the output.
+//! Both surfaces share one Wayland event loop and one EGL display, but each has
+//! its own GL context + `egui::Context` so they lay out and paint
+//! independently. [`WinSurface`] is the per-window bundle; [`App`] owns the two
+//! (popup + settings) plus the shared [`ui::QuickModeApp`] that holds all the
+//! state. Pointer / keyboard / configure / frame events are routed to whichever
+//! surface they belong to.
 //!
-//! Ctrl+C (or Ctrl+Alt+C) shows the popup; it's pinned open (with the filter
-//! panel) until Esc or the X button. Drag it with Alt held.
+//! The price popup pops on a valid Ctrl+C and is pinned until Esc / the X
+//! button; drag it with Alt held. The settings surface is opened from the gear
+//! button or the tray (PRD §4.9) and closed by its own X / the tray Quit.
+//! Neither surface takes keyboard focus while hidden, so POE2 keeps it.
 //!
 //! Entry point is [`run`], shared by the `poe2ddd` binary (`cargo run`) and the
-//! `poe2-overlay` binary (`cargo run -p overlay`). The league comes from
+//! `poe2-overlay` binary (`cargo run -p overlay`). The league/config come from
 //! `~/.config/poe2ddd/config.json`; set `POE_LEAGUE` only to override one run.
 
 use std::num::NonZeroU32;
@@ -60,8 +63,10 @@ use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v
 
 use ui::{Hotkey, QuickModeApp};
 
-/// Fixed popup width; height auto-fits the content (see [`App::draw`]).
-const WIDTH: u32 = 470;
+/// Initial popup width before the content measurement grows it to
+/// [`QuickModeApp::surface_width`]; the settings surface is a fixed width.
+const POPUP_INIT_WIDTH: u32 = 470;
+const SETTINGS_WIDTH: u32 = 540;
 /// Starting height before the first content measurement.
 const INITIAL_HEIGHT: u32 = 200;
 /// Vertical space egui lays the content out in while we measure it. The surface
@@ -70,7 +75,7 @@ const LAYOUT_HEIGHT: f32 = 1600.0;
 const MIN_HEIGHT: u32 = 80;
 const MAX_HEIGHT: u32 = 1300;
 /// Don't shrink the surface for height drops smaller than this — a deadband that
-/// stops measurement jitter from thrashing `set_size` (see `App::draw`).
+/// stops measurement jitter from thrashing `set_size` (see [`WinSurface::draw`]).
 const HEIGHT_DEADBAND: u32 = 8;
 /// Corner radius of the popup card.
 const CORNER_RADIUS: f32 = 14.0;
@@ -79,8 +84,24 @@ const CORNER_RADIUS: f32 = 14.0;
 const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2c, 0x2e, 0x36);
 const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x50, 0x52, 0x5e);
 
-/// Launch the price-check overlay: build the egui app, bind the layer surface,
-/// and run the Wayland event loop until the popup is closed.
+/// Which of the two surfaces an event belongs to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Which {
+    Popup,
+    Settings,
+}
+
+/// Where to place a surface on its output.
+#[derive(Clone, Copy)]
+enum Placement {
+    /// Centered on the output (default; also the `at-cursor` fallback for now).
+    Center,
+    /// Fixed top-left position in output-logical pixels.
+    Fixed { x: i32, y: i32 },
+}
+
+/// Launch the overlay: build the egui app + tray, bind the two layer surfaces,
+/// and run the Wayland event loop until the app is closed.
 pub fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -89,15 +110,52 @@ pub fn run() -> Result<()> {
         )
         .init();
 
-    // egui side. The watcher repaints this same context; build it before the
-    // app so the hotkey thread and the price-check task target one context.
-    let egui_ctx = egui::Context::default();
-    ui::install_loaders(&egui_ctx);
-    ui::configure_style(&egui_ctx);
+    // One egui context per surface (independent layout + GL). The popup context
+    // is the one the hotkey watcher and price-check tasks repaint.
+    let popup_ctx = egui::Context::default();
+    ui::install_loaders(&popup_ctx);
+    ui::configure_style(&popup_ctx);
+    let settings_ctx = egui::Context::default();
+    ui::install_loaders(&settings_ctx);
+    ui::configure_style(&settings_ctx);
 
     let (hk_tx, hk_rx) = channel::<Hotkey>();
-    ui::spawn_hotkey_watcher(egui_ctx.clone(), hk_tx);
-    let quick = ui::build_app(hk_rx).context("building price-check app")?;
+    ui::spawn_hotkey_watcher(popup_ctx.clone(), hk_tx.clone());
+
+    // Tray (PRD §4.9): runs on its own thread; menu clicks (Open Settings /
+    // Quit) are forwarded into the same hotkey channel that `pump()` drains
+    // every frame, so no extra wake-up of the Wayland loop is needed (it
+    // redraws continuously). The handle lets the UI push tooltip state.
+    let tray = match platform_linux::spawn_tray() {
+        Ok((handle, actions)) => {
+            let tx = hk_tx.clone();
+            let ctx = popup_ctx.clone();
+            std::thread::spawn(move || {
+                for action in actions {
+                    let hk = match action {
+                        platform_linux::TrayAction::OpenSettings => Hotkey::OpenSettings,
+                        platform_linux::TrayAction::Quit => Hotkey::Quit,
+                    };
+                    if tx.send(hk).is_err() {
+                        break;
+                    }
+                    ctx.request_repaint();
+                }
+            });
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "tray disabled");
+            None
+        }
+    };
+    let quick = ui::build_app(hk_rx, tray).context("building price-check app")?;
+
+    // Config hot-reload (PRD §4.8): watch config.json and push reloaded configs
+    // down the same channel. Started after `build_app` so the startup backfill
+    // write doesn't trigger a spurious reload. Best-effort — a watcher failure
+    // just disables it.
+    ui::spawn_config_watcher(popup_ctx.clone(), hk_tx);
 
     // Wayland side.
     let conn = Connection::connect_to_env().context("connect to Wayland")?;
@@ -109,24 +167,15 @@ pub fn run() -> Result<()> {
     let layer_shell =
         LayerShell::bind(&globals, &qh).map_err(|e| anyhow!("wlr layer shell unavailable: {e}"))?;
 
-    let surface = compositor.create_surface(&qh);
-    let layer = layer_shell.create_layer_surface(
+    let popup = WinSurface::new(&compositor, &layer_shell, &qh, popup_ctx, "poe2ddd", POPUP_INIT_WIDTH);
+    let settings = WinSurface::new(
+        &compositor,
+        &layer_shell,
         &qh,
-        surface,
-        Layer::Overlay,
-        Some("poe2ddd"),
-        None,
+        settings_ctx,
+        "poe2ddd-settings",
+        SETTINGS_WIDTH,
     );
-    // Keyboard focus is taken on-demand: the surface only grabs the keyboard
-    // when the (shown) popup is clicked, so a text field can be typed into.
-    // While hidden it's set back to None so POE2 keeps focus (see draw()).
-    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-    // Anchor to the top-left corner; we center by computing margins from the
-    // output size (KWin doesn't reliably center an unanchored surface). Margins
-    // are (re)applied per frame while visible — see `App::draw`.
-    layer.set_anchor(Anchor::TOP | Anchor::LEFT);
-    layer.set_size(WIDTH, INITIAL_HEIGHT);
-    layer.commit();
 
     let mut app = App {
         registry_state: RegistryState::new(&globals),
@@ -135,29 +184,15 @@ pub fn run() -> Result<()> {
         relative_pointer_state: RelativePointerState::bind(&globals, &qh),
         conn: conn.clone(),
         compositor,
-        layer,
+        display: None,
         pointer: None,
         relative_pointer: None,
         keyboard: None,
         kbd_modifiers: egui::Modifiers::default(),
-        kbd_focus: false,
-        applied_kbd: None,
-        gl: None,
-        egui_ctx,
+        focused: None,
+        popup,
+        settings,
         quick,
-        events: Vec::new(),
-        width: WIDTH,
-        height: INITIAL_HEIGHT,
-        desired_width: WIDTH,
-        desired_height: INITIAL_HEIGHT,
-        current_output: None,
-        margin_left: 0,
-        margin_top: 0,
-        dragged: false,
-        dragging: false,
-        shown: false,
-        input_region: None,
-        applied_input: None,
         exit: false,
     };
 
@@ -168,53 +203,46 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// GL state, created lazily on the first configure (once mapped).
+/// GL state for one surface, created lazily on the first configure (once
+/// mapped). The EGL [`Display`] is shared and lives on [`App`].
 struct Gl {
-    _display: Display,
     context: PossiblyCurrentContext,
     gl_surface: Surface<WindowSurface>,
     painter: egui_glow::Painter,
 }
 
-struct App {
-    registry_state: RegistryState,
-    seat_state: SeatState,
-    output_state: OutputState,
-    relative_pointer_state: RelativePointerState,
-    conn: Connection,
-    compositor: CompositorState,
-    layer: LayerSurface,
-    pointer: Option<wl_pointer::WlPointer>,
-    relative_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
-    /// Keyboard, bound so text fields in the (pinned) popup are editable.
-    keyboard: Option<wl_keyboard::WlKeyboard>,
-    /// Current modifier state from Wayland (for egui key events).
+/// Shared, per-frame resources a surface needs to draw, borrowed from [`App`]
+/// (so the two surfaces can be drawn without aliasing the whole `App`).
+struct Shared<'a> {
+    conn: &'a Connection,
+    compositor: &'a CompositorState,
+    output_state: &'a OutputState,
+    display: &'a mut Option<Display>,
     kbd_modifiers: egui::Modifiers,
-    /// Whether the surface currently holds keyboard focus.
-    kbd_focus: bool,
-    /// Last applied keyboard-interactivity `shown` state (toggle on change).
-    applied_kbd: Option<bool>,
-    gl: Option<Gl>,
+}
+
+/// One `wlr-layer-shell` overlay surface (the popup or the settings panel) with
+/// its own GL context and egui context.
+struct WinSurface {
+    layer: LayerSurface,
     egui_ctx: egui::Context,
-    quick: QuickModeApp,
+    gl: Option<Gl>,
     events: Vec<egui::Event>,
+    /// Whether this surface currently holds keyboard focus.
+    kbd_focus: bool,
     width: u32,
     height: u32,
-    /// Width we last asked the surface to be (mode-dependent: detailed is wider).
     desired_width: u32,
-    /// Height we last asked the surface to be (auto-height target).
     desired_height: u32,
     /// The output the surface is on (from `surface_enter`), used to center it.
     current_output: Option<wl_output::WlOutput>,
-    /// Current top/left margins (the surface position).
     margin_left: i32,
     margin_top: i32,
-    /// Whether the user has Ctrl+Alt-dragged this show (suppresses centering).
+    /// Whether the user has Alt-dragged this show (suppresses re-placement).
     dragged: bool,
-    /// Whether a Ctrl+Alt drag is in progress (left button held).
+    /// Whether an Alt drag is in progress (left button held).
     dragging: bool,
-    /// Whether the popup is visible. Starts hidden; a valid Ctrl+C shows it,
-    /// Escape hides it.
+    /// Whether the surface is visible.
     shown: bool,
     /// Kept alive until the next commit so the compositor reads the region
     /// before it's destroyed.
@@ -222,26 +250,73 @@ struct App {
     /// Last applied (shown, width, height) so we only touch the input region on
     /// change.
     applied_input: Option<(bool, u32, u32)>,
-    exit: bool,
+    /// Last applied keyboard-interactivity `shown` state (toggle on change).
+    applied_kbd: Option<bool>,
 }
 
-impl App {
-    /// Build the EGL context + egui painter against our `wl_surface`. glutin
-    /// turns the `wl_surface` pointer into a `wl_egl_window` internally.
-    fn init_gl(&mut self) -> Result<()> {
-        let wl_surface = self.layer.wl_surface();
+impl WinSurface {
+    /// Create a hidden layer surface (no keyboard focus, empty input region →
+    /// click-through), anchored top-left and committed so it maps.
+    fn new(
+        compositor: &CompositorState,
+        layer_shell: &LayerShell,
+        qh: &QueueHandle<App>,
+        egui_ctx: egui::Context,
+        namespace: &str,
+        width: u32,
+    ) -> Self {
+        let surface = compositor.create_surface(qh);
+        let layer =
+            layer_shell.create_layer_surface(qh, surface, Layer::Overlay, Some(namespace), None);
+        // Keyboard focus is taken on-demand while shown (so text fields are
+        // editable); None while hidden so POE2 keeps the keyboard.
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        // Anchor to top-left; we center via computed margins (KWin doesn't
+        // reliably center an unanchored surface).
+        layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+        layer.set_size(width, INITIAL_HEIGHT);
+        layer.commit();
+        WinSurface {
+            layer,
+            egui_ctx,
+            gl: None,
+            events: Vec::new(),
+            kbd_focus: false,
+            width,
+            height: INITIAL_HEIGHT,
+            desired_width: width,
+            desired_height: INITIAL_HEIGHT,
+            current_output: None,
+            margin_left: 0,
+            margin_top: 0,
+            dragged: false,
+            dragging: false,
+            shown: false,
+            input_region: None,
+            applied_input: None,
+            applied_kbd: None,
+        }
+    }
 
-        let display_ptr = self.conn.backend().display_ptr() as *mut std::ffi::c_void;
-        let raw_display = RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
-            NonNull::new(display_ptr).context("null wl_display ptr")?,
-        ));
-        let surface_ptr = wl_surface.id().as_ptr() as *mut std::ffi::c_void;
+    /// Build the EGL context + egui painter for this surface, creating the
+    /// shared EGL display on first use. glutin turns the `wl_surface` pointer
+    /// into a `wl_egl_window` internally.
+    fn init_gl(&mut self, shared: &mut Shared) -> Result<()> {
+        let surface_ptr = self.layer.wl_surface().id().as_ptr() as *mut std::ffi::c_void;
         let raw_window = RawWindowHandle::Wayland(WaylandWindowHandle::new(
             NonNull::new(surface_ptr).context("null wl_surface ptr")?,
         ));
 
-        let display = unsafe { Display::new(raw_display, DisplayApiPreference::Egl) }
-            .context("create EGL display")?;
+        if shared.display.is_none() {
+            let display_ptr = shared.conn.backend().display_ptr() as *mut std::ffi::c_void;
+            let raw_display = RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+                NonNull::new(display_ptr).context("null wl_display ptr")?,
+            ));
+            let display = unsafe { Display::new(raw_display, DisplayApiPreference::Egl) }
+                .context("create EGL display")?;
+            *shared.display = Some(display);
+        }
+        let display = shared.display.as_ref().unwrap();
 
         let template = ConfigTemplateBuilder::new()
             .compatible_with_native_window(raw_window)
@@ -278,7 +353,6 @@ impl App {
             .map_err(|e| anyhow!("egui_glow painter: {e}"))?;
 
         self.gl = Some(Gl {
-            _display: display,
             context,
             gl_surface,
             painter,
@@ -287,32 +361,26 @@ impl App {
         Ok(())
     }
 
-    fn draw(&mut self, qh: &QueueHandle<Self>) {
+    /// Lay out, size, place, and paint this surface for one frame, rendering
+    /// `render` into the framed card when shown.
+    fn draw(
+        &mut self,
+        shared: &mut Shared,
+        qh: &QueueHandle<App>,
+        want_width: u32,
+        place: Placement,
+        render: impl FnOnce(&mut egui::Ui),
+    ) -> Result<()> {
         if self.gl.is_none() {
-            if let Err(e) = self.init_gl() {
-                tracing::error!(error = %format!("{e:#}"), "GL init failed");
-                self.exit = true;
-                return;
-            }
+            self.init_gl(shared)?;
         }
 
-        // Drain hotkeys + results every frame, even while hidden, so a fresh
-        // Ctrl+C is noticed. A valid item flips us visible; Escape hides it.
-        self.quick.pump(&self.egui_ctx);
-        if self.quick.take_pop_request() {
-            self.shown = true;
-        }
-        if self.quick.take_close_request() {
-            self.shown = false;
-        }
-        // The popup is pinned: once shown it stays until Esc or the X button
-        // (handled above via take_close_request).
+        self.apply_keyboard_interactivity();
         if !self.shown {
-            // Forget any drag so the next pop re-centers (no position memory).
+            // Forget any drag so the next show re-places it.
             self.dragged = false;
             self.dragging = false;
         }
-        self.apply_keyboard_interactivity();
 
         // Lay the content out in a tall space so we can measure its natural
         // height, then shrink the surface to fit (PRD §4.5 "small popup").
@@ -323,7 +391,7 @@ impl App {
             )),
             events: std::mem::take(&mut self.events),
             focused: self.kbd_focus,
-            modifiers: self.kbd_modifiers,
+            modifiers: shared.kbd_modifiers,
             ..Default::default()
         };
 
@@ -331,11 +399,15 @@ impl App {
         let shown = self.shown;
         let width = self.width as f32;
         let mut measured = 0.0_f32;
+        // `ctx.run` wants an `FnMut`, but `render` is `FnOnce`; hand it out via
+        // an `Option::take` so it's consumed at most once (run calls us once).
+        let mut render = Some(render);
         let full = ctx.run(raw_input, |c| {
             if !shown {
                 return;
             }
-            let resp = egui::Area::new(egui::Id::new("popup"))
+            let render = render.take();
+            let resp = egui::Area::new(egui::Id::new("surface"))
                 .fixed_pos(egui::pos2(0.0, 0.0))
                 .show(c, |ui| {
                     ui.set_max_width(width);
@@ -346,41 +418,47 @@ impl App {
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
                             ui.set_width(width - 24.0);
-                            self.quick.content(ui);
+                            if let Some(render) = render {
+                                render(ui);
+                            }
                         });
                 });
             measured = resp.response.rect.height();
         });
 
-        // Auto-height: resize the surface to the measured content. Crucially NOT
-        // while dragging, and with a deadband on shrink: every `set_size`
-        // triggers a configure → draw → maybe set_size again, an UN-throttled
-        // loop (configure isn't vsync-gated). Letting a 1px measurement jitter
-        // fire it pegs a core and makes the whole UI — and Alt-drag — lag.
+        // Auto-height: resize the surface to the measured content. NOT while
+        // dragging, and with a deadband on shrink — every `set_size` triggers a
+        // configure → draw → maybe set_size again (an un-throttled loop), so a
+        // 1px jitter must not fire it (it pegs a core and makes drag lag).
         if shown && measured > 0.0 && !self.dragging {
             let want_h = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
-            // Width is mode-dependent (detailed mode is wider for the filters).
-            let want_w = self.quick.surface_width();
             let grow = want_h > self.desired_height; // grow at once (no clipping)
             let shrink = self.desired_height.saturating_sub(want_h) > HEIGHT_DEADBAND;
-            if want_w != self.desired_width || grow || shrink {
+            if want_width != self.desired_width || grow || shrink {
                 self.desired_height = want_h;
-                self.desired_width = want_w;
-                self.layer.set_size(want_w, want_h);
+                self.desired_width = want_width;
+                self.layer.set_size(want_width, want_h);
             }
         }
+
         // Placement every visible frame (incl. during a drag, so the surface
-        // tracks the cursor): follow a drag, else keep dragged position, else
-        // center.
+        // tracks the cursor): follow a drag, else apply the configured place.
         if shown {
             if self.dragged {
                 self.apply_margin();
             } else {
-                self.center(self.desired_width, self.desired_height);
+                match place {
+                    Placement::Center => self.center(shared, self.desired_width, self.desired_height),
+                    Placement::Fixed { x, y } => {
+                        self.margin_left = x.max(0);
+                        self.margin_top = y.max(0);
+                        self.apply_margin();
+                    }
+                }
             }
         }
 
-        self.apply_input_region();
+        self.apply_input_region(shared);
 
         let ppp = full.pixels_per_point;
         let primitives = ctx.tessellate(full.shapes, ppp);
@@ -397,16 +475,16 @@ impl App {
             .swap_buffers(&gl.context)
             .expect("swap_buffers");
 
-        // Keep redrawing so async price-check results and hover states appear.
-        // (Continuous at vsync for now; on-demand wake-ups are a later polish.)
+        // Keep redrawing so async results / hover states appear (continuous at
+        // vsync for now; on-demand wake-ups are a Phase 7 polish).
         let surface = self.layer.wl_surface().clone();
         surface.frame(qh, surface.clone());
         self.layer.commit();
+        Ok(())
     }
 
-    /// Take keyboard focus on-demand while the popup is shown (so its text
-    /// fields are editable), and drop it when hidden so POE2 gets the keyboard
-    /// back. Only re-applied when `shown` changes.
+    /// Take keyboard focus on-demand while shown (so text fields are editable),
+    /// and drop it when hidden so POE2 gets the keyboard back.
     fn apply_keyboard_interactivity(&mut self) {
         if self.applied_kbd == Some(self.shown) {
             return;
@@ -422,15 +500,14 @@ impl App {
         self.applied_kbd = Some(self.shown);
     }
 
-    /// Set the surface input region to the popup bounds when visible (so it
-    /// catches clicks) and to nothing when hidden (so clicks pass through to
-    /// POE2). Only re-applied when the visibility or size changes.
-    fn apply_input_region(&mut self) {
+    /// Set the input region to the surface bounds when visible (so it catches
+    /// clicks) and to nothing when hidden (so clicks pass through to POE2).
+    fn apply_input_region(&mut self, shared: &Shared) {
         let state = (self.shown, self.width, self.height);
         if self.applied_input == Some(state) {
             return;
         }
-        if let Ok(region) = Region::new(&self.compositor) {
+        if let Ok(region) = Region::new(shared.compositor) {
             if self.shown {
                 region.add(0, 0, self.width as i32, self.height as i32);
             }
@@ -442,8 +519,8 @@ impl App {
     }
 
     /// Center a `w`×`h` surface on its output by setting top/left margins.
-    fn center(&mut self, w: u32, h: u32) {
-        let (ow, oh) = self.output_size();
+    fn center(&mut self, shared: &Shared, w: u32, h: u32) {
+        let (ow, oh) = self.output_size(shared);
         self.margin_left = ((ow - w as i32) / 2).max(0);
         self.margin_top = ((oh - h as i32) / 2).max(0);
         self.apply_margin();
@@ -455,14 +532,14 @@ impl App {
     }
 
     /// Logical size of the output the surface is on (falls back to the first
-    /// output, then to a 1080p guess if nothing is known yet).
-    fn output_size(&self) -> (i32, i32) {
+    /// output, then a 1080p guess if nothing is known yet).
+    fn output_size(&self, shared: &Shared) -> (i32, i32) {
         let output = self
             .current_output
             .clone()
-            .or_else(|| self.output_state.outputs().next());
+            .or_else(|| shared.output_state.outputs().next());
         if let Some(output) = output {
-            if let Some(info) = self.output_state.info(&output) {
+            if let Some(info) = shared.output_state.info(&output) {
                 if let Some(size) = info.logical_size {
                     return size;
                 }
@@ -475,14 +552,149 @@ impl App {
     }
 }
 
+struct App {
+    registry_state: RegistryState,
+    seat_state: SeatState,
+    output_state: OutputState,
+    relative_pointer_state: RelativePointerState,
+    conn: Connection,
+    compositor: CompositorState,
+    /// Shared EGL display, created lazily by the first surface that inits GL.
+    display: Option<Display>,
+    pointer: Option<wl_pointer::WlPointer>,
+    relative_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// Current modifier state from Wayland (for egui key events).
+    kbd_modifiers: egui::Modifiers,
+    /// Which surface currently holds keyboard focus (for routing key events).
+    focused: Option<Which>,
+    popup: WinSurface,
+    settings: WinSurface,
+    quick: QuickModeApp,
+    exit: bool,
+}
+
+impl App {
+    /// Which surface a `wl_surface` belongs to (if any).
+    fn which(&self, surface: &wl_surface::WlSurface) -> Option<Which> {
+        if surface == self.popup.layer.wl_surface() {
+            Some(Which::Popup)
+        } else if surface == self.settings.layer.wl_surface() {
+            Some(Which::Settings)
+        } else {
+            None
+        }
+    }
+
+    fn surf_mut(&mut self, which: Which) -> &mut WinSurface {
+        match which {
+            Which::Popup => &mut self.popup,
+            Which::Settings => &mut self.settings,
+        }
+    }
+
+    /// Draw the price-check popup: drain the shared channels (this is the one
+    /// place `pump` runs each frame), act on pop/close/settings/quit requests,
+    /// then render `QuickModeApp::content`.
+    fn draw_popup(&mut self, qh: &QueueHandle<Self>) {
+        self.quick.pump(&self.popup.egui_ctx);
+        if self.quick.take_pop_request() {
+            self.popup.shown = true;
+        }
+        if self.quick.take_close_request() {
+            self.popup.shown = false;
+        }
+        if self.quick.take_settings_request() {
+            // Open settings and hide the popup so the two don't overlap.
+            self.settings.shown = true;
+            self.popup.shown = false;
+        }
+        if self.quick.take_quit_request() {
+            self.exit = true;
+        }
+
+        let place = match self.quick.position_mode() {
+            "fixed" => {
+                let (x, y) = self.quick.fixed_pos();
+                Placement::Fixed { x, y }
+            }
+            // center + at-cursor (Phase 7 stub) both center for now.
+            _ => Placement::Center,
+        };
+        let want_w = self.quick.surface_width();
+
+        let App {
+            popup,
+            quick,
+            conn,
+            compositor,
+            output_state,
+            display,
+            kbd_modifiers,
+            exit,
+            ..
+        } = self;
+        let mut shared = Shared {
+            conn,
+            compositor,
+            output_state,
+            display,
+            kbd_modifiers: *kbd_modifiers,
+        };
+        if let Err(e) = popup.draw(&mut shared, qh, want_w, place, |ui| quick.content(ui)) {
+            tracing::error!(error = %format!("{e:#}"), "popup draw failed");
+            *exit = true;
+        }
+    }
+
+    /// Draw the settings panel surface.
+    fn draw_settings(&mut self, qh: &QueueHandle<Self>) {
+        if self.quick.take_settings_close_request() {
+            self.settings.shown = false;
+        }
+        let App {
+            settings,
+            quick,
+            conn,
+            compositor,
+            output_state,
+            display,
+            kbd_modifiers,
+            exit,
+            ..
+        } = self;
+        let mut shared = Shared {
+            conn,
+            compositor,
+            output_state,
+            display,
+            kbd_modifiers: *kbd_modifiers,
+        };
+        if let Err(e) = settings.draw(&mut shared, qh, SETTINGS_WIDTH, Placement::Center, |ui| {
+            quick.settings_content(ui)
+        }) {
+            tracing::error!(error = %format!("{e:#}"), "settings draw failed");
+            *exit = true;
+        }
+    }
+}
+
 impl CompositorHandler for App {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}
     fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
-    fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {
-        self.draw(qh);
+    fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface, _: u32) {
+        match self.which(surface) {
+            Some(Which::Popup) => self.draw_popup(qh),
+            Some(Which::Settings) => self.draw_settings(qh),
+            None => {}
+        }
     }
-    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, output: &wl_output::WlOutput) {
-        self.current_output = Some(output.clone());
+    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, output: &wl_output::WlOutput) {
+        match self.which(surface) {
+            Some(Which::Popup) => self.popup.current_output = Some(output.clone()),
+            Some(Which::Settings) => self.settings.current_output = Some(output.clone()),
+            None => {}
+        }
     }
     fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
 }
@@ -495,22 +707,31 @@ impl LayerShellHandler for App {
         &mut self,
         _: &Connection,
         qh: &QueueHandle<Self>,
-        _: &LayerSurface,
+        layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        if configure.new_size.0 != 0 && configure.new_size.1 != 0 {
-            self.width = configure.new_size.0;
-            self.height = configure.new_size.1;
+        let Some(which) = self.which(layer.wl_surface()) else {
+            return;
+        };
+        {
+            let surf = self.surf_mut(which);
+            if configure.new_size.0 != 0 && configure.new_size.1 != 0 {
+                surf.width = configure.new_size.0;
+                surf.height = configure.new_size.1;
+            }
+            if let Some(gl) = surf.gl.as_ref() {
+                gl.gl_surface.resize(
+                    &gl.context,
+                    NonZeroU32::new(surf.width).unwrap(),
+                    NonZeroU32::new(surf.height).unwrap(),
+                );
+            }
         }
-        if let Some(gl) = self.gl.as_ref() {
-            gl.gl_surface.resize(
-                &gl.context,
-                NonZeroU32::new(self.width).unwrap(),
-                NonZeroU32::new(self.height).unwrap(),
-            );
+        match which {
+            Which::Popup => self.draw_popup(qh),
+            Which::Settings => self.draw_settings(qh),
         }
-        self.draw(qh);
     }
 }
 
@@ -522,8 +743,8 @@ impl SeatHandler for App {
     fn new_capability(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer && self.pointer.is_none() {
             if let Ok(pointer) = self.seat_state.get_pointer(qh, &seat) {
-                // Raw motion deltas for Ctrl+Alt drag (immune to the surface
-                // moving under the cursor).
+                // Raw motion deltas for Alt drag (immune to the surface moving
+                // under the cursor).
                 self.relative_pointer = self
                     .relative_pointer_state
                     .get_relative_pointer(&pointer, qh)
@@ -531,9 +752,6 @@ impl SeatHandler for App {
                 self.pointer = Some(pointer);
             }
         }
-        // Keyboard: bound so the popup's text fields can receive input. Focus is
-        // only actually granted on-demand (when the shown popup is clicked); see
-        // the keyboard-interactivity toggle in `draw`.
         if capability == Capability::Keyboard && self.keyboard.is_none() {
             if let Ok(kbd) = self.seat_state.get_keyboard(qh, &seat, None) {
                 self.keyboard = Some(kbd);
@@ -559,29 +777,31 @@ impl SeatHandler for App {
 impl PointerHandler for App {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
         for event in events {
-            if &event.surface != self.layer.wl_surface() {
+            let Some(which) = self.which(&event.surface) else {
                 continue;
-            }
+            };
             let pos = egui::pos2(event.position.0 as f32, event.position.1 as f32);
+            let alt = self.quick.alt_held();
+            let surf = self.surf_mut(which);
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
                     // While dragging, the relative pointer drives the move; don't
                     // also feed motion to egui.
-                    if !self.dragging {
-                        self.events.push(egui::Event::PointerMoved(pos));
+                    if !surf.dragging {
+                        surf.events.push(egui::Event::PointerMoved(pos));
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    self.events.push(egui::Event::PointerGone);
+                    surf.events.push(egui::Event::PointerGone);
                 }
                 PointerEventKind::Press { button, .. } => {
                     // Alt + left button starts a window drag (consumed, not
                     // forwarded to egui).
-                    if button == BTN_LEFT && self.quick.alt_held() {
-                        self.dragging = true;
-                        self.dragged = true; // stop centering, keep current pos
+                    if button == BTN_LEFT && alt {
+                        surf.dragging = true;
+                        surf.dragged = true; // stop re-placement, keep current pos
                     } else if let Some(b) = map_button(button) {
-                        self.events.push(egui::Event::PointerButton {
+                        surf.events.push(egui::Event::PointerButton {
                             pos,
                             button: b,
                             pressed: true,
@@ -590,10 +810,10 @@ impl PointerHandler for App {
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if button == BTN_LEFT && self.dragging {
-                        self.dragging = false; // end drag (position kept)
+                    if button == BTN_LEFT && surf.dragging {
+                        surf.dragging = false; // end drag (position kept)
                     } else if let Some(b) = map_button(button) {
-                        self.events.push(egui::Event::PointerButton {
+                        surf.events.push(egui::Event::PointerButton {
                             pos,
                             button: b,
                             pressed: false,
@@ -602,11 +822,9 @@ impl PointerHandler for App {
                     }
                 }
                 PointerEventKind::Axis { vertical, .. } => {
-                    // egui scrolls on raw delta; surface axis is in "discrete"
-                    // logical pixels.
                     let dy = -vertical.absolute as f32;
                     if dy != 0.0 {
-                        self.events.push(egui::Event::MouseWheel {
+                        surf.events.push(egui::Event::MouseWheel {
                             unit: egui::MouseWheelUnit::Point,
                             delta: egui::vec2(0.0, dy),
                             modifiers: egui::Modifiers::default(),
@@ -627,11 +845,19 @@ impl RelativePointerHandler for App {
         _: &wl_pointer::WlPointer,
         event: RelativeMotionEvent,
     ) {
-        if self.dragging {
-            // Raw cursor delta → margin shift. Moving the surface by exactly the
-            // cursor delta keeps the cursor over it, so events keep flowing.
-            self.margin_left = (self.margin_left + event.delta.0.round() as i32).max(0);
-            self.margin_top = (self.margin_top + event.delta.1.round() as i32).max(0);
+        // Apply the raw cursor delta to whichever surface is being dragged.
+        let dx = event.delta.0.round() as i32;
+        let dy = event.delta.1.round() as i32;
+        let surf = if self.popup.dragging {
+            Some(&mut self.popup)
+        } else if self.settings.dragging {
+            Some(&mut self.settings)
+        } else {
+            None
+        };
+        if let Some(surf) = surf {
+            surf.margin_left = (surf.margin_left + dx).max(0);
+            surf.margin_top = (surf.margin_top + dy).max(0);
         }
     }
 }
@@ -642,30 +868,38 @@ impl KeyboardHandler for App {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
-        _: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         _: u32,
         _: &[u32],
         _: &[Keysym],
     ) {
-        self.kbd_focus = true;
-        tracing::info!("keyboard focus GAINED (text fields should be editable)");
+        if let Some(which) = self.which(surface) {
+            self.focused = Some(which);
+            self.surf_mut(which).kbd_focus = true;
+            tracing::info!(?which, "keyboard focus GAINED");
+        }
     }
     fn leave(
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
-        _: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        self.kbd_focus = false;
-        // Focus left to another window — i.e. the user clicked outside the popup
-        // (e.g. back into POE2). Dismiss, so they don't have to press Esc (which
-        // POE2 also acts on). Only meaningful once the popup HAS been focused
-        // (a click on it), which is when `enter` fired.
-        if self.shown {
-            tracing::info!("keyboard focus lost → closing popup");
-            self.shown = false;
+        let Some(which) = self.which(surface) else {
+            return;
+        };
+        self.surf_mut(which).kbd_focus = false;
+        if self.focused == Some(which) {
+            self.focused = None;
+        }
+        // The popup auto-closes when focus leaves it (the user clicked back into
+        // POE2) so they don't have to press Esc. The settings panel stays open
+        // (you may alt-tab to check something) — close it with its X / the tray.
+        if which == Which::Popup && self.popup.shown {
+            tracing::info!("popup keyboard focus lost → closing");
+            self.popup.shown = false;
         }
     }
     fn press_key(
@@ -677,9 +911,11 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         let modifiers = self.kbd_modifiers;
-        tracing::debug!(keysym = ?event.keysym, utf8 = ?event.utf8, "key press → egui");
+        let Some(which) = self.focused else {
+            return;
+        };
         if let Some(key) = map_keysym(event.keysym) {
-            self.events.push(egui::Event::Key {
+            self.surf_mut(which).events.push(egui::Event::Key {
                 key,
                 physical_key: None,
                 pressed: true,
@@ -687,12 +923,12 @@ impl KeyboardHandler for App {
                 modifiers,
             });
         }
-        // Printable text — but not while Ctrl/Alt are held (those are shortcuts),
-        // and not control chars (Backspace etc. arrive as utf8 too).
+        // Printable text — but not while Ctrl/Alt are held (those are
+        // shortcuts), and not control chars (Backspace etc. arrive as utf8 too).
         if !modifiers.ctrl && !modifiers.alt {
             if let Some(text) = event.utf8 {
                 if !text.is_empty() && !text.chars().any(|c| c.is_control()) {
-                    self.events.push(egui::Event::Text(text));
+                    self.surf_mut(which).events.push(egui::Event::Text(text));
                 }
             }
         }
@@ -705,13 +941,17 @@ impl KeyboardHandler for App {
         _: u32,
         event: KeyEvent,
     ) {
+        let modifiers = self.kbd_modifiers;
+        let Some(which) = self.focused else {
+            return;
+        };
         if let Some(key) = map_keysym(event.keysym) {
-            self.events.push(egui::Event::Key {
+            self.surf_mut(which).events.push(egui::Event::Key {
                 key,
                 physical_key: None,
                 pressed: false,
                 repeat: false,
-                modifiers: self.kbd_modifiers,
+                modifiers,
             });
         }
     }

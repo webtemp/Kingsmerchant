@@ -46,6 +46,15 @@ pub struct Config {
     /// Which listings to search: `securable` (Instant Buyout — default),
     /// `online` (In Person), `available` (both), or `any`.
     pub trade_status: String,
+    /// Where the popup appears (PRD §4.5/§4.8):
+    /// - `center` — centered on the output (default).
+    /// - `fixed` — at [`fixed_x`](Self::fixed_x) / [`fixed_y`](Self::fixed_y).
+    /// - `at-cursor` — next to the cursor at Ctrl+C (Phase 7; currently falls
+    ///   back to `center`).
+    pub position_mode: String,
+    /// Fixed-mode top-left position, in output-logical pixels from the top-left.
+    pub fixed_x: i32,
+    pub fixed_y: i32,
 }
 
 impl Default for Config {
@@ -66,6 +75,9 @@ impl Default for Config {
             hotkey_close: "Escape".to_string(),
             require_poe2_focus: true,
             trade_status: "securable".to_string(),
+            position_mode: "center".to_string(),
+            fixed_x: 100,
+            fixed_y: 100,
         }
     }
 }
@@ -103,17 +115,24 @@ impl Config {
     /// never visible/editable in the file.
     pub fn load() -> Self {
         let path = Self::path();
-        let config = match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                tracing::warn!(path = %path.display(), error = %e, "invalid config; using defaults");
-                Config::default()
-            }),
-            Err(_) => Config::default(),
-        };
+        let config = Self::load_no_write();
         if let Err(e) = config.save() {
             tracing::warn!(path = %path.display(), error = %e, "could not write config");
         }
         config
+    }
+
+    /// Load from disk WITHOUT the backfill write-back. Used by the hot-reload
+    /// watcher (PRD §4.8), which must not re-trigger itself by writing the file.
+    pub fn load_no_write() -> Self {
+        let path = Self::path();
+        match std::fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
+                tracing::warn!(path = %path.display(), error = %e, "invalid config on reload; using defaults");
+                Config::default()
+            }),
+            Err(_) => Config::default(),
+        }
     }
 
     /// Write back to disk (creating the directory if needed).

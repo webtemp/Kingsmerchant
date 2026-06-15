@@ -57,7 +57,9 @@ enum Msg {
     Estimate(Box<Result<Option<PriceEstimate>, String>>),
 }
 
-/// What the global-hotkey watcher observed.
+/// What the global-hotkey watcher (or the tray / config watcher) observed.
+/// Everything that needs to reach the UI thread funnels through this one
+/// channel, which [`pump`](QuickModeApp::pump) drains every frame.
 pub enum Hotkey {
     /// A new item landed on the clipboard (Ctrl+C / Ctrl+Alt+C — both open the
     /// pinned filter popup).
@@ -72,6 +74,13 @@ pub enum Hotkey {
     Mods { ctrl: bool, alt: bool },
     /// F5 — run the configured chat macro (e.g. `/hideout`).
     Macro,
+    /// Open the settings surface (from the tray menu or the gear button).
+    OpenSettings,
+    /// Quit the app (from the tray menu).
+    Quit,
+    /// `config.json` changed on disk (PRD §4.8 hot-reload) — apply the
+    /// live-reloadable fields. Boxed: it's the largest variant and rare.
+    ConfigReloaded(Box<Config>),
 }
 
 #[derive(Default)]
@@ -355,6 +364,56 @@ fn currency_label(id: &str) -> &str {
         .unwrap_or("any")
 }
 
+/// Trade listing-status options for the settings dropdown (config id, label).
+const TRADE_STATUSES: &[(&str, &str)] = &[
+    ("securable", "Instant Buyout"),
+    ("online", "Online (In Person)"),
+    ("available", "Online + Buyout"),
+    ("any", "Any"),
+];
+
+fn trade_status_label(id: &str) -> &str {
+    TRADE_STATUSES
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, l)| *l)
+        .unwrap_or("Instant Buyout")
+}
+
+/// Popup position modes for the settings dropdown (config id, label).
+const POSITION_MODES: &[(&str, &str)] = &[
+    ("center", "Center"),
+    ("fixed", "Fixed"),
+    ("at-cursor", "At cursor (Phase 7)"),
+];
+
+fn position_label(id: &str) -> &str {
+    POSITION_MODES
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, l)| *l)
+        .unwrap_or("Center")
+}
+
+/// A labelled, right-aligned hotkey-string text field. Sets `*changed` and
+/// returns whether it changed (the caller folds that into the restart flag,
+/// since bindings are only read at startup).
+fn hotkey_row(ui: &mut egui::Ui, label: &str, value: &mut String, changed: &mut bool) -> bool {
+    let mut row_changed = false;
+    ui.horizontal(|ui| {
+        ui.label(format!("  {label}"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            row_changed = ui
+                .add(egui::TextEdit::singleline(value).desired_width(140.0))
+                .changed();
+        });
+    });
+    if row_changed {
+        *changed = true;
+    }
+    row_changed
+}
+
 /// Parse a numeric filter buffer; blank or unparseable → no bound.
 fn parse_num(s: &str) -> Option<f64> {
     let t = s.trim();
@@ -422,6 +481,19 @@ pub struct QuickModeApp {
     /// Hash of the last item we actually searched. A Ctrl+C whose clipboard
     /// hashes the same is a duplicate of the loaded item → no new request.
     last_query_hash: Option<u64>,
+    /// Tray handle for pushing the current state to the tooltip (PRD §4.9).
+    /// `None` if the tray failed to start (no SNI host).
+    tray: Option<platform_linux::TrayHandle>,
+    /// Set when the gear button or the tray's "Open Settings" fires — the
+    /// overlay reads this to show the settings surface.
+    settings_requested: bool,
+    /// Set when the settings surface's close button fires.
+    settings_close_requested: bool,
+    /// Set when the tray's "Quit" fires — the overlay reads this to exit.
+    quit_requested: bool,
+    /// A note shown in the settings panel after an action (saved / restart
+    /// needed for hotkeys, …).
+    settings_note: Option<String>,
 }
 
 /// Whitespace-collapsed form of clipboard text. Two copies of the SAME item can
@@ -454,12 +526,14 @@ fn item_hash(text: &str) -> u64 {
 }
 
 impl QuickModeApp {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
         config: Config,
         leagues: Vec<League>,
         hotkey_rx: Receiver<Hotkey>,
+        tray: Option<platform_linux::TrayHandle>,
     ) -> Self {
         let (tx, rx) = channel();
         QuickModeApp {
@@ -495,6 +569,11 @@ impl QuickModeApp {
             ctrl_held: false,
             alt_held: false,
             last_query_hash: None,
+            tray,
+            settings_requested: false,
+            settings_close_requested: false,
+            quit_requested: false,
+            settings_note: None,
         }
     }
 
@@ -522,6 +601,32 @@ impl QuickModeApp {
     /// Consume a pending "close the overlay" request raised by Escape.
     pub fn take_close_request(&mut self) -> bool {
         std::mem::take(&mut self.close_requested)
+    }
+
+    /// Consume a pending "open settings" request (gear button / tray).
+    pub fn take_settings_request(&mut self) -> bool {
+        std::mem::take(&mut self.settings_requested)
+    }
+
+    /// Consume a pending "close settings" request (settings X button).
+    pub fn take_settings_close_request(&mut self) -> bool {
+        std::mem::take(&mut self.settings_close_requested)
+    }
+
+    /// Consume a pending "quit the app" request (tray Quit).
+    pub fn take_quit_request(&mut self) -> bool {
+        std::mem::take(&mut self.quit_requested)
+    }
+
+    /// Configured popup position mode (`center` / `fixed` / `at-cursor`). The
+    /// overlay reads this each frame to place the popup surface.
+    pub fn position_mode(&self) -> &str {
+        &self.config.position_mode
+    }
+
+    /// Configured fixed-mode top-left position (output-logical pixels).
+    pub fn fixed_pos(&self) -> (i32, i32) {
+        (self.config.fixed_x, self.config.fixed_y)
     }
 
     /// Start a *fresh* price check from `item_text` (a new Ctrl+C, the manual
@@ -737,6 +842,15 @@ impl QuickModeApp {
                         });
                     }
                 }
+                Hotkey::OpenSettings => {
+                    self.settings_requested = true;
+                }
+                Hotkey::Quit => {
+                    self.quit_requested = true;
+                }
+                Hotkey::ConfigReloaded(config) => {
+                    self.apply_reloaded_config(*config, ctx);
+                }
             }
         }
 
@@ -765,6 +879,56 @@ impl QuickModeApp {
                 }
             }
         }
+
+        self.update_tray();
+    }
+
+    /// Push the current app state to the tray tooltip (PRD §4.9). Idempotent —
+    /// the handle skips the D-Bus update when the state is unchanged.
+    fn update_tray(&mut self) {
+        let Some(tray) = self.tray.as_mut() else {
+            return;
+        };
+        let state = if let Some(wait) = self.client.retry_in() {
+            let secs = (wait.as_millis() as u64).div_ceil(1000);
+            platform_linux::TrayState::RateLimited(secs)
+        } else if let Phase::Failed(e) = &self.phase {
+            // Keep the tooltip short — first line only.
+            let short = e.lines().next().unwrap_or(e).to_string();
+            platform_linux::TrayState::Error(short)
+        } else {
+            platform_linux::TrayState::Listening
+        };
+        tray.set_state(state);
+    }
+
+    /// Apply the live-reloadable fields of a config reloaded from disk (PRD
+    /// §4.8 hot-reload). League switches the client + re-prices; filter defaults
+    /// and placement take effect on the next item. Hotkey bindings, realm, and
+    /// the POE2-focus gate are read once at startup by the evdev watcher / API
+    /// client, so those need a restart — flagged, not silently dropped.
+    fn apply_reloaded_config(&mut self, new: Config, ctx: &egui::Context) {
+        let league_changed = new.league != self.config.league;
+        let restart_needed = new.hotkey_quick != self.config.hotkey_quick
+            || new.hotkey_detailed != self.config.hotkey_detailed
+            || new.hotkey_macro != self.config.hotkey_macro
+            || new.hotkey_close != self.config.hotkey_close
+            || new.require_poe2_focus != self.config.require_poe2_focus
+            || new.realm != self.config.realm;
+        if league_changed {
+            self.client.set_league(new.league.clone());
+        }
+        self.config = new;
+        if restart_needed {
+            self.settings_note =
+                Some("Saved. Hotkeys / realm / focus-gate apply after a restart.".to_string());
+        }
+        tracing::info!(league_changed, restart_needed, "applied reloaded config");
+        // A league change re-prices the loaded item immediately; other reloaded
+        // fields (filter defaults, placement) take effect on the next item.
+        if league_changed {
+            self.rerun_query(ctx);
+        }
     }
 
     /// Render the popup body into the given `Ui`. No panels — the overlay
@@ -786,6 +950,9 @@ impl QuickModeApp {
                     .clicked()
                 {
                     self.close_requested = true;
+                }
+                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                    self.settings_requested = true;
                 }
                 self.league_selector(ui, &ctx);
             });
@@ -929,6 +1096,231 @@ impl QuickModeApp {
                 Color32::from_rgb(0x4c, 0xd1, 0x37),
                 format!("✓ Copied {status} — paste into POE2 chat (Enter)"),
             );
+        }
+    }
+
+    /// Render the settings surface body (PRD §4.8). Edits write straight to
+    /// `config` and persist on change. Fields the evdev watcher / API client
+    /// read only at startup (hotkeys, realm, focus gate) are flagged "restart
+    /// to apply" rather than pretending to take effect live. Call
+    /// [`pump`](Self::pump) first (shared with the popup surface).
+    pub fn settings_content(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        // What kind of follow-up an edit needs.
+        let mut changed = false; // any field → persist to disk
+        let mut requery = false; // league / status → re-price now
+        let mut restart = false; // a startup-only field → show the restart note
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("⚙ Settings").strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("X").on_hover_text("Close (Esc)").clicked() {
+                    self.settings_close_requested = true;
+                }
+            });
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical()
+            .max_height(560.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                // League (live — the client switches without a rebuild).
+                ui.horizontal(|ui| {
+                    ui.label("League");
+                    if self.leagues.is_empty() {
+                        ui.label(RichText::new(&self.config.league).weak());
+                    } else {
+                        let before = self.config.league.clone();
+                        egui::ComboBox::from_id_salt("settings-league")
+                            .selected_text(&self.config.league)
+                            .show_ui(ui, |ui| {
+                                for lg in &self.leagues {
+                                    ui.selectable_value(
+                                        &mut self.config.league,
+                                        lg.id.clone(),
+                                        &lg.text,
+                                    );
+                                }
+                            });
+                        if self.config.league != before {
+                            self.client.set_league(self.config.league.clone());
+                            changed = true;
+                            requery = true;
+                        }
+                    }
+                });
+
+                // Realm (read into the request URL at startup — restart-only).
+                ui.horizontal(|ui| {
+                    ui.label("Realm");
+                    let current = self.config.realm.clone().unwrap_or_else(|| "pc".into());
+                    let mut chosen = current.clone();
+                    egui::ComboBox::from_id_salt("settings-realm")
+                        .selected_text(&current)
+                        .show_ui(ui, |ui| {
+                            for r in ["pc", "sony", "xbox"] {
+                                ui.selectable_value(&mut chosen, r.to_string(), r);
+                            }
+                        });
+                    if chosen != current {
+                        self.config.realm = if chosen == "pc" { None } else { Some(chosen) };
+                        changed = true;
+                        restart = true;
+                    }
+                    ui.label(RichText::new("(restart)").weak().small());
+                });
+
+                // Listing type / trade status (live — read per query).
+                ui.horizontal(|ui| {
+                    ui.label("Listings");
+                    let before = self.config.trade_status.clone();
+                    egui::ComboBox::from_id_salt("settings-status")
+                        .selected_text(trade_status_label(&self.config.trade_status))
+                        .show_ui(ui, |ui| {
+                            for (id, label) in TRADE_STATUSES {
+                                ui.selectable_value(
+                                    &mut self.config.trade_status,
+                                    id.to_string(),
+                                    *label,
+                                );
+                            }
+                        });
+                    if self.config.trade_status != before {
+                        changed = true;
+                        requery = true;
+                    }
+                });
+
+                ui.separator();
+
+                // Position mode + fixed coordinates (live — the overlay reads
+                // these every frame to place the popup).
+                ui.horizontal(|ui| {
+                    ui.label("Popup position");
+                    let before = self.config.position_mode.clone();
+                    egui::ComboBox::from_id_salt("settings-position")
+                        .selected_text(position_label(&self.config.position_mode))
+                        .show_ui(ui, |ui| {
+                            for (id, label) in POSITION_MODES {
+                                ui.selectable_value(
+                                    &mut self.config.position_mode,
+                                    id.to_string(),
+                                    *label,
+                                );
+                            }
+                        });
+                    if self.config.position_mode != before {
+                        changed = true;
+                    }
+                });
+                if self.config.position_mode == "fixed" {
+                    ui.horizontal(|ui| {
+                        ui.label("    x / y");
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut self.config.fixed_x).speed(2))
+                            .changed();
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut self.config.fixed_y).speed(2))
+                            .changed();
+                        ui.label(RichText::new("px from top-left").weak().small());
+                    });
+                }
+                if self.config.position_mode == "at-cursor" {
+                    ui.label(
+                        RichText::new("    at-cursor placement is Phase 7 — centers for now.")
+                            .weak()
+                            .small(),
+                    );
+                }
+
+                ui.separator();
+
+                // Filter defaults (live — applied when the next item is priced).
+                ui.horizontal(|ui| {
+                    ui.label("Filter min %");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut self.config.filter_min_percent, 50..=100))
+                        .changed();
+                });
+                changed |= ui
+                    .checkbox(
+                        &mut self.config.implicits_off_by_default,
+                        "Implicit mods off by default",
+                    )
+                    .changed();
+
+                // F5 chat macro (live — pump reads config.f5_command on press).
+                ui.horizontal(|ui| {
+                    let mut enabled = self.config.f5_command.is_some();
+                    if ui.checkbox(&mut enabled, "Chat macro").changed() {
+                        self.config.f5_command =
+                            if enabled { Some("/hideout".into()) } else { None };
+                        changed = true;
+                    }
+                    if let Some(cmd) = &mut self.config.f5_command {
+                        changed |= ui.text_edit_singleline(cmd).changed();
+                    }
+                });
+
+                // POE2-focus gate (read once by the evdev watcher — restart).
+                ui.horizontal(|ui| {
+                    if ui
+                        .checkbox(
+                            &mut self.config.require_poe2_focus,
+                            "Only fire hotkeys while POE2 is focused",
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                        restart = true;
+                    }
+                    ui.label(RichText::new("(restart)").weak().small());
+                });
+
+                ui.separator();
+
+                // Hotkey bindings (parsed by the evdev watcher at startup —
+                // restart-only). Free-text like "Ctrl+Alt+C", "F5", "Escape".
+                ui.label(RichText::new("Hotkeys (restart to apply)").strong());
+                restart |= hotkey_row(ui, "Quick", &mut self.config.hotkey_quick, &mut changed);
+                restart |=
+                    hotkey_row(ui, "Detailed", &mut self.config.hotkey_detailed, &mut changed);
+                restart |= hotkey_row(ui, "Macro", &mut self.config.hotkey_macro, &mut changed);
+                restart |= hotkey_row(ui, "Close", &mut self.config.hotkey_close, &mut changed);
+            });
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("⏻ Quit poe2ddd").clicked() {
+                self.quit_requested = true;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("config.json: {}", Config::path().display()))
+                        .weak()
+                        .small(),
+                );
+            });
+        });
+        if let Some(note) = &self.settings_note {
+            ui.colored_label(Color32::from_rgb(0x4c, 0xd1, 0x37), note);
+        }
+
+        if changed {
+            if let Err(e) = self.config.save() {
+                tracing::warn!(error = %e, "could not save config");
+                self.settings_note = Some(format!("Could not save: {e}"));
+            } else {
+                self.settings_note = Some(if restart {
+                    "Saved. Hotkeys / realm / focus-gate apply after a restart.".to_string()
+                } else {
+                    "Saved.".to_string()
+                });
+            }
+        }
+        if requery {
+            self.rerun_query(&ctx);
         }
     }
 
@@ -1557,6 +1949,70 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
     });
 }
 
+/// Watch `config.json` for external edits and push the reloaded config to the
+/// UI thread (PRD §4.8 hot-reload). Best-effort: if the watcher can't start we
+/// log and carry on (settings still apply on the next launch).
+///
+/// We watch the containing directory (not the file) because editors often save
+/// by replacing the file via rename, which drops a watch on the inode itself.
+/// Reads are write-free ([`Config::load_no_write`]) so our own reload can't
+/// re-trigger the watcher.
+pub fn spawn_config_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
+    use notify::{RecursiveMode, Watcher};
+    let path = Config::path();
+    let Some(dir) = path.parent().map(|d| d.to_path_buf()) else {
+        tracing::warn!("config has no parent dir; hot-reload disabled");
+        return;
+    };
+    let file_name = path.file_name().map(|s| s.to_os_string());
+
+    std::thread::spawn(move || {
+        // Editors fire several events per save; coalesce them.
+        let last = Mutex::new(Instant::now() - Duration::from_secs(1));
+        let handler = move |res: notify::Result<notify::Event>| {
+            let Ok(event) = res else { return };
+            // Only our file, and only content-changing events.
+            let touches_config = event
+                .paths
+                .iter()
+                .any(|p| p.file_name().map(|n| n.to_os_string()) == file_name);
+            if !touches_config || !matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_)) {
+                return;
+            }
+            {
+                let mut l = last.lock().expect("config-watch debounce lock");
+                if l.elapsed() < Duration::from_millis(200) {
+                    return;
+                }
+                *l = Instant::now();
+            }
+            // Let the writer finish flushing before we read.
+            std::thread::sleep(Duration::from_millis(60));
+            let config = Config::load_no_write();
+            tracing::info!("config.json changed → reloading");
+            if tx.send(Hotkey::ConfigReloaded(Box::new(config))).is_ok() {
+                ctx.request_repaint();
+            }
+        };
+        let mut watcher = match notify::recommended_watcher(handler) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!(error = %e, "config watcher disabled");
+                return;
+            }
+        };
+        if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
+            tracing::warn!(error = %e, dir = %dir.display(), "config watch failed");
+            return;
+        }
+        tracing::info!(dir = %dir.display(), "watching config.json for changes");
+        // Keep the watcher alive for the process lifetime.
+        loop {
+            std::thread::park();
+        }
+    });
+}
+
 /// Poll the clipboard until it both *changed* and *parses as a POE2 item*, or
 /// the timeout hits (PRD §4.2). Gating on "is an item" — not merely "changed" —
 /// avoids grabbing the transient/stale clipboard value the X11↔Wayland bridge
@@ -1606,7 +2062,10 @@ pub fn configure_style(ctx: &egui::Context) {
 /// The league comes from `config.json` (PRD §4.8), so no env var is needed.
 /// `POE_LEAGUE` / `POE_REALM`, if set, still override for that run (handy for
 /// testing) but are not persisted.
-pub fn build_app(hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<QuickModeApp> {
+pub fn build_app(
+    hotkey_rx: Receiver<Hotkey>,
+    tray: Option<platform_linux::TrayHandle>,
+) -> anyhow::Result<QuickModeApp> {
     let mut config = Config::load();
     if let Ok(league) = std::env::var("POE_LEAGUE") {
         if !league.is_empty() {
@@ -1637,6 +2096,8 @@ pub fn build_app(hotkey_rx: Receiver<Hotkey>) -> anyhow::Result<QuickModeApp> {
     client_config.realm = config.realm.clone();
     let client = Arc::new(TradeClient::new(transport, client_config, stats, items));
 
-    Ok(QuickModeApp::new(rt, client, config, leagues, hotkey_rx))
+    Ok(QuickModeApp::new(
+        rt, client, config, leagues, hotkey_rx, tray,
+    ))
 }
 
