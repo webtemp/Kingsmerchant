@@ -11,7 +11,7 @@
 pub mod config;
 
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use std::collections::HashSet;
@@ -738,14 +738,16 @@ impl QuickModeApp {
     pub fn content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // Header: title + close button + league selector (top-right, PRD §4.8).
-        // The popup is pinned, so it's dismissed by the X (or Esc).
+        // Header: title (left) + league selector & close button (right), all on
+        // one baseline. A sized strong label (not `heading`) keeps the row a
+        // uniform height so the title, league and X line up. Dismissed by the X
+        // (or Esc, or clicking outside).
         ui.horizontal(|ui| {
-            ui.heading("poe2ddd");
+            ui.label(RichText::new("poe2ddd").strong().size(18.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button(RichText::new("X").strong())
-                    .on_hover_text("Close (Esc)")
+                    .on_hover_text("Close (Esc / click outside)")
                     .clicked()
                 {
                     self.close_requested = true;
@@ -755,21 +757,15 @@ impl QuickModeApp {
         });
         ui.add_space(4.0);
 
-        // View toggle + actions.
+        // View toggle (Item ⇄ Text). Pricing is driven by Ctrl+C / the filters,
+        // so there's no manual "price check" button any more.
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.view, View::Item, "🛡 Item");
             ui.selectable_value(&mut self.view, View::Text, "📝 Text");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let busy = matches!(self.phase, Phase::Loading);
-                let can_search = !self.item_text.trim().is_empty() && !busy;
-                if ui
-                    .add_enabled(can_search, egui::Button::new("💰 Price check"))
-                    .clicked()
-                {
-                    self.start_price_check(&ctx);
-                }
                 if ui.button("📋 Read clipboard").clicked() {
                     self.read_clipboard();
+                    self.start_price_check(&ctx);
                 }
             });
         });
@@ -1414,8 +1410,6 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
         &config.hotkey_close,
     );
     let require_focus = config.require_poe2_focus;
-    // Whether a copy/macro hotkey should act right now (gated to POE2).
-    let allowed = move || !require_focus || platform_linux::is_poe2_active();
 
     std::thread::spawn(move || {
         let hotkeys = match platform_linux::watch_hotkeys(bindings) {
@@ -1437,50 +1431,68 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
         if config.f5_command.is_some() {
             std::thread::spawn(platform_linux::warm_up_injection);
         }
-        let mut last_seen = platform_linux::read_clipboard_text().unwrap_or(None);
+        // Shared so the clipboard wait can run OFF this loop (below): the loop
+        // must NOT block, or evdev modifier events (Ctrl/Alt for the overlay's
+        // show + Alt-drag) queue behind a ≤1s clipboard poll and the drag lags.
+        let last_seen = Arc::new(Mutex::new(
+            platform_linux::read_clipboard_text().unwrap_or(None),
+        ));
         for event in hotkeys {
-            let outcome = match event {
+            match event {
                 // Escape dismisses — overlay control, not gated to POE2 focus.
-                HotkeyEvent::Close => Hotkey::Close,
-                // Ctrl/Alt state forwarded straight through (overlay drag/show).
-                HotkeyEvent::Modifiers { ctrl, alt } => Hotkey::Mods { ctrl, alt },
-                // Chat macro — only into POE2.
+                HotkeyEvent::Close => {
+                    let _ = tx.send(Hotkey::Close);
+                    ctx.request_repaint();
+                }
+                // Ctrl/Alt state — must be forwarded INSTANTLY (overlay drag/show).
+                HotkeyEvent::Modifiers { ctrl, alt } => {
+                    let _ = tx.send(Hotkey::Mods { ctrl, alt });
+                    ctx.request_repaint();
+                }
+                // Chat macro — only into POE2. Off-thread so the focus check
+                // (xdotool) doesn't stall the loop.
                 HotkeyEvent::Macro => {
-                    if !allowed() {
-                        tracing::info!("macro ignored — POE2 not focused");
-                        continue;
-                    }
-                    Hotkey::Macro
+                    let (tx, ctx) = (tx.clone(), ctx.clone());
+                    std::thread::spawn(move || {
+                        if require_focus && !platform_linux::is_poe2_active() {
+                            tracing::info!("macro ignored — POE2 not focused");
+                            return;
+                        }
+                        let _ = tx.send(Hotkey::Macro);
+                        ctx.request_repaint();
+                    });
                 }
-                // A copy combo: only when POE2 is focused (don't hijack Ctrl+C in
-                // other apps). Both copy hotkeys open the pinned filter popup.
+                // A copy combo: the focus check + the ≤1s clipboard poll run on
+                // their own thread so this loop keeps forwarding modifier events.
                 HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
-                    if !allowed() {
-                        tracing::info!("Ctrl+C ignored — POE2 not focused");
-                        continue;
-                    }
-                    let start = Instant::now();
-                    match wait_for_new_item(&last_seen) {
-                        Some(text) => {
-                            tracing::info!(
-                                elapsed_ms = start.elapsed().as_millis(),
-                                hash = item_hash(&text),
-                                "clipboard: NEW item → pricing"
-                            );
-                            last_seen = Some(text.clone());
-                            Hotkey::Item { text }
+                    let (tx, ctx, last) = (tx.clone(), ctx.clone(), last_seen.clone());
+                    std::thread::spawn(move || {
+                        if require_focus && !platform_linux::is_poe2_active() {
+                            tracing::info!("Ctrl+C ignored — POE2 not focused");
+                            return;
                         }
-                        None => {
-                            tracing::info!("clipboard: same/no item → ignored (no request)");
-                            Hotkey::Missed
-                        }
-                    }
+                        let prev = last.lock().expect("last_seen lock").clone();
+                        let start = Instant::now();
+                        let outcome = match wait_for_new_item(&prev) {
+                            Some(text) => {
+                                tracing::info!(
+                                    elapsed_ms = start.elapsed().as_millis(),
+                                    hash = item_hash(&text),
+                                    "clipboard: NEW item → pricing"
+                                );
+                                *last.lock().expect("last_seen lock") = Some(text.clone());
+                                Hotkey::Item { text }
+                            }
+                            None => {
+                                tracing::info!("clipboard: same/no item → ignored");
+                                Hotkey::Missed
+                            }
+                        };
+                        let _ = tx.send(outcome);
+                        ctx.request_repaint();
+                    });
                 }
-            };
-            if tx.send(outcome).is_err() {
-                return; // UI gone
             }
-            ctx.request_repaint();
         }
     });
 }

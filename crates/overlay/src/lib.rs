@@ -659,7 +659,14 @@ impl KeyboardHandler for App {
         _: u32,
     ) {
         self.kbd_focus = false;
-        tracing::info!("keyboard focus lost");
+        // Focus left to another window — i.e. the user clicked outside the popup
+        // (e.g. back into POE2). Dismiss, so they don't have to press Esc (which
+        // POE2 also acts on). Only meaningful once the popup HAS been focused
+        // (a click on it), which is when `enter` fired.
+        if self.shown {
+            tracing::info!("keyboard focus lost → closing popup");
+            self.shown = false;
+        }
     }
     fn press_key(
         &mut self,
