@@ -1106,6 +1106,11 @@ impl QuickModeApp {
     /// [`pump`](Self::pump) first (shared with the popup surface).
     pub fn settings_content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        // Esc closes the settings panel when it has focus (it gets the key event
+        // via Wayland; the popup's Esc is handled globally by the evdev watcher).
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.settings_close_requested = true;
+        }
         // What kind of follow-up an edit needs.
         let mut changed = false; // any field → persist to disk
         let mut requery = false; // league / status → re-price now
