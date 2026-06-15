@@ -1633,12 +1633,16 @@ impl QuickModeApp {
                          own roll. 100% = exact roll; lower = a looser search that also \
                          finds slightly worse copies. Applies to the item on screen now.",
                     );
-                    let before = self.config.filter_min_percent;
-                    ui.add(
+                    let resp = ui.add(
                         egui::Slider::new(&mut self.config.filter_min_percent, 50..=100)
                             .suffix("%"),
                     );
-                    if self.config.filter_min_percent != before {
+                    // Commit (save + re-seed + re-price) only when the user
+                    // finishes adjusting — on drag release, or a discrete
+                    // click/keyboard step — so a 100→70 drag fires ONE query,
+                    // not one per intermediate value (which would hammer the
+                    // rate-limited trade API).
+                    if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
                         changed = true;
                         reseed = true;
                     }
@@ -2643,6 +2647,16 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
         let last_seen = Arc::new(Mutex::new(
             platform_linux::read_clipboard_text().unwrap_or(None),
         ));
+        // Debounce the chat macros (index 0 = F5, 1 = F2). A keyboard often
+        // exposes several `event-kbd` nodes, so ONE physical press is read by
+        // several reader threads and arrives here as duplicate events; without
+        // this the macro runs twice — chat re-opens right after sending (the
+        // "presses Enter again" bug). EE2 throttles the same way (its 120ms
+        // clipboard-restore guard). The window only needs to exceed the gap
+        // between duplicate nodes (a few ms); 300ms also blocks accidental
+        // double-taps while never affecting a deliberate re-fire.
+        const MACRO_DEBOUNCE: Duration = Duration::from_millis(300);
+        let mut last_macro: [Option<Instant>; 2] = [None, None];
         for event in hotkeys {
             match event {
                 // Escape dismisses — overlay control, not gated to POE2 focus.
@@ -2658,6 +2672,14 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                 // Chat macros — only into POE2. Off-thread so the focus check
                 // (xdotool) doesn't stall the loop.
                 HotkeyEvent::Macro | HotkeyEvent::Macro2 => {
+                    // Drop a duplicate press echoed by another device node.
+                    let slot = usize::from(event == HotkeyEvent::Macro2);
+                    let now = Instant::now();
+                    if last_macro[slot].is_some_and(|t| now.duration_since(t) < MACRO_DEBOUNCE) {
+                        continue;
+                    }
+                    last_macro[slot] = Some(now);
+
                     let (tx, ctx) = (tx.clone(), ctx.clone());
                     let msg = if event == HotkeyEvent::Macro2 {
                         Hotkey::Macro2
