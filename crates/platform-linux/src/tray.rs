@@ -160,28 +160,31 @@ pub fn spawn_tray() -> anyhow::Result<(TrayHandle, Receiver<TrayAction>)> {
     ))
 }
 
-/// A small gold diamond, generated in code as an ARGB32 pixmap so the tray icon
-/// is visible without relying on an installed theme icon. 22px is the usual KDE
-/// tray icon size.
+/// The app icon as ARGB32 pixmaps, so the tray is visible without relying on an
+/// installed theme icon. Pre-rasterised from `assets/poe2ddd.svg` (the "ddd"
+/// badge) at the sizes a KDE tray is likely to request; the host picks the
+/// closest. Regenerate with the rsvg-convert + PIL snippet in assets/tray.
 fn app_icon() -> Vec<Icon> {
-    const S: i32 = 22;
-    let center = (S - 1) as f32 / 2.0;
-    let radius = center;
-    let mut data = Vec::with_capacity((S * S * 4) as usize);
-    for y in 0..S {
-        for x in 0..S {
-            let dist = (x as f32 - center).abs() + (y as f32 - center).abs();
-            if dist <= radius - 1.0 {
-                // Opaque gold #c8a13a, bytes in A,R,G,B order (ARGB32).
-                data.extend_from_slice(&[0xff, 0xc8, 0xa1, 0x3a]);
-            } else {
-                data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+    macro_rules! pixmap {
+        ($size:expr) => {
+            Icon {
+                width: $size,
+                height: $size,
+                data: include_bytes!(concat!(
+                    "../../../assets/tray/icon",
+                    stringify!($size),
+                    ".argb"
+                ))
+                .to_vec(),
             }
-        }
+        };
     }
-    vec![Icon {
-        width: S,
-        height: S,
-        data,
-    }]
+    vec![
+        pixmap!(16),
+        pixmap!(22),
+        pixmap!(24),
+        pixmap!(32),
+        pixmap!(48),
+        pixmap!(64),
+    ]
 }
