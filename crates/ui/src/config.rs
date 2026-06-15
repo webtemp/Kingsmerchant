@@ -32,11 +32,15 @@ pub struct Config {
     /// uinput virtual keyboard: opens chat, types this, sends). `null` disables
     /// it. Injection steps past the clipboard-only design (PRD App. B) — opt-in.
     pub f5_command: Option<String>,
+    /// Second chat macro (default `/exit`, on F2) — same mechanism as
+    /// [`f5_command`](Self::f5_command). `null` disables it.
+    pub macro2_command: Option<String>,
     /// Rebindable hotkeys (PRD §4.8). Strings like `"Ctrl+C"`, `"Ctrl+Alt+C"`,
     /// `"F5"`, `"Escape"` — modifiers `Ctrl`/`Alt`/`Shift` + one key.
     pub hotkey_quick: String,
     pub hotkey_detailed: String,
     pub hotkey_macro: String,
+    pub hotkey_macro2: String,
     pub hotkey_close: String,
     /// Only fire the price-check / macro hotkeys while Path of Exile is the
     /// focused window (so Ctrl+C in other apps isn't hijacked, and the macro
@@ -69,9 +73,11 @@ impl Default for Config {
             ],
             filter_min_percent: 100,
             f5_command: Some("/hideout".to_string()),
+            macro2_command: Some("/exit".to_string()),
             hotkey_quick: "Ctrl+C".to_string(),
             hotkey_detailed: "Ctrl+Alt+C".to_string(),
             hotkey_macro: "F5".to_string(),
+            hotkey_macro2: "F2".to_string(),
             hotkey_close: "Escape".to_string(),
             require_poe2_focus: true,
             trade_status: "securable".to_string(),

@@ -39,6 +39,8 @@ pub enum HotkeyEvent {
     Modifiers { ctrl: bool, alt: bool },
     /// F5 — run the configured chat macro (e.g. `/hideout`) via uinput.
     Macro,
+    /// F2 — run the second configured chat macro (e.g. `/exit`) via uinput.
+    Macro2,
 }
 
 /// A key plus an exact modifier combination, parsed from a string like
@@ -85,6 +87,7 @@ pub struct HotkeyBindings {
     pub detailed: Binding,
     pub close: Binding,
     pub macro_: Binding,
+    pub macro2: Binding,
 }
 
 impl Default for HotkeyBindings {
@@ -94,6 +97,7 @@ impl Default for HotkeyBindings {
             detailed: Binding { key: Key::KEY_C, ctrl: true, alt: true, shift: false },
             close: Binding { key: Key::KEY_ESC, ctrl: false, alt: false, shift: false },
             macro_: Binding { key: Key::KEY_F5, ctrl: false, alt: false, shift: false },
+            macro2: Binding { key: Key::KEY_F2, ctrl: false, alt: false, shift: false },
         }
     }
 }
@@ -101,7 +105,13 @@ impl Default for HotkeyBindings {
 impl HotkeyBindings {
     /// Build from config strings, falling back to the default for any that fail
     /// to parse (logged, so a typo'd binding doesn't disable the whole hotkey).
-    pub fn from_strings(quick: &str, detailed: &str, macro_: &str, close: &str) -> Self {
+    pub fn from_strings(
+        quick: &str,
+        detailed: &str,
+        macro_: &str,
+        macro2: &str,
+        close: &str,
+    ) -> Self {
         let d = Self::default();
         let one = |s: &str, fallback: Binding| {
             Binding::parse(s).unwrap_or_else(|e| {
@@ -113,6 +123,7 @@ impl HotkeyBindings {
             quick: one(quick, d.quick),
             detailed: one(detailed, d.detailed),
             macro_: one(macro_, d.macro_),
+            macro2: one(macro2, d.macro2),
             close: one(close, d.close),
         }
     }
@@ -129,6 +140,8 @@ impl HotkeyBindings {
             Some(HotkeyEvent::Close)
         } else if self.macro_.matches(key, ctrl, alt, shift) {
             Some(HotkeyEvent::Macro)
+        } else if self.macro2.matches(key, ctrl, alt, shift) {
+            Some(HotkeyEvent::Macro2)
         } else {
             None
         }
@@ -318,6 +331,7 @@ mod tests {
         assert_eq!(b.event_for(Key::KEY_C, true, true, false), Some(HotkeyEvent::DetailedCopy));
         assert_eq!(b.event_for(Key::KEY_C, false, false, false), None);
         assert_eq!(b.event_for(Key::KEY_F5, false, false, false), Some(HotkeyEvent::Macro));
+        assert_eq!(b.event_for(Key::KEY_F2, false, false, false), Some(HotkeyEvent::Macro2));
         assert_eq!(b.event_for(Key::KEY_ESC, false, false, false), Some(HotkeyEvent::Close));
     }
 }

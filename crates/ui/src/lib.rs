@@ -74,6 +74,8 @@ pub enum Hotkey {
     Mods { ctrl: bool, alt: bool },
     /// F5 — run the configured chat macro (e.g. `/hideout`).
     Macro,
+    /// F2 — run the second configured chat macro (e.g. `/exit`).
+    Macro2,
     /// Open the settings surface (from the tray menu or the gear button).
     OpenSettings,
     /// Quit the app (from the tray menu).
@@ -832,15 +834,12 @@ impl QuickModeApp {
                 }
                 Hotkey::Macro => {
                     // F5 chat macro (e.g. /hideout), injected via uinput into the
-                    // focused window (POE2). Runs off-thread — it blocks ~½s.
-                    if let Some(cmd) = self.config.f5_command.clone() {
-                        tracing::info!(command = %cmd, "running chat macro");
-                        std::thread::spawn(move || {
-                            if let Err(e) = platform_linux::send_chat_command(&cmd) {
-                                tracing::warn!(error = %format!("{e:#}"), "chat macro failed");
-                            }
-                        });
-                    }
+                    // focused window (POE2).
+                    run_chat_macro(self.config.f5_command.clone());
+                }
+                Hotkey::Macro2 => {
+                    // F2 chat macro (e.g. /exit).
+                    run_chat_macro(self.config.macro2_command.clone());
                 }
                 Hotkey::OpenSettings => {
                     self.settings_requested = true;
@@ -912,6 +911,7 @@ impl QuickModeApp {
         let restart_needed = new.hotkey_quick != self.config.hotkey_quick
             || new.hotkey_detailed != self.config.hotkey_detailed
             || new.hotkey_macro != self.config.hotkey_macro
+            || new.hotkey_macro2 != self.config.hotkey_macro2
             || new.hotkey_close != self.config.hotkey_close
             || new.require_poe2_focus != self.config.require_poe2_focus
             || new.realm != self.config.realm;
@@ -1124,6 +1124,11 @@ impl QuickModeApp {
                 }
             });
         });
+        ui.label(
+            RichText::new("Changes save automatically — no save button.")
+                .weak()
+                .small(),
+        );
         ui.separator();
 
         egui::ScrollArea::vertical()
@@ -1255,15 +1260,27 @@ impl QuickModeApp {
                     )
                     .changed();
 
-                // F5 chat macro (live — pump reads config.f5_command on press).
+                // Chat macros (live — pump reads the command on press). Two
+                // slots: F5 (default /hideout) and F2 (default /exit).
                 ui.horizontal(|ui| {
                     let mut enabled = self.config.f5_command.is_some();
-                    if ui.checkbox(&mut enabled, "Chat macro").changed() {
+                    if ui.checkbox(&mut enabled, "Macro · F5").changed() {
                         self.config.f5_command =
                             if enabled { Some("/hideout".into()) } else { None };
                         changed = true;
                     }
                     if let Some(cmd) = &mut self.config.f5_command {
+                        changed |= ui.text_edit_singleline(cmd).changed();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let mut enabled = self.config.macro2_command.is_some();
+                    if ui.checkbox(&mut enabled, "Macro · F2").changed() {
+                        self.config.macro2_command =
+                            if enabled { Some("/exit".into()) } else { None };
+                        changed = true;
+                    }
+                    if let Some(cmd) = &mut self.config.macro2_command {
                         changed |= ui.text_edit_singleline(cmd).changed();
                     }
                 });
@@ -1291,37 +1308,34 @@ impl QuickModeApp {
                 restart |= hotkey_row(ui, "Quick", &mut self.config.hotkey_quick, &mut changed);
                 restart |=
                     hotkey_row(ui, "Detailed", &mut self.config.hotkey_detailed, &mut changed);
-                restart |= hotkey_row(ui, "Macro", &mut self.config.hotkey_macro, &mut changed);
+                restart |= hotkey_row(ui, "Macro · F5", &mut self.config.hotkey_macro, &mut changed);
+                restart |=
+                    hotkey_row(ui, "Macro · F2", &mut self.config.hotkey_macro2, &mut changed);
                 restart |= hotkey_row(ui, "Close", &mut self.config.hotkey_close, &mut changed);
             });
 
         ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("⏻ Quit poe2ddd").clicked() {
-                self.quit_requested = true;
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!("config.json: {}", Config::path().display()))
-                        .weak()
-                        .small(),
-                );
-            });
-        });
+        ui.label(
+            RichText::new(format!("config.json: {}", Config::path().display()))
+                .weak()
+                .small(),
+        );
+        // A note only when there's something to say: a restart-required field
+        // changed, or a save failed. Plain saves are silent (auto-save caption
+        // up top already explains persistence).
         if let Some(note) = &self.settings_note {
-            ui.colored_label(Color32::from_rgb(0x4c, 0xd1, 0x37), note);
+            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), note);
         }
 
         if changed {
             if let Err(e) = self.config.save() {
                 tracing::warn!(error = %e, "could not save config");
                 self.settings_note = Some(format!("Could not save: {e}"));
+            } else if restart {
+                self.settings_note =
+                    Some("Hotkeys / realm / focus-gate apply after a restart.".to_string());
             } else {
-                self.settings_note = Some(if restart {
-                    "Saved. Hotkeys / realm / focus-gate apply after a restart.".to_string()
-                } else {
-                    "Saved.".to_string()
-                });
+                self.settings_note = None;
             }
         }
         if requery {
@@ -1796,6 +1810,22 @@ fn chat_button(
     }
 }
 
+/// Run a chat macro (e.g. `/hideout`, `/exit`) off-thread — it injects via
+/// uinput into the focused window (POE2) and blocks ~½s. `None` / empty is a
+/// no-op (the macro is disabled).
+fn run_chat_macro(command: Option<String>) {
+    let Some(cmd) = command else { return };
+    if cmd.trim().is_empty() {
+        return;
+    }
+    tracing::info!(command = %cmd, "running chat macro");
+    std::thread::spawn(move || {
+        if let Err(e) = platform_linux::send_chat_command(&cmd) {
+            tracing::warn!(error = %format!("{e:#}"), "chat macro failed");
+        }
+    });
+}
+
 /// Write to the X11 clipboard (where POE2 will paste from), logging on failure.
 fn copy_to_clipboard(text: &str) {
     if let Err(e) = platform_linux::write_clipboard_text(text) {
@@ -1864,6 +1894,7 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
         &config.hotkey_quick,
         &config.hotkey_detailed,
         &config.hotkey_macro,
+        &config.hotkey_macro2,
         &config.hotkey_close,
     );
     let require_focus = config.require_poe2_focus;
@@ -1885,7 +1916,7 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
         );
         // Pre-create the injection device (after the watcher scanned keyboards,
         // so it isn't picked up) so the first macro press is instant.
-        if config.f5_command.is_some() {
+        if config.f5_command.is_some() || config.macro2_command.is_some() {
             std::thread::spawn(platform_linux::warm_up_injection);
         }
         // Shared so the clipboard wait can run OFF this loop (below): the loop
@@ -1906,16 +1937,21 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                     let _ = tx.send(Hotkey::Mods { ctrl, alt });
                     ctx.request_repaint();
                 }
-                // Chat macro — only into POE2. Off-thread so the focus check
+                // Chat macros — only into POE2. Off-thread so the focus check
                 // (xdotool) doesn't stall the loop.
-                HotkeyEvent::Macro => {
+                HotkeyEvent::Macro | HotkeyEvent::Macro2 => {
                     let (tx, ctx) = (tx.clone(), ctx.clone());
+                    let msg = if event == HotkeyEvent::Macro2 {
+                        Hotkey::Macro2
+                    } else {
+                        Hotkey::Macro
+                    };
                     std::thread::spawn(move || {
                         if require_focus && !platform_linux::is_poe2_active() {
                             tracing::info!("macro ignored — POE2 not focused");
                             return;
                         }
-                        let _ = tx.send(Hotkey::Macro);
+                        let _ = tx.send(msg);
                         ctx.request_repaint();
                     });
                 }

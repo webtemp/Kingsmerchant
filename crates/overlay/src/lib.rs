@@ -167,7 +167,17 @@ pub fn run() -> Result<()> {
     let layer_shell =
         LayerShell::bind(&globals, &qh).map_err(|e| anyhow!("wlr layer shell unavailable: {e}"))?;
 
-    let popup = WinSurface::new(&compositor, &layer_shell, &qh, popup_ctx, "poe2ddd", POPUP_INIT_WIDTH);
+    // The popup ticks continuously (so it notices a Ctrl+C while hidden); the
+    // settings surface only redraws while shown.
+    let popup = WinSurface::new(
+        &compositor,
+        &layer_shell,
+        &qh,
+        popup_ctx,
+        "poe2ddd",
+        POPUP_INIT_WIDTH,
+        true,
+    );
     let settings = WinSurface::new(
         &compositor,
         &layer_shell,
@@ -175,6 +185,7 @@ pub fn run() -> Result<()> {
         settings_ctx,
         "poe2ddd-settings",
         SETTINGS_WIDTH,
+        false,
     );
 
     let mut app = App {
@@ -244,6 +255,11 @@ struct WinSurface {
     dragging: bool,
     /// Whether the surface is visible.
     shown: bool,
+    /// Keep requesting frame callbacks even while hidden. True for the popup
+    /// (so `pump` keeps polling for a Ctrl+C while hidden); false for the
+    /// settings surface (it goes quiet when hidden — two continuously
+    /// redrawing overlays competing for vsync makes the UI lag badly).
+    always_redraw: bool,
     /// Kept alive until the next commit so the compositor reads the region
     /// before it's destroyed.
     input_region: Option<Region>,
@@ -264,6 +280,7 @@ impl WinSurface {
         egui_ctx: egui::Context,
         namespace: &str,
         width: u32,
+        always_redraw: bool,
     ) -> Self {
         let surface = compositor.create_surface(qh);
         let layer =
@@ -292,6 +309,7 @@ impl WinSurface {
             dragged: false,
             dragging: false,
             shown: false,
+            always_redraw,
             input_region: None,
             applied_input: None,
             applied_kbd: None,
@@ -475,10 +493,16 @@ impl WinSurface {
             .swap_buffers(&gl.context)
             .expect("swap_buffers");
 
-        // Keep redrawing so async results / hover states appear (continuous at
-        // vsync for now; on-demand wake-ups are a Phase 7 polish).
-        let surface = self.layer.wl_surface().clone();
-        surface.frame(qh, surface.clone());
+        // Schedule the next frame to keep redrawing (async results, hover,
+        // spinners). The popup always ticks (always_redraw) so `pump` keeps
+        // polling for a Ctrl+C even while hidden; the settings surface only
+        // ticks while shown and goes quiet once hidden (this frame still
+        // presents the transparent clear, so it disappears) — otherwise two
+        // continuously redrawing overlays compete for vsync and the UI lags.
+        if self.always_redraw || self.shown {
+            let surface = self.layer.wl_surface().clone();
+            surface.frame(qh, surface.clone());
+        }
         self.layer.commit();
         Ok(())
     }
@@ -604,7 +628,14 @@ impl App {
         if self.quick.take_close_request() {
             self.popup.shown = false;
         }
+        // Bootstrap the settings surface's redraw loop when it's opened: it
+        // ticks only while shown, so once hidden it stops getting frame
+        // callbacks and must be kicked back into drawing here (see `draw`).
+        let mut open_settings = false;
         if self.quick.take_settings_request() {
+            if !self.settings.shown {
+                open_settings = true;
+            }
             // Open settings and hide the popup so the two don't overlap.
             self.settings.shown = true;
             self.popup.shown = false;
@@ -644,6 +675,12 @@ impl App {
         if let Err(e) = popup.draw(&mut shared, qh, want_w, place, |ui| quick.content(ui)) {
             tracing::error!(error = %format!("{e:#}"), "popup draw failed");
             *exit = true;
+        }
+
+        // Kick the settings surface into drawing now that it's been shown (it
+        // doesn't self-tick while hidden).
+        if open_settings {
+            self.draw_settings(qh);
         }
     }
 
