@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- poe2ddd application/tray icon: a gold trade-diamond on a dark card,
+     matching the in-code tray pixmap (platform-linux/src/tray.rs). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e6c25a"/>
+      <stop offset="1" stop-color="#b07f23"/>
+    </linearGradient>
+  </defs>
+  <!-- Dark rounded card background. -->
+  <rect x="8" y="8" width="240" height="240" rx="44" ry="44"
+        fill="#2c2e36" stroke="#50525e" stroke-width="4"/>
+  <!-- Outer gold diamond. -->
+  <path d="M128 40 L216 128 L128 216 L40 128 Z"
+        fill="url(#gold)" stroke="#3a2c0a" stroke-width="4"/>
+  <!-- Inner cut diamond for a faceted, coin-like look. -->
+  <path d="M128 88 L168 128 L128 168 L88 128 Z"
+        fill="#2c2e36" opacity="0.85"/>
+  <path d="M128 104 L152 128 L128 152 L104 128 Z"
+        fill="url(#gold)"/>
+</svg>
