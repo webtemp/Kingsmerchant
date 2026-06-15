@@ -1007,6 +1007,19 @@ impl KeyboardHandler for App {
         let Some(which) = self.focused else {
             return;
         };
+        // Ctrl+V: egui never reads the system clipboard itself — the windowing
+        // layer must turn the shortcut into an `Event::Paste`. (Without this,
+        // text fields like the POESESSID setting can't be pasted into.)
+        if modifiers.ctrl && !modifiers.alt && (event.keysym == Keysym::v || event.keysym == Keysym::V) {
+            match platform_linux::read_clipboard_text() {
+                Ok(Some(text)) if !text.is_empty() => {
+                    self.surf_mut(which).events.push(egui::Event::Paste(text));
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "clipboard read for paste failed"),
+            }
+            return;
+        }
         if let Some(key) = map_keysym(event.keysym) {
             self.surf_mut(which).events.push(egui::Event::Key {
                 key,
