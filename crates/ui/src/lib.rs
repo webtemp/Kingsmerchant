@@ -573,7 +573,7 @@ impl QuickModeApp {
     /// Snapshot the current panel state into the trade-api filter struct.
     fn detailed_filters(&self) -> DetailedFilters {
         DetailedFilters {
-            status: ListingStatus::Online,
+            status: parse_status(&self.config.trade_status),
             stats: self.filters.iter().map(StatFilterRow::selection).collect(),
             equipment: self.equipment.iter().map(EquipmentRow::selection).collect(),
             quality: self.quality_filter.value(),
@@ -738,15 +738,15 @@ impl QuickModeApp {
     pub fn content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // Header: title (left) + league selector & close button (right), all on
-        // one baseline. A sized strong label (not `heading`) keeps the row a
-        // uniform height so the title, league and X line up. Dismissed by the X
-        // (or Esc, or clicking outside).
+        // Header: title (left) + league selector & close button (right). All
+        // header items use the SAME (default) text size so they share a baseline
+        // and line up — a bigger title sat off from the smaller controls.
+        // Dismissed by the X (or Esc, or clicking outside).
         ui.horizontal(|ui| {
-            ui.label(RichText::new("poe2ddd").strong().size(18.0));
+            ui.label(RichText::new("poe2ddd").strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(RichText::new("X").strong())
+                    .button("X")
                     .on_hover_text("Close (Esc / click outside)")
                     .clicked()
                 {
@@ -1380,6 +1380,17 @@ fn fmt_amount(amount: f64) -> String {
             .trim_end_matches('0')
             .trim_end_matches('.')
             .to_string()
+    }
+}
+
+/// Map the configured trade-status string to a [`ListingStatus`] (defaults to
+/// Instant Buyout / securable for anything unrecognised).
+fn parse_status(s: &str) -> ListingStatus {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "online" => ListingStatus::Online,
+        "available" => ListingStatus::Available,
+        "any" => ListingStatus::Any,
+        _ => ListingStatus::Securable,
     }
 }
 

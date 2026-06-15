@@ -43,6 +43,9 @@ pub struct Config {
     /// never types into the wrong window). Set false if focus detection
     /// misbehaves on your setup and blocks the hotkeys.
     pub require_poe2_focus: bool,
+    /// Which listings to search: `securable` (Instant Buyout — default),
+    /// `online` (In Person), `available` (both), or `any`.
+    pub trade_status: String,
 }
 
 impl Default for Config {
@@ -62,6 +65,7 @@ impl Default for Config {
             hotkey_macro: "F5".to_string(),
             hotkey_close: "Escape".to_string(),
             require_poe2_focus: true,
+            trade_status: "securable".to_string(),
         }
     }
 }
