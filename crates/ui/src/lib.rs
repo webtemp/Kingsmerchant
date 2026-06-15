@@ -264,20 +264,49 @@ const PRICE_CURRENCIES: &[(&str, &str)] = &[
     ("chaos", "chaos"),
 ];
 
-/// A checkbox + label + min field for a single-value filter. Returns whether it
-/// changed.
+/// Width of each min/max filter field.
+const FILTER_FIELD_W: f32 = 60.0;
+
+/// Right-aligned min + max fields (they hug the right edge of the row so the
+/// columns line up and the row fills the width). Returns whether either changed.
+fn min_max_fields(ui: &mut egui::Ui, min: &mut String, max: &mut String) -> bool {
+    let mut changed = false;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // In a right-to-left layout the first item is rightmost, so max first.
+        changed |= ui
+            .add(
+                egui::TextEdit::singleline(max)
+                    .hint_text("max")
+                    .desired_width(FILTER_FIELD_W),
+            )
+            .changed();
+        changed |= ui
+            .add(
+                egui::TextEdit::singleline(min)
+                    .hint_text("min")
+                    .desired_width(FILTER_FIELD_W),
+            )
+            .changed();
+    });
+    changed
+}
+
+/// A checkbox + label for a single-value (min-only) filter, with the min field
+/// right-aligned to fill the row width. Returns whether it changed.
 fn min_filter_row(ui: &mut egui::Ui, label: &str, filter: &mut MinFilter) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         changed |= ui.checkbox(&mut filter.enabled, "").changed();
         ui.label(label);
-        changed |= ui
-            .add(
-                egui::TextEdit::singleline(&mut filter.min)
-                    .hint_text("min")
-                    .desired_width(44.0),
-            )
-            .changed();
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut filter.min)
+                        .hint_text("min")
+                        .desired_width(FILTER_FIELD_W),
+                )
+                .changed();
+        });
     });
     changed
 }
@@ -910,37 +939,39 @@ impl QuickModeApp {
         egui::CollapsingHeader::new(RichText::new("🔍 Filters").strong())
             .default_open(true)
             .show(ui, |ui| {
-                // Price range (PRD §4.7 price-range filter).
+                // Price range (PRD §4.7 price-range filter), right-aligned.
                 ui.horizontal(|ui| {
                     ui.label("Price");
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.price_filter.min)
-                                .hint_text("min")
-                                .desired_width(48.0),
-                        )
-                        .changed();
-                    ui.label("–");
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.price_filter.max)
-                                .hint_text("max")
-                                .desired_width(48.0),
-                        )
-                        .changed();
-                    let before = self.price_filter.currency.clone();
-                    egui::ComboBox::from_id_salt("price-currency")
-                        .selected_text(currency_label(&self.price_filter.currency))
-                        .show_ui(ui, |ui| {
-                            for (id, label) in PRICE_CURRENCIES {
-                                ui.selectable_value(
-                                    &mut self.price_filter.currency,
-                                    id.to_string(),
-                                    *label,
-                                );
-                            }
-                        });
-                    changed |= self.price_filter.currency != before;
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let before = self.price_filter.currency.clone();
+                        egui::ComboBox::from_id_salt("price-currency")
+                            .selected_text(currency_label(&self.price_filter.currency))
+                            .show_ui(ui, |ui| {
+                                for (id, label) in PRICE_CURRENCIES {
+                                    ui.selectable_value(
+                                        &mut self.price_filter.currency,
+                                        id.to_string(),
+                                        *label,
+                                    );
+                                }
+                            });
+                        changed |= self.price_filter.currency != before;
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.price_filter.max)
+                                    .hint_text("max")
+                                    .desired_width(FILTER_FIELD_W),
+                            )
+                            .changed();
+                        ui.label("–");
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.price_filter.min)
+                                    .hint_text("min")
+                                    .desired_width(FILTER_FIELD_W),
+                            )
+                            .changed();
+                    });
                 });
 
                 // Item level (type_filters.ilvl) — default-on; a major price
@@ -951,36 +982,18 @@ impl QuickModeApp {
                 // Defences / equipment properties (armour / evasion / ES / …),
                 // built from the item's stats block, not its affix mods.
                 if !self.equipment.is_empty() {
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                     ui.label(RichText::new("Defences").strong());
-                    egui::Grid::new("equip-filters")
-                        .num_columns(4)
-                        .spacing([6.0, 6.0])
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for row in &mut self.equipment {
-                                changed |= ui.checkbox(&mut row.enabled, "").changed();
-                                ui.label(RichText::new(&row.label).strong());
-                                changed |= ui
-                                    .add(
-                                        egui::TextEdit::singleline(&mut row.min)
-                                            .hint_text("min")
-                                            .desired_width(46.0),
-                                    )
-                                    .changed();
-                                changed |= ui
-                                    .add(
-                                        egui::TextEdit::singleline(&mut row.max)
-                                            .hint_text("max")
-                                            .desired_width(46.0),
-                                    )
-                                    .changed();
-                                ui.end_row();
-                            }
+                    for row in &mut self.equipment {
+                        ui.horizontal(|ui| {
+                            changed |= ui.checkbox(&mut row.enabled, "").changed();
+                            ui.label(RichText::new(&row.label).strong());
+                            changed |= min_max_fields(ui, &mut row.min, &mut row.max);
                         });
+                    }
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(6.0);
                 if !self.equipment.is_empty() {
                     ui.label(RichText::new("Modifiers").strong());
                 }
@@ -992,38 +1005,24 @@ impl QuickModeApp {
                     );
                 } else {
                     egui::ScrollArea::vertical()
-                        .max_height(220.0)
+                        .max_height(240.0)
+                        .auto_shrink([false, true])
                         .show(ui, |ui| {
-                            egui::Grid::new("stat-filters")
-                                .num_columns(4)
-                                .spacing([6.0, 6.0])
-                                .striped(true)
-                                .show(ui, |ui| {
-                                    for row in &mut self.filters {
-                                        changed |= ui.checkbox(&mut row.enabled, "").changed();
-                                        ui.horizontal(|ui| {
-                                            if row.is_implicit {
-                                                implicit_pill(ui);
-                                            }
-                                            ui.label(RichText::new(&row.label).color(AFFIX_BLUE));
-                                        });
-                                        changed |= ui
-                                            .add(
-                                                egui::TextEdit::singleline(&mut row.min)
-                                                    .hint_text("min")
-                                                    .desired_width(46.0),
-                                            )
-                                            .changed();
-                                        changed |= ui
-                                            .add(
-                                                egui::TextEdit::singleline(&mut row.max)
-                                                    .hint_text("max")
-                                                    .desired_width(46.0),
-                                            )
-                                            .changed();
-                                        ui.end_row();
+                            for row in &mut self.filters {
+                                ui.horizontal(|ui| {
+                                    changed |= ui.checkbox(&mut row.enabled, "").changed();
+                                    if row.is_implicit {
+                                        implicit_pill(ui);
                                     }
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&row.label).color(AFFIX_BLUE),
+                                        )
+                                        .truncate(),
+                                    );
+                                    changed |= min_max_fields(ui, &mut row.min, &mut row.max);
                                 });
+                            }
                         });
                 }
 
