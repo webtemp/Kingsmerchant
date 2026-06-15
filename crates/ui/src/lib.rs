@@ -1111,7 +1111,7 @@ impl QuickModeApp {
                 {
                     self.close_requested = true;
                 }
-                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                if ui.button("Settings").on_hover_text("Open settings").clicked() {
                     self.settings_requested = true;
                 }
                 self.league_selector(ui, &ctx);
@@ -1122,10 +1122,10 @@ impl QuickModeApp {
         // View toggle (Item ⇄ Text). Pricing is driven by Ctrl+C / the filters,
         // so there's no manual "price check" button any more.
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.view, View::Item, "🛡 Item");
-            ui.selectable_value(&mut self.view, View::Text, "📝 Text");
+            ui.selectable_value(&mut self.view, View::Item, "Item");
+            ui.selectable_value(&mut self.view, View::Text, "Text");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("📋 Read clipboard").clicked() {
+                if ui.button("Read clipboard").clicked() {
                     self.read_clipboard();
                     self.start_price_check(&ctx);
                 }
@@ -1145,7 +1145,7 @@ impl QuickModeApp {
 
         if let Some(hint) = &self.hint {
             ui.add_space(4.0);
-            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("⚠ {hint}"));
+            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("! {hint}"));
         }
 
         ui.add_space(4.0);
@@ -1173,7 +1173,7 @@ impl QuickModeApp {
                     );
                 } else {
                     ui.label(
-                        RichText::new("Not a POE2 item — switch to 📝 Text to edit.")
+                        RichText::new("Not a POE2 item — switch to Text to edit.")
                             .weak()
                             .italics(),
                     );
@@ -1189,7 +1189,7 @@ impl QuickModeApp {
             let secs = (wait.as_millis() as u64).div_ceil(1000);
             ui.colored_label(
                 Color32::from_rgb(0xff, 0xc8, 0x4b),
-                format!("⏳ rate limited — retrying in {secs}s"),
+                format!("Rate limited — retrying in {secs}s"),
             );
         }
 
@@ -1236,7 +1236,7 @@ impl QuickModeApp {
                         show_results(ui, pc, &mut copied);
                         ui.add_space(6.0);
                         if ui
-                            .button("🌐 Open on trade site")
+                            .button("Open on trade site")
                             .on_hover_text("Opens your browser with this exact search")
                             .clicked()
                         {
@@ -1265,7 +1265,7 @@ impl QuickModeApp {
             ui.add_space(4.0);
             ui.colored_label(
                 Color32::from_rgb(0x4c, 0xd1, 0x37),
-                format!("✓ Sent {status} to POE2"),
+                format!("Sent {status} to POE2"),
             );
         }
     }
@@ -1353,7 +1353,7 @@ impl QuickModeApp {
                     });
                 ui.add_space(6.0);
                 if ui
-                    .button("🌐 Open exchange page")
+                    .button("Open exchange page")
                     .on_hover_text("Opens the in-game-style currency exchange in your browser")
                     .clicked()
                 {
@@ -1381,7 +1381,7 @@ impl QuickModeApp {
         let mut restart = false; // a startup-only field → show the restart note
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("⚙ Settings").strong());
+            ui.label(RichText::new("Settings").strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("X").on_hover_text("Close (Esc)").clicked() {
                     self.settings_close_requested = true;
@@ -1642,7 +1642,7 @@ impl QuickModeApp {
     fn filter_panel(&mut self, ui: &mut egui::Ui) -> bool {
         let mut requery = false;
         let mut changed = false;
-        egui::CollapsingHeader::new(RichText::new("🔍 Filters").strong())
+        egui::CollapsingHeader::new(RichText::new("Filters").strong())
             .default_open(true)
             .show(ui, |ui| {
                 // Price range (PRD §4.7 price-range filter), right-aligned.
@@ -1748,13 +1748,13 @@ impl QuickModeApp {
 
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.button("🔄 Apply now").clicked() {
+                    if ui.button("Apply now").clicked() {
                         requery = true;
                     }
                     // "Similar item" (PRD §4.7): same base, every mapped mod
                     // enabled at ~80% of its roll — find comparable items.
                     if ui
-                        .button("🔎 Similar item")
+                        .button("Similar item")
                         .on_hover_text("Same base, every mod present at ~80% of its roll")
                         .clicked()
                     {
@@ -1802,7 +1802,7 @@ impl QuickModeApp {
             .map(|c| format!("  ·  {c:.0}% confidence"))
             .unwrap_or_default();
         let text = format!(
-            "🤖 poeprices ML: {}–{} {}{}",
+            "poeprices ML: {}-{} {}{}",
             fmt_amount(est.min),
             fmt_amount(est.max),
             est.currency,
@@ -2036,17 +2036,17 @@ fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<Strin
     // the hover tooltip.
     ui.horizontal(|ui| {
         if let Some(whisper) = &listing.whisper {
-            if ui.button("💬").on_hover_text("Whisper (sends in POE2)").clicked() {
+            if ui.button("wtb").on_hover_text("Whisper (sends in POE2)").clicked() {
                 send_chat_to_poe2(whisper.clone());
                 *copied = Some(format!("whisper to {seller}"));
             }
         } else {
-            ui.add_enabled(false, egui::Button::new("💬"))
+            ui.add_enabled(false, egui::Button::new("wtb"))
                 .on_hover_text("Whisper (unavailable)");
         }
-        chat_button(ui, "➕", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
-        chat_button(ui, "🏠", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
-        chat_button(ui, "💱", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
+        chat_button(ui, "inv", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
+        chat_button(ui, "ho", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
+        chat_button(ui, "trade", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
     });
 }
 
@@ -2096,17 +2096,17 @@ fn exchange_row(ui: &mut egui::Ui, offer: &ExchangeOffer, pay: &str, copied: &mu
     let seller = offer.account.clone();
     ui.horizontal(|ui| {
         if let Some(whisper) = &offer.whisper {
-            if ui.button("💬").on_hover_text("Whisper (sends in POE2)").clicked() {
+            if ui.button("wtb").on_hover_text("Whisper (sends in POE2)").clicked() {
                 send_chat_to_poe2(whisper.clone());
                 *copied = Some(format!("whisper to {seller}"));
             }
         } else {
-            ui.add_enabled(false, egui::Button::new("💬"))
+            ui.add_enabled(false, egui::Button::new("wtb"))
                 .on_hover_text("Whisper (unavailable)");
         }
-        chat_button(ui, "➕", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
-        chat_button(ui, "🏠", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
-        chat_button(ui, "💱", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
+        chat_button(ui, "inv", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
+        chat_button(ui, "ho", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
+        chat_button(ui, "trade", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
     });
 }
 

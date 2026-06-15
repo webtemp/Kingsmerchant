@@ -91,6 +91,15 @@ enum Which {
     Settings,
 }
 
+impl Which {
+    fn other(self) -> Which {
+        match self {
+            Which::Popup => Which::Settings,
+            Which::Settings => Which::Popup,
+        }
+    }
+}
+
 /// Where to place a surface on its output.
 #[derive(Clone, Copy)]
 enum Placement {
@@ -167,17 +176,7 @@ pub fn run() -> Result<()> {
     let layer_shell =
         LayerShell::bind(&globals, &qh).map_err(|e| anyhow!("wlr layer shell unavailable: {e}"))?;
 
-    // The popup ticks continuously (so it notices a Ctrl+C while hidden); the
-    // settings surface only redraws while shown.
-    let popup = WinSurface::new(
-        &compositor,
-        &layer_shell,
-        &qh,
-        popup_ctx,
-        "poe2ddd",
-        POPUP_INIT_WIDTH,
-        true,
-    );
+    let popup = WinSurface::new(&compositor, &layer_shell, &qh, popup_ctx, "poe2ddd", POPUP_INIT_WIDTH);
     let settings = WinSurface::new(
         &compositor,
         &layer_shell,
@@ -185,7 +184,6 @@ pub fn run() -> Result<()> {
         settings_ctx,
         "poe2ddd-settings",
         SETTINGS_WIDTH,
-        false,
     );
 
     let mut app = App {
@@ -204,6 +202,7 @@ pub fn run() -> Result<()> {
         popup,
         settings,
         quick,
+        pending_bootstrap: None,
         exit: false,
     };
 
@@ -255,11 +254,10 @@ struct WinSurface {
     dragging: bool,
     /// Whether the surface is visible.
     shown: bool,
-    /// Keep requesting frame callbacks even while hidden. True for the popup
-    /// (so `pump` keeps polling for a Ctrl+C while hidden); false for the
-    /// settings surface (it goes quiet when hidden — two continuously
-    /// redrawing overlays competing for vsync makes the UI lag badly).
-    always_redraw: bool,
+    /// Whether this surface is currently in its redraw loop (requested the next
+    /// frame callback on its last draw). Used to know when a surface that should
+    /// be redrawing has gone quiet and needs a kick (see `App::tick`).
+    spinning: bool,
     /// Kept alive until the next commit so the compositor reads the region
     /// before it's destroyed.
     input_region: Option<Region>,
@@ -280,7 +278,6 @@ impl WinSurface {
         egui_ctx: egui::Context,
         namespace: &str,
         width: u32,
-        always_redraw: bool,
     ) -> Self {
         let surface = compositor.create_surface(qh);
         let layer =
@@ -309,7 +306,7 @@ impl WinSurface {
             dragged: false,
             dragging: false,
             shown: false,
-            always_redraw,
+            spinning: false,
             input_region: None,
             applied_input: None,
             applied_kbd: None,
@@ -387,6 +384,7 @@ impl WinSurface {
         qh: &QueueHandle<App>,
         want_width: u32,
         place: Placement,
+        request_next: bool,
         render: impl FnOnce(&mut egui::Ui),
     ) -> Result<()> {
         if self.gl.is_none() {
@@ -493,13 +491,14 @@ impl WinSurface {
             .swap_buffers(&gl.context)
             .expect("swap_buffers");
 
-        // Schedule the next frame to keep redrawing (async results, hover,
-        // spinners). The popup always ticks (always_redraw) so `pump` keeps
-        // polling for a Ctrl+C even while hidden; the settings surface only
-        // ticks while shown and goes quiet once hidden (this frame still
-        // presents the transparent clear, so it disappears) — otherwise two
-        // continuously redrawing overlays compete for vsync and the UI lags.
-        if self.always_redraw || self.shown {
+        // Schedule the next frame only if this surface should keep redrawing
+        // (`App::should_spin`). EXACTLY ONE surface spins at a time — the active
+        // one — so two overlays never compete for the vsync swap (that was the
+        // settings-window lag). A surface going quiet still presents this frame
+        // (the transparent clear hides it); `App::tick` kicks the other surface
+        // back into its loop when the active one changes.
+        self.spinning = request_next;
+        if request_next {
             let surface = self.layer.wl_surface().clone();
             surface.frame(qh, surface.clone());
         }
@@ -595,6 +594,9 @@ struct App {
     popup: WinSurface,
     settings: WinSurface,
     quick: QuickModeApp,
+    /// A surface that needs to be kicked back into its redraw loop after the
+    /// current draw (it should spin but went quiet on a state transition).
+    pending_bootstrap: Option<Which>,
     exit: bool,
 }
 
@@ -617,33 +619,80 @@ impl App {
         }
     }
 
-    /// Draw the price-check popup: drain the shared channels (this is the one
-    /// place `pump` runs each frame), act on pop/close/settings/quit requests,
-    /// then render `QuickModeApp::content`.
-    fn draw_popup(&mut self, qh: &QueueHandle<Self>) {
+    fn surf(&self, which: Which) -> &WinSurface {
+        match which {
+            Which::Popup => &self.popup,
+            Which::Settings => &self.settings,
+        }
+    }
+
+    /// Whether a surface should keep requesting frame callbacks (redrawing). The
+    /// popup spins whenever it's shown OR settings is hidden (so it keeps `pump`
+    /// alive for the idle/pricing cases); settings spins only while shown. So
+    /// exactly one spins at a time and the two never compete for the vsync swap.
+    fn should_spin(&self, which: Which) -> bool {
+        match which {
+            Which::Popup => self.popup.shown || !self.settings.shown,
+            Which::Settings => self.settings.shown,
+        }
+    }
+
+    /// Drain the channels (`pump`) and apply the resulting show/quit requests —
+    /// the single per-frame tick, run by whichever surface is currently drawing.
+    /// If a transition leaves a should-spin surface idle, schedule it for a kick.
+    fn tick(&mut self, current: Which) {
+        // Always pump on the popup's egui context: that's where price results
+        // render and where the watcher / background tasks request repaints.
         self.quick.pump(&self.popup.egui_ctx);
         if self.quick.take_pop_request() {
+            // A Ctrl+C takes over: show the popup, leave settings.
             self.popup.shown = true;
+            self.settings.shown = false;
         }
         if self.quick.take_close_request() {
             self.popup.shown = false;
         }
-        // Bootstrap the settings surface's redraw loop when it's opened: it
-        // ticks only while shown, so once hidden it stops getting frame
-        // callbacks and must be kicked back into drawing here (see `draw`).
-        let mut open_settings = false;
         if self.quick.take_settings_request() {
-            if !self.settings.shown {
-                open_settings = true;
-            }
             // Open settings and hide the popup so the two don't overlap.
             self.settings.shown = true;
             self.popup.shown = false;
         }
+        if self.quick.take_settings_close_request() {
+            self.settings.shown = false;
+        }
         if self.quick.take_quit_request() {
             self.exit = true;
         }
+        // If the OTHER surface now needs to spin but has gone quiet (a transition
+        // just changed which one is active), kick it after the current draw.
+        let other = current.other();
+        if self.should_spin(other) && !self.surf(other).spinning {
+            self.pending_bootstrap = Some(other);
+        }
+    }
 
+    /// Draw `which`, then kick any surface that a transition left needing a
+    /// redraw (so the active surface always keeps spinning). Entry point for
+    /// both frame callbacks and configures.
+    fn render(&mut self, which: Which, qh: &QueueHandle<Self>) {
+        match which {
+            Which::Popup => self.draw_popup(qh),
+            Which::Settings => self.draw_settings(qh),
+        }
+        if let Some(boot) = self.pending_bootstrap.take() {
+            if boot != which {
+                match boot {
+                    Which::Popup => self.draw_popup(qh),
+                    Which::Settings => self.draw_settings(qh),
+                }
+            }
+        }
+    }
+
+    /// Draw the price-check popup (`QuickModeApp::content`).
+    fn draw_popup(&mut self, qh: &QueueHandle<Self>) {
+        self.tick(Which::Popup);
+        let request_next = self.should_spin(Which::Popup);
         let place = match self.quick.position_mode() {
             "fixed" => {
                 let (x, y) = self.quick.fixed_pos();
@@ -672,23 +721,18 @@ impl App {
             display,
             kbd_modifiers: *kbd_modifiers,
         };
-        if let Err(e) = popup.draw(&mut shared, qh, want_w, place, |ui| quick.content(ui)) {
+        if let Err(e) = popup.draw(&mut shared, qh, want_w, place, request_next, |ui| {
+            quick.content(ui)
+        }) {
             tracing::error!(error = %format!("{e:#}"), "popup draw failed");
             *exit = true;
-        }
-
-        // Kick the settings surface into drawing now that it's been shown (it
-        // doesn't self-tick while hidden).
-        if open_settings {
-            self.draw_settings(qh);
         }
     }
 
     /// Draw the settings panel surface.
     fn draw_settings(&mut self, qh: &QueueHandle<Self>) {
-        if self.quick.take_settings_close_request() {
-            self.settings.shown = false;
-        }
+        self.tick(Which::Settings);
+        let request_next = self.should_spin(Which::Settings);
         let App {
             settings,
             quick,
@@ -707,9 +751,14 @@ impl App {
             display,
             kbd_modifiers: *kbd_modifiers,
         };
-        if let Err(e) = settings.draw(&mut shared, qh, SETTINGS_WIDTH, Placement::Center, |ui| {
-            quick.settings_content(ui)
-        }) {
+        if let Err(e) = settings.draw(
+            &mut shared,
+            qh,
+            SETTINGS_WIDTH,
+            Placement::Center,
+            request_next,
+            |ui| quick.settings_content(ui),
+        ) {
             tracing::error!(error = %format!("{e:#}"), "settings draw failed");
             *exit = true;
         }
@@ -720,10 +769,8 @@ impl CompositorHandler for App {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}
     fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
     fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface, _: u32) {
-        match self.which(surface) {
-            Some(Which::Popup) => self.draw_popup(qh),
-            Some(Which::Settings) => self.draw_settings(qh),
-            None => {}
+        if let Some(which) = self.which(surface) {
+            self.render(which, qh);
         }
     }
     fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, output: &wl_output::WlOutput) {
@@ -765,10 +812,7 @@ impl LayerShellHandler for App {
                 );
             }
         }
-        match which {
-            Which::Popup => self.draw_popup(qh),
-            Which::Settings => self.draw_settings(qh),
-        }
+        self.render(which, qh);
     }
 }
 

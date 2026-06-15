@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "overlay"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "egui",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "trade-api"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "insta",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "egui",
