@@ -36,33 +36,49 @@ static DEVICE: OnceLock<Mutex<VirtualDevice>> = OnceLock::new();
 /// existing text with Ctrl+A first (mirrors EE2's `AUTO_CLEAR`).
 const AUTO_CLEAR_PREFIXES: &[char] = &['#', '%', '@', '$', '&', '/'];
 
-/// Open chat, paste `command`, and send it. Blocks ~250ms only on the very first
-/// call (device setup); afterwards a few tens of ms. Call off the UI thread.
+/// Gap between the *visible* keystrokes (open chat → paste → send). Small but
+/// non-zero so POE2 registers the chat opening before we paste — this mimics the
+/// fast, barely-visible feel of Exiled-Exchange-2, whose separate `ydotool`
+/// invocations space keys only ~15-30ms apart. The old 40ms gaps left the chat
+/// box visibly sitting open mid-sequence, which is what looked clunky.
+const KEY_GAP: Duration = Duration::from_millis(20);
+/// Brief settle so the xclip selection helper is serving before the FIRST
+/// keystroke. `write_clipboard_text` already blocks until xclip forks and owns
+/// the selection, so this is just a safety margin — and it's BEFORE chat opens,
+/// so it's invisible (unlike a mid-sequence sleep).
+const CLIPBOARD_SETTLE: Duration = Duration::from_millis(25);
+
+/// Open chat, paste `command`, and send it — fast, so the chat box only flashes
+/// (the EE2 feel) instead of visibly lingering open. Blocks ~250ms only on the
+/// very first call (device setup); afterwards ~80ms. Call off the UI thread.
 pub fn send_chat_command(command: &str) -> Result<()> {
     // Save the user's clipboard, set ours, paste, restore (so we don't clobber
     // whatever they had copied — e.g. the item they just priced).
     let saved = read_clipboard_text().ok().flatten();
     write_clipboard_text(command).context("set clipboard for chat paste")?;
 
+    let auto_clear = command
+        .chars()
+        .next()
+        .is_some_and(|c| AUTO_CLEAR_PREFIXES.contains(&c));
     {
         let mut device = device()?.lock().expect("inject device lock");
-        // Let the xclip selection helper start serving before we paste.
-        thread::sleep(Duration::from_millis(30));
+        // Settle the clipboard BEFORE opening chat, so the visible part stays
+        // fast.
+        thread::sleep(CLIPBOARD_SETTLE);
         tap(&mut device, Key::KEY_ENTER)?; // open chat
-        thread::sleep(Duration::from_millis(40));
-        let auto_clear = command
-            .chars()
-            .next()
-            .is_some_and(|c| AUTO_CLEAR_PREFIXES.contains(&c));
+        thread::sleep(KEY_GAP);
         if !auto_clear {
             ctrl_tap(&mut device, Key::KEY_A)?; // clear any leftover text
+            thread::sleep(KEY_GAP);
         }
         ctrl_tap(&mut device, Key::KEY_V)?; // paste the whole command at once
-        thread::sleep(Duration::from_millis(40));
-        tap(&mut device, Key::KEY_ENTER)?; // send
+        thread::sleep(KEY_GAP);
+        tap(&mut device, Key::KEY_ENTER)?; // send (POE2 closes the chat input)
     }
 
-    // Let POE2 read the clipboard (the paste) before we put the old value back.
+    // Let POE2 finish reading the pasted selection before we restore the old
+    // value. Invisible — the chat is already closed by now.
     thread::sleep(Duration::from_millis(120));
     if let Some(s) = saved {
         let _ = write_clipboard_text(&s);
