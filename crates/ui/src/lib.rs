@@ -2233,10 +2233,31 @@ fn item_preview(item: &serde_json::Value) -> ItemPreview {
             .filter(|t| !t.is_empty())
     };
     let mut mods = Vec::new();
-    for key in ["implicitMods", "explicitMods", "runeMods"] {
+    // Pull from EVERY mod field the trade API uses — a rare's lines can live in
+    // explicitMods, but also fractured/crafted/enchant/rune/desecrated/implicit
+    // depending on how it was made.
+    for key in [
+        "implicitMods",
+        "enchantMods",
+        "runeMods",
+        "fracturedMods",
+        "explicitMods",
+        "craftedMods",
+        "desecratedMods",
+        "scourgeMods",
+    ] {
         if let Some(arr) = item.get(key).and_then(|v| v.as_array()) {
             mods.extend(arr.iter().filter_map(|v| v.as_str()).map(str::to_string));
         }
+    }
+    if mods.is_empty() {
+        // Help diagnose the "no description" case: log what the item actually
+        // carried (run with RUST_LOG=ui=debug to capture).
+        tracing::debug!(
+            name = ?item.get("name").and_then(|v| v.as_str()),
+            keys = ?item.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
+            "item preview has no mods"
+        );
     }
     ItemPreview {
         icon: s("icon"),
