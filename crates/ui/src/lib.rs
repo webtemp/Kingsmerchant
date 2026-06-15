@@ -30,7 +30,7 @@ const BASE_URL: &str = "https://www.pathofexile.com";
 const USER_AGENT: &str = "poe2ddd/0.1 (+phase3 ui)";
 /// Fetch a sample of this many so the median is meaningful; show the cheapest N.
 const SAMPLE: usize = 10;
-const SHOWN: usize = 7;
+const SHOWN: usize = 10;
 /// How long to wait for POE2 to write the clipboard after Ctrl+C. The PRD §4.2
 /// budget was 500ms; we're more patient (1s) because POE2's write latency is
 /// variable, and a too-short window is what made some presses "do nothing".
