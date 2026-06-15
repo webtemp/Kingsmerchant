@@ -1239,7 +1239,7 @@ impl QuickModeApp {
             ui.add_space(4.0);
             ui.colored_label(
                 Color32::from_rgb(0x4c, 0xd1, 0x37),
-                format!("✓ Copied {status} — paste into POE2 chat (Enter)"),
+                format!("✓ Sent {status} to POE2"),
             );
         }
     }
@@ -2010,8 +2010,8 @@ fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<Strin
     // the hover tooltip.
     ui.horizontal(|ui| {
         if let Some(whisper) = &listing.whisper {
-            if ui.button("💬").on_hover_text("Whisper").clicked() {
-                copy_to_clipboard(whisper);
+            if ui.button("💬").on_hover_text("Whisper (sends in POE2)").clicked() {
+                send_chat_to_poe2(whisper.clone());
                 *copied = Some(format!("whisper to {seller}"));
             }
         } else {
@@ -2070,8 +2070,8 @@ fn exchange_row(ui: &mut egui::Ui, offer: &ExchangeOffer, pay: &str, copied: &mu
     let seller = offer.account.clone();
     ui.horizontal(|ui| {
         if let Some(whisper) = &offer.whisper {
-            if ui.button("💬").on_hover_text("Whisper").clicked() {
-                copy_to_clipboard(whisper);
+            if ui.button("💬").on_hover_text("Whisper (sends in POE2)").clicked() {
+                send_chat_to_poe2(whisper.clone());
                 *copied = Some(format!("whisper to {seller}"));
             }
         } else {
@@ -2084,9 +2084,9 @@ fn exchange_row(ui: &mut egui::Ui, offer: &ExchangeOffer, pay: &str, copied: &mu
     });
 }
 
-/// An icon button that copies a chat `command` to the clipboard. `name` is the
-/// hover label. Disabled (greyed) when we couldn't build a command (e.g. the
-/// listing has no character name).
+/// An icon button that sends a chat `command` into POE2. `name` is the hover
+/// label. Disabled (greyed) when we couldn't build a command (e.g. the listing
+/// has no character name).
 fn chat_button(
     ui: &mut egui::Ui,
     icon: &str,
@@ -2096,8 +2096,8 @@ fn chat_button(
 ) {
     match command {
         Some(cmd) => {
-            if ui.button(icon).on_hover_text(name).clicked() {
-                copy_to_clipboard(&cmd);
+            if ui.button(icon).on_hover_text(format!("{name} (sends in POE2)")).clicked() {
+                send_chat_to_poe2(cmd.clone());
                 *copied = Some(cmd);
             }
         }
@@ -2106,6 +2106,32 @@ fn chat_button(
                 .on_hover_text(format!("{name} (no character name)"));
         }
     }
+}
+
+/// Send a chat command straight into POE2 (PRD §4.6 — the buttons *act*, you
+/// don't paste). Refocuses the game (our overlay had click focus), confirms it's
+/// active, then injects via the same uinput paste path as the macros. Falls back
+/// to leaving the command on the clipboard if POE2 can't be focused. Off-thread:
+/// the focus settle + inject block ~½s.
+fn send_chat_to_poe2(command: String) {
+    if command.trim().is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        platform_linux::focus_poe2();
+        // Give the compositor a moment to move keyboard focus to POE2 before we
+        // inject, else the keystrokes land in our overlay (which had focus).
+        std::thread::sleep(Duration::from_millis(120));
+        if platform_linux::is_poe2_active() {
+            if let Err(e) = platform_linux::send_chat_command(&command) {
+                tracing::warn!(error = %format!("{e:#}"), "chat send failed; left on clipboard");
+                let _ = platform_linux::write_clipboard_text(&command);
+            }
+        } else {
+            tracing::info!("POE2 not focusable — left command on clipboard to paste");
+            let _ = platform_linux::write_clipboard_text(&command);
+        }
+    });
 }
 
 /// Run a chat macro (e.g. `/hideout`, `/exit`) off-thread — it injects via
@@ -2122,13 +2148,6 @@ fn run_chat_macro(command: Option<String>) {
             tracing::warn!(error = %format!("{e:#}"), "chat macro failed");
         }
     });
-}
-
-/// Write to the X11 clipboard (where POE2 will paste from), logging on failure.
-fn copy_to_clipboard(text: &str) {
-    if let Err(e) = platform_linux::write_clipboard_text(text) {
-        tracing::warn!(error = %e, "clipboard write failed");
-    }
 }
 
 fn rarity_color(rarity: &Rarity) -> Color32 {

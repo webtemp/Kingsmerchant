@@ -25,3 +25,25 @@ pub fn is_poe2_active() -> bool {
         .to_lowercase()
         .contains("path of exile")
 }
+
+/// Bring the Path of Exile window to the foreground (so a following chat-command
+/// injection lands in the game, not in our overlay which had click focus).
+///
+/// Best-effort via `xdotool windowactivate`. Returns whether the command ran;
+/// the caller should still confirm with [`is_poe2_active`] after a short settle
+/// before injecting. Deliberately does NOT use `--sync` (which can hang forever
+/// if the compositor never activates the window).
+pub fn focus_poe2() -> bool {
+    Command::new("xdotool")
+        .args([
+            "search",
+            "--limit",
+            "1",
+            "--name",
+            "Path of Exile",
+            "windowactivate",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
