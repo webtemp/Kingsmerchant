@@ -84,6 +84,19 @@ const CORNER_RADIUS: f32 = 14.0;
 const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2c, 0x2e, 0x36);
 const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x50, 0x52, 0x5e);
 
+/// How many of a surface's first visible frames pre-warm the font atlas. A
+/// couple is enough: glyphs laid out here join the early atlas upload. See
+/// [`WinSurface::warm_frames`] and [`WARMUP_TEXT`].
+const WARMUP_FRAMES: u8 = 3;
+/// Characters laid out (invisibly) during warm-up so they're baked into the
+/// font atlas up front: printable Latin-1 Supplement + Latin Extended-A. Covers
+/// the accented letters POE2 item and player names use (ö, é, ü, å, ñ, ł, …)
+/// which otherwise rendered as boxes the first time they appeared.
+const WARMUP_TEXT: &str = "\
+\u{00A1}\u{00A2}\u{00A3}\u{00A4}\u{00A5}\u{00A6}\u{00A7}\u{00A8}\u{00A9}\u{00AA}\u{00AB}\u{00AC}\u{00AD}\u{00AE}\u{00AF}\u{00B0}\u{00B1}\u{00B2}\u{00B3}\u{00B4}\u{00B5}\u{00B6}\u{00B7}\u{00B8}\u{00B9}\u{00BA}\u{00BB}\u{00BC}\u{00BD}\u{00BE}\u{00BF}\
+ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\
+ĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĲĳĴĵĶķĸĹĺĻļĽľĿŀŁłŃńŅņŇňŉŊŋŌōŎŏŐőŒœŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽž";
+
 /// Which of the two surfaces an event belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Which {
@@ -266,6 +279,13 @@ struct WinSurface {
     applied_input: Option<(bool, u32, u32)>,
     /// Last applied keyboard-interactivity `shown` state (toggle on change).
     applied_kbd: Option<bool>,
+    /// Remaining frames to pre-warm the font atlas (see [`WARMUP_FRAMES`]). egui
+    /// adds glyphs to its atlas lazily, and in this custom egui_glow integration
+    /// glyphs uploaded *after* the initial atlas (rare ones like the `ö` in an
+    /// item name) ended up rendering as tofu boxes. Laying out the common
+    /// accented-Latin range on the first visible frames bakes those glyphs into
+    /// the early atlas upload so they render correctly.
+    warm_frames: u8,
 }
 
 impl WinSurface {
@@ -310,6 +330,7 @@ impl WinSurface {
             input_region: None,
             applied_input: None,
             applied_kbd: None,
+            warm_frames: WARMUP_FRAMES,
         }
     }
 
@@ -414,6 +435,10 @@ impl WinSurface {
         let ctx = self.egui_ctx.clone();
         let shown = self.shown;
         let width = self.width as f32;
+        let warm = shown && self.warm_frames > 0;
+        if warm {
+            self.warm_frames -= 1;
+        }
         let mut measured = 0.0_f32;
         // `ctx.run` wants an `FnMut`, but `render` is `FnOnce`; hand it out via
         // an `Option::take` so it's consumed at most once (run calls us once).
@@ -421,6 +446,23 @@ impl WinSurface {
         let full = ctx.run(raw_input, |c| {
             if !shown {
                 return;
+            }
+            // Pre-warm the font atlas: lay the accented-Latin range out in a
+            // throwaway, fully-transparent, non-interactable Area so the glyphs
+            // enter this frame's atlas upload without affecting the visible
+            // layout or the measured height (see WARMUP_TEXT).
+            if warm {
+                egui::Area::new(egui::Id::new("atlas-warmup"))
+                    .fixed_pos(egui::pos2(0.0, 0.0))
+                    .interactable(false)
+                    .show(c, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(WARMUP_TEXT).color(egui::Color32::TRANSPARENT),
+                            )
+                            .selectable(false),
+                        );
+                    });
             }
             let render = render.take();
             let resp = egui::Area::new(egui::Id::new("surface"))
