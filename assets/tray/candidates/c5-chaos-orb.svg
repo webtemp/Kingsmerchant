@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Candidate 5: "Chaos Orb" — the swirling vortex emblem of PoE's signature
+     currency, "ddd" centered in the eye of the swirl. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="vortex" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0"    stop-color="#1a1320"/>
+      <stop offset="0.55" stop-color="#3a1d4a"/>
+      <stop offset="1"    stop-color="#0d0a12"/>
+    </radialGradient>
+    <linearGradient id="swirl" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7be0c8"/><stop offset="1" stop-color="#2f9b86"/>
+    </linearGradient>
+    <linearGradient id="gold5" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4dd8c"/><stop offset="1" stop-color="#a9781f"/>
+    </linearGradient>
+  </defs>
+  <circle cx="128" cy="128" r="110" fill="url(#vortex)" stroke="url(#gold5)" stroke-width="5"/>
+  <!-- swirling chaos arms -->
+  <g fill="none" stroke="url(#swirl)" stroke-width="11" stroke-linecap="round" opacity="0.92">
+    <path d="M128 36 C188 70 196 150 150 196"/>
+    <path d="M220 128 C186 188 106 196 60 150"/>
+    <path d="M128 220 C68 186 60 106 106 60"/>
+  </g>
+  <circle cx="128" cy="128" r="58" fill="#0d0a12" opacity="0.85"/>
+  <!-- ddd -->
+  <text x="128" y="150" text-anchor="middle" font-family="Georgia, serif"
+        font-size="58" font-weight="700" fill="url(#gold5)">ddd</text>
+</svg>
