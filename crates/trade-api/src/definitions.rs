@@ -154,6 +154,26 @@ impl StatDefinitions {
         None
     }
 
+    /// Map a `Grants Skill: Level N <Skill>` property to its `skill.*` stat id,
+    /// with the skill LEVEL as the filter value. The level is the price driver
+    /// (a level-20 grant is worth far more than level-18), not which skill it is
+    /// — so this lets the UI filter by a minimum granted-skill level. `value` is
+    /// the property value, e.g. `Level 19 Discipline` / `Level 19 Azmerian Wolf`.
+    /// Returns `None` if the skill isn't a known grantable.
+    pub fn map_granted_skill(&self, value: &str) -> Option<MappedStat> {
+        let rest = value.trim().strip_prefix("Level ")?;
+        let (level, skill) = rest.split_once(' ')?;
+        let level: f64 = level.trim().parse().ok()?;
+        let template = format!("Grants Skill: Level # {}", skill.trim());
+        let id = self.by_text.get(&stat_text::canonical_ggg(&template))?.clone();
+        Some(MappedStat {
+            id,
+            stat_type: "skill".to_string(),
+            values: vec![level],
+            template,
+        })
+    }
+
     /// Look a canonical `template` up under the preferred stat types, then
     /// type-agnostically (e.g. an enchant on a slot we mapped as explicit).
     fn lookup(&self, types: &[&str], template: &str, values: &[f64]) -> Option<MappedStat> {

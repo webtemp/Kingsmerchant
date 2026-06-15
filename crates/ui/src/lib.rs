@@ -884,6 +884,32 @@ impl QuickModeApp {
                 is_implicit,
             });
         }
+
+        // Granted skills (e.g. a sceptre's "Grants Skill: Level 19 Discipline"):
+        // the LEVEL is the price driver and varies per copy, so add a filter row
+        // per granted skill with the exact level pre-filled as the min — NOT
+        // scaled, since you want at-least-this-level (equal or better).
+        for prop in &item.properties {
+            if prop.name != "Grants Skill" {
+                continue;
+            }
+            let Some(mapped) = self.client.stats().map_granted_skill(&prop.value) else {
+                continue;
+            };
+            if !seen.insert(mapped.id.clone()) {
+                continue;
+            }
+            let level = mapped.filter_value();
+            rows.push(StatFilterRow {
+                id: mapped.id,
+                label: mapped.template,
+                enabled: true,
+                min: level.map(fmt_amount).unwrap_or_default(),
+                max: String::new(),
+                rolled: level,
+                is_implicit: false,
+            });
+        }
         rows
     }
 

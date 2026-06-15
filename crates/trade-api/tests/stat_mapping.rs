@@ -226,3 +226,29 @@ fn unique_name_resolves_to_base_type() {
     assert_eq!(defs.unique_base("Andvarius"), Some("Gold Ring"));
     assert_eq!(defs.unique_base("Not A Real Unique"), None);
 }
+
+#[test]
+fn granted_skill_maps_to_skill_id_with_level_as_value() {
+    // The granted-skill LEVEL is the price driver, so it becomes the filter
+    // value (min level), keyed by the skill's stat id.
+    let json = r#"{"result":[{"id":"skill","label":"Skill","entries":[
+        {"id":"skill.discipline","text":"Grants Skill: Level # Discipline","type":"skill"},
+        {"id":"skill.summon_azmerian_wolf","text":"Grants Skill: Level # Azmerian Wolf","type":"skill"}
+    ]}]}"#;
+    let defs = StatDefinitions::from_json(json).expect("inline skill stats parse");
+
+    let d = defs.map_granted_skill("Level 19 Discipline").expect("discipline maps");
+    assert_eq!(d.id, "skill.discipline");
+    assert_eq!(d.filter_value(), Some(19.0));
+
+    // Multi-word skill names work too.
+    let w = defs
+        .map_granted_skill("Level 20 Azmerian Wolf")
+        .expect("azmerian wolf maps");
+    assert_eq!(w.id, "skill.summon_azmerian_wolf");
+    assert_eq!(w.filter_value(), Some(20.0));
+
+    // Unknown skill / malformed input → None.
+    assert!(defs.map_granted_skill("Level 19 Not A Real Skill").is_none());
+    assert!(defs.map_granted_skill("garbage").is_none());
+}

@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "trade-api"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "insta",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "egui",
