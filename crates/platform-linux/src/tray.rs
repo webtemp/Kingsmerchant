@@ -161,9 +161,9 @@ pub fn spawn_tray() -> anyhow::Result<(TrayHandle, Receiver<TrayAction>)> {
 }
 
 /// The app icon as ARGB32 pixmaps, so the tray is visible without relying on an
-/// installed theme icon. Pre-rasterised from `assets/poe2ddd.svg` (the "ddd"
-/// badge) at the sizes a KDE tray is likely to request; the host picks the
-/// closest. Regenerate with the rsvg-convert + PIL snippet in assets/tray.
+/// installed theme icon. Pre-rasterised from `assets/poe2ddd.svg` (the Chaos-orb
+/// nebula) at the sizes a KDE tray is likely to request; the host picks the
+/// closest. Regenerate with `assets/tray/regen.sh`.
 fn app_icon() -> Vec<Icon> {
     macro_rules! pixmap {
         ($size:expr) => {

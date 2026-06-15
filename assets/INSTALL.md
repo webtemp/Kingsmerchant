@@ -51,7 +51,7 @@ sudo usermod -aG input "$USER"
 ## 4. Run
 
 Launch **poe2ddd** from the KDE app launcher (or just run `poe2ddd`). It starts
-hidden with a tray icon (a gold diamond). Hover an item in POE2 and press
+hidden with a tray icon (a Chaos-orb nebula). Hover an item in POE2 and press
 **Ctrl+C** to pop the price check; open **Settings** from the tray menu or the
 gear button on the popup. Settings live in `~/.config/poe2ddd/config.json` and
 hot-reload when you edit them (hotkey/realm/focus changes need a restart).

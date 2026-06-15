@@ -1,7 +1,8 @@
 #!/bin/sh
-# Regenerate the tray ARGB32 pixmaps from assets/poe2ddd.svg. Run after editing
-# the SVG. Needs rsvg-convert + python3 (Pillow). The .argb files are embedded
-# into the binary via include_bytes! in platform-linux/src/tray.rs.
+# Regenerate the tray ARGB32 pixmaps from assets/poe2ddd.svg (the Chaos-orb
+# nebula, embedded as a base64 PNG). Run after replacing the SVG. Needs
+# rsvg-convert + python3 (Pillow). The .argb files are embedded into the binary
+# via include_bytes! in platform-linux/src/tray.rs.
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 svg="$here/../poe2ddd.svg"
