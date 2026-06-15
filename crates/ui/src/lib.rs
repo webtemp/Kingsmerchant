@@ -1122,6 +1122,13 @@ impl QuickModeApp {
         // Dismissed by the X (or Esc, or clicking outside).
         ui.horizontal(|ui| {
             ui.label(RichText::new("poe2ddd").strong());
+            // Build version — so you can confirm a fresh build is running (the
+            // overlay is a persistent process; rebuilding doesn't restart it).
+            ui.label(
+                RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                    .weak()
+                    .small(),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button("X")
@@ -2103,7 +2110,11 @@ fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String
                         action_buttons(ui, r.whisper.as_deref(), r.character.as_deref(), &r.seller, copied);
                     });
                     if let Some(item) = &r.item {
-                        if row.response().hovered() {
+                        // contains_pointer() is true whenever the cursor is over
+                        // the row rect (hovered() can be false when a child
+                        // widget is the hover target) — so the preview triggers
+                        // anywhere on the row.
+                        if row.response().contains_pointer() {
                             show_item_preview_at_cursor(&ctx, item);
                         }
                     }
@@ -2153,12 +2164,13 @@ fn render_item_preview(ui: &mut egui::Ui, item: &ItemPreview) {
             ui.set_max_width(320.0);
             ui.horizontal(|ui| {
                 if let Some(icon) = &item.icon {
-                    ui.add(
-                        egui::Image::new(icon)
-                            .fit_to_exact_size(egui::vec2(52.0, 52.0))
-                            .rounding(4.0),
-                    );
-                    ui.add_space(4.0);
+                    // Paint the icon into a FIXED 48x48 box so a slow/failed
+                    // image load can never steal space from the text (that was
+                    // the "only icon, no text" symptom).
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
+                    egui::Image::new(icon).rounding(4.0).paint_at(ui, rect);
+                    ui.add_space(6.0);
                 }
                 ui.vertical(|ui| {
                     if let Some(name) = &item.name {
