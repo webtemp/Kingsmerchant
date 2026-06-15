@@ -857,6 +857,10 @@ impl SeatHandler for App {
 
 impl PointerHandler for App {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+        // Where the popup ended an Alt-drag this frame — persisted as the fixed
+        // position so it stays put (handled after the event loop to avoid
+        // borrowing `self.quick` while a surface is borrowed).
+        let mut popup_dropped: Option<(i32, i32)> = None;
         for event in events {
             let Some(which) = self.which(&event.surface) else {
                 continue;
@@ -893,6 +897,10 @@ impl PointerHandler for App {
                 PointerEventKind::Release { button, .. } => {
                     if button == BTN_LEFT && surf.dragging {
                         surf.dragging = false; // end drag (position kept)
+                        // Remember where the POPUP was dropped → fixed position.
+                        if which == Which::Popup {
+                            popup_dropped = Some((surf.margin_left, surf.margin_top));
+                        }
                     } else if let Some(b) = map_button(button) {
                         surf.events.push(egui::Event::PointerButton {
                             pos,
@@ -913,6 +921,10 @@ impl PointerHandler for App {
                     }
                 }
             }
+        }
+        // Persist the dropped popup position (switches Settings to Fixed at x/y).
+        if let Some((x, y)) = popup_dropped {
+            self.quick.set_fixed_position(x, y);
         }
     }
 }

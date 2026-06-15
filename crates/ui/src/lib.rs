@@ -413,11 +413,7 @@ fn trade_status_label(id: &str) -> &str {
 }
 
 /// Popup position modes for the settings dropdown (config id, label).
-const POSITION_MODES: &[(&str, &str)] = &[
-    ("center", "Center"),
-    ("fixed", "Fixed"),
-    ("at-cursor", "At cursor (Phase 7)"),
-];
+const POSITION_MODES: &[(&str, &str)] = &[("center", "Center"), ("fixed", "Fixed")];
 
 fn position_label(id: &str) -> &str {
     POSITION_MODES
@@ -671,8 +667,8 @@ impl QuickModeApp {
         std::mem::take(&mut self.quit_requested)
     }
 
-    /// Configured popup position mode (`center` / `fixed` / `at-cursor`). The
-    /// overlay reads this each frame to place the popup surface.
+    /// Configured popup position mode (`center` / `fixed`). The overlay reads
+    /// this each frame to place the popup surface.
     pub fn position_mode(&self) -> &str {
         &self.config.position_mode
     }
@@ -680,6 +676,26 @@ impl QuickModeApp {
     /// Configured fixed-mode top-left position (output-logical pixels).
     pub fn fixed_pos(&self) -> (i32, i32) {
         (self.config.fixed_x, self.config.fixed_y)
+    }
+
+    /// Persist a dragged popup position: switch to **fixed** mode at `(x, y)`
+    /// and save (PRD §4.5 "last position is remembered"). The overlay calls this
+    /// when the user finishes Alt-dragging the popup, so wherever you drop it is
+    /// where it stays — and the Settings position mode flips to Fixed with these
+    /// coordinates. No-op if nothing changed (avoids needless writes).
+    pub fn set_fixed_position(&mut self, x: i32, y: i32) {
+        if self.config.position_mode == "fixed"
+            && self.config.fixed_x == x
+            && self.config.fixed_y == y
+        {
+            return;
+        }
+        self.config.position_mode = "fixed".to_string();
+        self.config.fixed_x = x;
+        self.config.fixed_y = y;
+        if let Err(e) = self.config.save() {
+            tracing::warn!(error = %e, "could not save dragged popup position");
+        }
     }
 
     /// Start a *fresh* price check from `item_text` (a new Ctrl+C, the manual
@@ -1499,10 +1515,8 @@ impl QuickModeApp {
                             .changed();
                         ui.label(RichText::new("px from top-left").weak().small());
                     });
-                }
-                if self.config.position_mode == "at-cursor" {
                     ui.label(
-                        RichText::new("    at-cursor placement is Phase 7 — centers for now.")
+                        RichText::new("    Tip: Alt+drag the popup to set this.")
                             .weak()
                             .small(),
                     );
@@ -1528,7 +1542,7 @@ impl QuickModeApp {
                 // slots: F5 (default /hideout) and F2 (default /exit).
                 ui.horizontal(|ui| {
                     let mut enabled = self.config.f5_command.is_some();
-                    if ui.checkbox(&mut enabled, "Macro · F5").changed() {
+                    if ui.checkbox(&mut enabled, "Hideout macro").changed() {
                         self.config.f5_command =
                             if enabled { Some("/hideout".into()) } else { None };
                         changed = true;
@@ -1539,7 +1553,7 @@ impl QuickModeApp {
                 });
                 ui.horizontal(|ui| {
                     let mut enabled = self.config.macro2_command.is_some();
-                    if ui.checkbox(&mut enabled, "Macro · F2").changed() {
+                    if ui.checkbox(&mut enabled, "Exit macro").changed() {
                         self.config.macro2_command =
                             if enabled { Some("/exit".into()) } else { None };
                         changed = true;
@@ -1572,9 +1586,9 @@ impl QuickModeApp {
                 restart |= hotkey_row(ui, "Quick", &mut self.config.hotkey_quick, &mut changed);
                 restart |=
                     hotkey_row(ui, "Detailed", &mut self.config.hotkey_detailed, &mut changed);
-                restart |= hotkey_row(ui, "Macro · F5", &mut self.config.hotkey_macro, &mut changed);
+                restart |= hotkey_row(ui, "Hideout macro", &mut self.config.hotkey_macro, &mut changed);
                 restart |=
-                    hotkey_row(ui, "Macro · F2", &mut self.config.hotkey_macro2, &mut changed);
+                    hotkey_row(ui, "Exit macro", &mut self.config.hotkey_macro2, &mut changed);
                 restart |= hotkey_row(ui, "Close", &mut self.config.hotkey_close, &mut changed);
             });
 
