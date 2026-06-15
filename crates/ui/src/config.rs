@@ -15,8 +15,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Trade league id (e.g. `Runes of Aldur`).
+    /// Trade league id (e.g. `Runes of Aldur`). Empty = "auto": the current
+    /// non-HC league is resolved from the live GGG list at startup. See
+    /// [`league_pinned`](Self::league_pinned).
     pub league: String,
+    /// `true` once the user explicitly picks a league in the selector. While
+    /// `false`, `league` is (re)derived from the live GGG list on every startup
+    /// so it follows league rollovers; once `true`, the saved `league` is
+    /// respected and never auto-changed.
+    pub league_pinned: bool,
     /// Realm (`pc` / `sony` / `xbox`); `None` = pc.
     pub realm: Option<String>,
     /// Start implicit-mod filters unticked in the detailed panel (they're rarely
@@ -64,7 +71,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            league: "Runes of Aldur".to_string(),
+            league: String::new(),
+            league_pinned: false,
             realm: None,
             implicits_off_by_default: true,
             filters_off_by_default: vec![

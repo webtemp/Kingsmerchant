@@ -1447,6 +1447,8 @@ impl QuickModeApp {
                                 }
                             });
                         if self.config.league != before {
+                            // An explicit pick pins the league (stops auto-resolve).
+                            self.config.league_pinned = true;
                             self.client.set_league(self.config.league.clone());
                             changed = true;
                             requery = true;
@@ -1652,6 +1654,8 @@ impl QuickModeApp {
             });
         if chosen != current {
             self.config.league = chosen.clone();
+            // An explicit pick pins the league (stops auto-resolve on restart).
+            self.config.league_pinned = true;
             // Persist the choice so it sticks across restarts (no env var).
             if let Err(e) = self.config.save() {
                 tracing::warn!(error = %e, "could not save config");
@@ -2711,23 +2715,44 @@ pub fn configure_style(ctx: &egui::Context) {
 /// runtime, fetch the live trade definitions + leagues, and construct the API
 /// client for the layer-shell overlay.
 ///
-/// The league comes from `config.json` (PRD §4.8), so no env var is needed.
-/// `POE_LEAGUE` / `POE_REALM`, if set, still override for that run (handy for
-/// testing) but are not persisted.
+/// Is this league id a Hardcore variant? GGG lists them as `Hardcore` and
+/// `HC <league>` (and, historically, `Hardcore <league>`).
+fn is_hardcore_league(id: &str) -> bool {
+    id == "Hardcore" || id.starts_with("HC ") || id.starts_with("Hardcore ")
+}
+
+/// The auto-default league: the first non-HC entry GGG returns. During a
+/// challenge league that's the softcore challenge league; between leagues the
+/// list is just `[Standard, Hardcore]`, so it resolves to `Standard`. Returns
+/// `None` only when the list is empty (the fetch failed).
+fn resolve_auto_league(leagues: &[League]) -> Option<String> {
+    leagues
+        .iter()
+        .find(|l| !is_hardcore_league(&l.id))
+        .map(|l| l.id.clone())
+}
+
+/// The league is auto-resolved from the live GGG list (the current non-HC
+/// league, or Standard between leagues) unless the user has pinned one via the
+/// selector. `POE_LEAGUE` / `POE_REALM`, if set, override for that run (handy
+/// for testing) but are not persisted.
 pub fn build_app(
     hotkey_rx: Receiver<Hotkey>,
     tray: Option<platform_linux::TrayHandle>,
 ) -> anyhow::Result<QuickModeApp> {
     let mut config = Config::load();
+    // A pinned league (an explicit selector pick) or a POE_LEAGUE override is
+    // taken as-is; otherwise the league is auto-resolved from GGG below.
+    let mut league_explicit = config.league_pinned;
     if let Ok(league) = std::env::var("POE_LEAGUE") {
         if !league.is_empty() {
             config.league = league;
+            league_explicit = true;
         }
     }
     if let Ok(realm) = std::env::var("POE_REALM") {
         config.realm = Some(realm);
     }
-    tracing::info!(path = %config::Config::path().display(), league = %config.league, "loaded config");
 
     let rt = tokio::runtime::Runtime::new()?;
     let transport = ReqwestTransport::new(USER_AGENT)?;
@@ -2735,14 +2760,47 @@ pub fn build_app(
     let (stats, items, currencies) = rt
         .block_on(fetch_definitions(&transport, BASE_URL))
         .map_err(|e| anyhow::anyhow!("loading definitions: {e}"))?;
-    // A leagues failure shouldn't block startup — the selector just falls back
-    // to a static label.
+    // A leagues failure is only fatal when we need the list to auto-resolve the
+    // league (handled below); a pinned league still starts, with the selector
+    // falling back to a static label.
     let leagues = rt
         .block_on(fetch_leagues(&transport, BASE_URL))
         .unwrap_or_else(|e| {
             tracing::warn!(error = %e, "could not fetch leagues; selector disabled");
             Vec::new()
         });
+
+    // League resolution (no hardcoded league): respect an explicit pick,
+    // otherwise take the latest non-HC league GGG returns — the current
+    // challenge league while one runs, or Standard between leagues (both come
+    // from the live list).
+    if !league_explicit {
+        match resolve_auto_league(&leagues) {
+            Some(def) => {
+                config.league = def;
+                // Persist the resolved league so disk matches memory: otherwise a
+                // config hot-reload (which reads the file) would see the stale
+                // on-disk value and wipe the resolved one mid-session. It's still
+                // re-derived on every unpinned startup, so rollovers are followed,
+                // and it doubles as the offline fallback next launch.
+                if let Err(e) = config.save() {
+                    tracing::warn!(error = %e, "could not persist resolved league");
+                }
+            }
+            None if config.league.is_empty() => anyhow::bail!(
+                "could not determine the current trade league: the trade site \
+                 returned no leagues and none is saved. Retry when online, or \
+                 set POE_LEAGUE."
+            ),
+            None => {} // keep the last saved league as a soft fallback
+        }
+    }
+    tracing::info!(
+        path = %config::Config::path().display(),
+        league = %config.league,
+        pinned = league_explicit,
+        "resolved league"
+    );
 
     let mut client_config = ClientConfig::new(&config.league);
     client_config.realm = config.realm.clone();
