@@ -835,6 +835,25 @@ impl QuickModeApp {
         }
     }
 
+    /// Re-seed the stat + equipment filter minimums for the *currently loaded*
+    /// item from the live "min roll %" (and noise/implicit defaults), then
+    /// re-price. Used when those settings change so they take effect on the
+    /// item already on screen — no restart, no re-copying. Discards manual filter
+    /// tweaks (re-seeding is the point), but leaves quality/ilvl/price as set.
+    fn reseed_filters(&mut self, ctx: &egui::Context) {
+        if self.mode != PriceMode::Item {
+            return;
+        }
+        let Some(item) = self.item.clone() else {
+            return;
+        };
+        let exceptional = self.is_exceptional_base(&item);
+        self.filters = self.build_filter_rows(&item);
+        self.equipment = build_equipment_rows(&item, self.config.filter_min_percent, exceptional);
+        self.filter_dirty = false;
+        self.rerun_query(ctx);
+    }
+
     /// Whether the item's base carries a tier prefix (Exceptional/Advanced/…)
     /// that the trade `type` omits — i.e. a high-tier base where the extra
     /// sockets / quality drive the price.
@@ -1440,6 +1459,7 @@ impl QuickModeApp {
         // What kind of follow-up an edit needs.
         let mut changed = false; // any field → persist to disk
         let mut requery = false; // league / status → re-price now
+        let mut reseed = false; // min-roll % / implicit default → re-seed + re-price
         let mut restart = false; // a startup-only field → show the restart note
 
         ui.horizontal(|ui| {
@@ -1606,19 +1626,33 @@ impl QuickModeApp {
 
                 ui.separator();
 
-                // Filter defaults (live — applied when the next item is priced).
+                // Filter defaults (live — re-seeds the loaded item immediately).
                 ui.horizontal(|ui| {
-                    ui.label("Filter min %");
-                    changed |= ui
-                        .add(egui::Slider::new(&mut self.config.filter_min_percent, 50..=100))
-                        .changed();
+                    ui.label("Min roll %").on_hover_text(
+                        "Each mod filter's minimum starts at this share of the item's \
+                         own roll. 100% = exact roll; lower = a looser search that also \
+                         finds slightly worse copies. Applies to the item on screen now.",
+                    );
+                    let before = self.config.filter_min_percent;
+                    ui.add(
+                        egui::Slider::new(&mut self.config.filter_min_percent, 50..=100)
+                            .suffix("%"),
+                    );
+                    if self.config.filter_min_percent != before {
+                        changed = true;
+                        reseed = true;
+                    }
                 });
-                changed |= ui
+                if ui
                     .checkbox(
                         &mut self.config.implicits_off_by_default,
                         "Implicit mods off by default",
                     )
-                    .changed();
+                    .changed()
+                {
+                    changed = true;
+                    reseed = true;
+                }
 
                 // Chat macros (live — pump reads the command on press). Two
                 // slots: F5 (default /hideout) and F2 (default /exit).
@@ -1698,7 +1732,11 @@ impl QuickModeApp {
                 self.settings_note = None;
             }
         }
-        if requery {
+        // Re-seed (min-roll % / implicit default) re-prices on its own; a plain
+        // `requery` (league / status) re-prices with the existing filters.
+        if reseed {
+            self.reseed_filters(&ctx);
+        } else if requery {
             self.rerun_query(&ctx);
         }
     }
