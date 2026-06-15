@@ -74,15 +74,21 @@ pub fn build_search_query(
     let category_opt = category_for(&item.item_class);
     let (name, type_) = query_name_and_type(item, items, category_opt);
 
-    let filters = Filters {
-        type_filters: category_opt.map(|c| TypeFilters {
+    let rarity = rarity_option(&item.rarity).map(OptionFilter::new);
+    let type_filters = if category_opt.is_some() || rarity.is_some() {
+        Some(TypeFilters {
             filters: TypeFilterFields {
-                category: Some(OptionFilter::new(c)),
-                rarity: None,
+                category: category_opt.map(OptionFilter::new),
+                rarity,
                 quality: None,
                 ilvl: None,
             },
-        }),
+        })
+    } else {
+        None
+    };
+    let filters = Filters {
+        type_filters,
         equipment_filters: None,
         misc_filters: None,
         trade_filters: None,
@@ -212,15 +218,20 @@ pub fn build_detailed_query(
             filters: TradeFilterFields { price: Some(price) },
         });
 
-    // type_filters holds the category AND the quality filter, so emit it if
-    // either is present.
+    // type_filters holds the category, the rarity, and the quality/ilvl filters,
+    // so emit it if any is present.
     let quality = f.quality.map(StatValue::min);
     let ilvl = f.item_level.map(StatValue::min);
-    let type_filters = if category_opt.is_some() || quality.is_some() || ilvl.is_some() {
+    let rarity = rarity_option(&item.rarity).map(OptionFilter::new);
+    let type_filters = if category_opt.is_some()
+        || rarity.is_some()
+        || quality.is_some()
+        || ilvl.is_some()
+    {
         Some(TypeFilters {
             filters: TypeFilterFields {
                 category: category_opt.map(OptionFilter::new),
-                rarity: None,
+                rarity,
                 quality,
                 ilvl,
             },
@@ -288,20 +299,33 @@ fn build_equipment_filters(selections: &[EquipmentSelection]) -> Option<Equipmen
     }
 }
 
-/// Name/type for the query. For rares/normals with a known category we drop the
-/// exact base type and search the whole *category* instead (e.g. "body armour",
-/// not "Corsair Coat") — we want comparable items across bases, not just the
-/// same base. Uniques/magic keep their type (the base is the point there).
+/// Name/type for the query. A *rare* with a known category drops the exact base
+/// type and searches the whole *category* instead (e.g. "body armour", not
+/// "Corsair Coat") — we want comparable rares across bases. Normal/magic/unique
+/// items keep their exact base: a white "Prismatic Ring" must stay that base
+/// (you're buying the base + implicit), not become "all rings".
 fn query_name_and_type(
     item: &Item,
     items: &ItemDefinitions,
     category: Option<&str>,
 ) -> (Option<String>, Option<String>) {
     let (name, type_) = name_and_type(item, items);
-    if category.is_some() && matches!(item.rarity, Rarity::Rare | Rarity::Normal) {
+    if category.is_some() && matches!(item.rarity, Rarity::Rare) {
         (name, None)
     } else {
         (name, type_)
+    }
+}
+
+/// The trade `type_filters.rarity` option matching an item's rarity, so a search
+/// returns the SAME rarity (a white-base search must not return magic items).
+/// Uniques are pinned by name; gems/currency aren't rarity-filtered.
+fn rarity_option(rarity: &Rarity) -> Option<&'static str> {
+    match rarity {
+        Rarity::Normal => Some("normal"),
+        Rarity::Magic => Some("magic"),
+        Rarity::Rare => Some("rare"),
+        _ => None,
     }
 }
 
@@ -330,7 +354,12 @@ fn name_and_type(item: &Item, items: &ItemDefinitions) -> (Option<String>, Optio
                 resolved_base().or_else(|| item.name.as_deref().and_then(|n| items.split_magic_base(n)));
             (None, base)
         }
-        Rarity::Rare | Rarity::Normal => (None, resolved_base()),
+        // Rare drops to the category in `query_name_and_type`, so its type is
+        // discarded anyway. Normal keeps its exact base — fall back to the raw
+        // base line if it isn't in our snapshot, so an uncommon white base still
+        // searches by its literal name rather than collapsing to "any base".
+        Rarity::Rare => (None, resolved_base()),
+        Rarity::Normal => (None, resolved_base().or_else(|| item.base_type.clone())),
         // Gems / currency: the single name line *is* the trade `type`.
         Rarity::Gem | Rarity::Currency | Rarity::Other(_) => (None, item.name.clone()),
     }

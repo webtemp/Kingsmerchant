@@ -51,6 +51,28 @@ Utility Belt
 --------
 Item Level: 84";
 
+const NORMAL_RING: &str = "Item Class: Rings
+Rarity: Normal
+Prismatic Ring
+--------
+Item Level: 80
+--------
+{ Implicit Modifier }
++8(7-10)% to all Elemental Resistances";
+
+#[test]
+fn normal_item_keeps_exact_base_and_normal_rarity() {
+    // A white base must search its EXACT base + rarity "normal" — not the whole
+    // category at any rarity (which returned magic items).
+    let item = parse_item(NORMAL_RING).unwrap();
+    let req = build_search_query(&item, &stats(), &items(), QueryOptions::default());
+    assert_eq!(req.query.type_.as_deref(), Some("Prismatic Ring"));
+    assert_eq!(req.query.name, None);
+    let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
+    assert_eq!(tf.category.as_ref().unwrap().option, "accessory.ring");
+    assert_eq!(tf.rarity.as_ref().unwrap().option, "normal");
+}
+
 #[test]
 fn category_mapping_covers_common_classes() {
     assert_eq!(category_for("Rings"), Some("accessory.ring"));

@@ -27,6 +27,9 @@ expression: req
         "filters": {
           "category": {
             "option": "accessory.ring"
+          },
+          "rarity": {
+            "option": "rare"
           }
         }
       },
