@@ -41,7 +41,11 @@ const AUTO_CLEAR_PREFIXES: &[char] = &['#', '%', '@', '$', '&', '/'];
 /// fast, barely-visible feel of Exiled-Exchange-2, whose separate `ydotool`
 /// invocations space keys only ~15-30ms apart. The old 40ms gaps left the chat
 /// box visibly sitting open mid-sequence, which is what looked clunky.
-const KEY_GAP: Duration = Duration::from_millis(20);
+const KEY_GAP: Duration = Duration::from_millis(18);
+/// Gap right after the chat-opening Enter — a touch larger, since the chat input
+/// must actually be open and focused before we Ctrl+A / Ctrl+V, or those keys
+/// leak into the game. One frame at 60fps is ~16ms; 35ms tolerates a couple.
+const CHAT_OPEN_GAP: Duration = Duration::from_millis(35);
 /// Brief settle so the xclip selection helper is serving before the FIRST
 /// keystroke. `write_clipboard_text` already blocks until xclip forks and owns
 /// the selection, so this is just a safety margin — and it's BEFORE chat opens,
@@ -67,7 +71,7 @@ pub fn send_chat_command(command: &str) -> Result<()> {
         // fast.
         thread::sleep(CLIPBOARD_SETTLE);
         tap(&mut device, Key::KEY_ENTER)?; // open chat
-        thread::sleep(KEY_GAP);
+        thread::sleep(CHAT_OPEN_GAP);
         if !auto_clear {
             ctrl_tap(&mut device, Key::KEY_A)?; // clear any leftover text
             thread::sleep(KEY_GAP);
