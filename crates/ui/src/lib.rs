@@ -87,6 +87,10 @@ enum ExchangePhase {
 /// Everything that needs to reach the UI thread funnels through this one
 /// channel, which [`pump`](QuickModeApp::pump) drains every frame.
 pub enum Hotkey {
+    /// A price-check combo was pressed and POE2 is focused — pop the popup
+    /// IMMEDIATELY into a "reading…" state, before the (up-to-1s) clipboard poll
+    /// runs, so the user gets instant feedback that something is happening.
+    CopyStarted,
     /// A new item landed on the clipboard (Ctrl+C / Ctrl+Alt+C — both open the
     /// pinned filter popup).
     Item { text: String },
@@ -512,6 +516,9 @@ pub struct QuickModeApp {
     /// When the loaded item was last actually queried (cache freshness). A
     /// re-view within [`CACHE_TTL`] shows the cached results without re-querying.
     last_query_at: Option<Instant>,
+    /// A Ctrl+C was just detected and we're polling the clipboard for the item —
+    /// drives the instant "reading…" spinner so the popup never sits silent.
+    awaiting_copy: bool,
     /// Tray handle for pushing the current state to the tooltip (PRD §4.9).
     /// `None` if the tray failed to start (no SNI host).
     tray: Option<platform_linux::TrayHandle>,
@@ -610,6 +617,7 @@ impl QuickModeApp {
             alt_held: false,
             last_query_hash: None,
             last_query_at: None,
+            awaiting_copy: false,
             tray,
             settings_requested: false,
             settings_close_requested: false,
@@ -901,8 +909,16 @@ impl QuickModeApp {
         // silently doing nothing.
         while let Ok(event) = self.hotkey_rx.try_recv() {
             match event {
+                Hotkey::CopyStarted => {
+                    // Instant feedback: show the popup with a "reading…" spinner
+                    // the moment Ctrl+C is detected (the item/results follow).
+                    self.hint = None;
+                    self.awaiting_copy = true;
+                    self.pop_requested = true;
+                }
                 Hotkey::Item { text } => {
                     self.hint = None;
+                    self.awaiting_copy = false;
                     // ALWAYS re-show the popup — even for the same item (the user
                     // closed it and looked again). This is the fix for "re-view
                     // does nothing": the API call is what we de-dup, not the pop.
@@ -930,6 +946,7 @@ impl QuickModeApp {
                     }
                 }
                 Hotkey::Missed => {
+                    self.awaiting_copy = false;
                     self.hint = Some(
                         "No item copied — nudge the mouse over the item, then press \
                          Ctrl+C again. (POE2 skips the copy when the cursor is still.)"
@@ -1088,6 +1105,17 @@ impl QuickModeApp {
                 }
             });
         });
+
+        // Instant feedback while the clipboard is being read after a Ctrl+C, so
+        // the popup never sits silent (kept non-destructive: any already-shown
+        // item/results stay visible underneath).
+        if self.awaiting_copy {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Reading item from POE2…").strong());
+            });
+        }
 
         if let Some(hint) = &self.hint {
             ui.add_space(4.0);
@@ -2234,6 +2262,11 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                             tracing::info!("Ctrl+C ignored — POE2 not focused");
                             return;
                         }
+                        // Pop the popup NOW (focus is confirmed), before the
+                        // clipboard poll, so the UI reacts instantly.
+                        let _ = tx.send(Hotkey::CopyStarted);
+                        ctx.request_repaint();
+
                         let prev = last.lock().expect("last_seen lock").clone();
                         let start = Instant::now();
                         let outcome = match wait_for_item(&prev) {
