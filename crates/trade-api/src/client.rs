@@ -68,6 +68,11 @@ pub struct TradeClient<T: HttpTransport> {
     /// runtime (PRD §4.8 selector) without rebuilding the whole client — the
     /// definitions are league-independent. Seeded from `config.league`.
     league: RwLock<String>,
+    /// Optional `POESESSID` session cookie. When set, every gated request
+    /// (search / fetch / exchange / teleport) carries `Cookie: POESESSID=…`, so
+    /// the fetch response includes the per-listing `hideout_token` needed to
+    /// teleport to Instant Buyout sellers. Runtime-settable from Settings.
+    poesessid: RwLock<Option<String>>,
     stats: StatDefinitions,
     items: ItemDefinitions,
     /// Bulk-exchange currency catalogue (`data/static`), for pricing stackables.
@@ -90,6 +95,7 @@ impl<T: HttpTransport> TradeClient<T> {
     ) -> Self {
         TradeClient {
             league: RwLock::new(config.league.clone()),
+            poesessid: RwLock::new(None),
             transport,
             config,
             stats,
@@ -116,6 +122,30 @@ impl<T: HttpTransport> TradeClient<T> {
     /// are league-independent, so no rebuild.
     pub fn set_league(&self, league: impl Into<String>) {
         *self.league.write().expect("league lock") = league.into();
+    }
+
+    /// Set (or clear, with `None`) the `POESESSID` session cookie. An empty or
+    /// whitespace-only string clears it. Cheap; takes effect on the next request.
+    pub fn set_poesessid(&self, sessid: Option<String>) {
+        let normalized = sessid
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        *self.poesessid.write().expect("poesessid lock") = normalized;
+    }
+
+    /// Whether a `POESESSID` is currently set (so the UI can enable/disable the
+    /// teleport button and explain why).
+    pub fn has_poesessid(&self) -> bool {
+        self.poesessid.read().expect("poesessid lock").is_some()
+    }
+
+    /// The `Cookie:` header value for authenticated requests, if a session is set.
+    fn cookie_header(&self) -> Option<String> {
+        self.poesessid
+            .read()
+            .expect("poesessid lock")
+            .as_ref()
+            .map(|s| format!("POESESSID={s}"))
     }
 
     pub fn stats(&self) -> &StatDefinitions {
@@ -239,6 +269,34 @@ impl<T: HttpTransport> TradeClient<T> {
         crate::exchange::parse_exchange(&resp.body, want_id, pay)
     }
 
+    /// Teleport into an Instant Buyout seller's hideout (to buy from Ange the
+    /// Merchant), the way the trade site's button does. `token` is a listing's
+    /// [`hideout_token`](crate::model::Listing::hideout_token) from an
+    /// authenticated fetch — it expires ≈5 min after the fetch, so call this
+    /// promptly. Requires a `POESESSID` (else the API answers 401 Unauthorized).
+    ///
+    /// **This has an in-game effect**: it pulls your character into the seller's
+    /// hideout. Fire it only on an explicit user action.
+    pub async fn teleport_to_hideout(&self, token: &str) -> Result<(), Error> {
+        let url = format!("{}/api/trade2/whisper", self.config.base_url);
+        let body = serde_json::json!({ "token": token }).to_string();
+        let resp = self
+            .send(HttpRequest {
+                method: Method::Post,
+                url,
+                // Match the trade site's XHR so GGG accepts the request.
+                headers: vec![
+                    ("X-Requested-With".to_string(), "XMLHttpRequest".to_string()),
+                    ("Origin".to_string(), self.config.base_url.clone()),
+                    ("Referer".to_string(), format!("{}/trade2", self.config.base_url)),
+                ],
+                body: Some(body),
+            })
+            .await?;
+        ok_or_api_error(resp)?;
+        Ok(())
+    }
+
     /// Search then fetch the cheapest `max_listings` for a built request.
     async fn run_query(
         &self,
@@ -273,7 +331,19 @@ impl<T: HttpTransport> TradeClient<T> {
     }
 
     /// Send one request through the rate-limit gate, retrying through a 429.
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, Error> {
+    async fn send(&self, mut request: HttpRequest) -> Result<HttpResponse, Error> {
+        // Attach the session cookie (if set) so the response carries the
+        // authenticated-only fields (e.g. `hideout_token`). Don't clobber a
+        // Cookie the caller already supplied.
+        if let Some(cookie) = self.cookie_header() {
+            if !request
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+            {
+                request.headers.push(("Cookie".to_string(), cookie));
+            }
+        }
         const MAX_ATTEMPTS: u32 = 3;
         for attempt in 0..MAX_ATTEMPTS {
             let delay = self.limiter.lock().await.delay_before_next(Instant::now());

@@ -272,6 +272,13 @@ pub struct Listing {
     pub price: Option<Price>,
     #[serde(default)]
     pub whisper: Option<String>,
+    /// Short-lived (≈5 min) JWT that teleports you into this seller's hideout to
+    /// buy an Instant Buyout (securable) item from Ange the Merchant. Only
+    /// returned to an **authenticated** fetch (POESESSID cookie); absent for
+    /// anonymous requests and for in-person (online) listings. POST it to
+    /// `/api/trade2/whisper` to trigger the travel.
+    #[serde(default)]
+    pub hideout_token: Option<String>,
 }
 
 impl Listing {

@@ -65,6 +65,8 @@ enum Msg {
     Estimate(Box<Result<Option<PriceEstimate>, String>>),
     /// Bulk-exchange result for a stackable (currency/rune/fragment/…).
     Exchange(Box<Result<ExchangeCheck, String>>),
+    /// Outcome of an Instant Buyout hideout teleport (`Ok` = GGG accepted it).
+    Teleport(Result<(), String>),
 }
 
 /// Which pricing path the loaded item uses (PRD §4.4): a normal per-item search,
@@ -768,6 +770,23 @@ impl QuickModeApp {
         });
     }
 
+    /// Teleport into an Instant Buyout seller's hideout via the trade API
+    /// (one-click, like the trade site's button). `token` is the listing's
+    /// short-lived `hideout_token`. Runs off the UI thread; on failure the error
+    /// surfaces in the status line. POE2 will pull the character into the hideout
+    /// the moment GGG accepts it — so this is only ever fired on a button click.
+    fn spawn_teleport(&mut self, token: String, ctx: &egui::Context) {
+        self.copy_status = Some("teleport".to_string());
+        let client = Arc::clone(&self.client);
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn(async move {
+            let result = client.teleport_to_hideout(&token).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::Teleport(result));
+            ctx.request_repaint();
+        });
+    }
+
     /// The bulk-exchange currency id for an item, if it's a stackable that
     /// prices via the exchange rather than the per-item search. Tries the item
     /// name then the base-type line against the `data/static` catalogue.
@@ -1055,6 +1074,12 @@ impl QuickModeApp {
                         Err(e) => ExchangePhase::Failed(e),
                     };
                 }
+                Msg::Teleport(result) => {
+                    if let Err(e) = result {
+                        tracing::warn!(error = %e, "hideout teleport failed");
+                        self.copy_status = Some(format!("teleport failed: {e}"));
+                    }
+                }
             }
         }
 
@@ -1096,6 +1121,9 @@ impl QuickModeApp {
             || new.realm != self.config.realm;
         if league_changed {
             self.client.set_league(new.league.clone());
+        }
+        if new.poesessid != self.config.poesessid {
+            self.client.set_poesessid(new.poesessid.clone());
         }
         self.config = new;
         if restart_needed {
@@ -1221,6 +1249,7 @@ impl QuickModeApp {
 
         let mut copied: Option<String> = None;
         let mut open_trade: Option<String> = None;
+        let mut teleport: Option<String> = None;
         match self.mode {
             // Stackables (currency/runes/…) price via the bulk exchange.
             PriceMode::Exchange => self.exchange_content(ui, &ctx, &mut copied, &mut open_trade),
@@ -1259,7 +1288,7 @@ impl QuickModeApp {
                         ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
                     }
                     Phase::Done(pc) => {
-                        show_results(ui, pc, &mut copied);
+                        show_results(ui, pc, &mut copied, &mut teleport);
                         ui.add_space(6.0);
                         if ui
                             .button(format!("{} Open on trade site", ph::GLOBE))
@@ -1285,6 +1314,9 @@ impl QuickModeApp {
                 Ok(()) => self.close_requested = true,
                 Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
             }
+        }
+        if let Some(token) = teleport {
+            self.spawn_teleport(token, &ctx);
         }
 
         if let Some(status) = &self.copy_status {
@@ -1379,7 +1411,8 @@ impl QuickModeApp {
                 );
                 ui.add_space(6.0);
                 let rows = exchange_rows(ex.cheapest(SHOWN), pay);
-                results_table(ui, &rows, copied);
+                // Exchange offers never carry a hideout teleport token.
+                results_table(ui, &rows, copied, &mut None);
                 ui.add_space(6.0);
                 if ui
                     .button(format!("{} Open exchange page", ph::GLOBE))
@@ -1496,6 +1529,40 @@ impl QuickModeApp {
                         requery = true;
                     }
                 });
+
+                // POESESSID session cookie (live — unlocks the Instant Buyout
+                // "Teleport to hideout" button, which needs an authenticated
+                // fetch to get each listing's teleport token).
+                ui.horizontal(|ui| {
+                    ui.label("POESESSID");
+                    let mut sid = self.config.poesessid.clone().unwrap_or_default();
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut sid)
+                            .password(true)
+                            .hint_text("trade-site session cookie")
+                            .desired_width(220.0),
+                    );
+                    if resp.changed() {
+                        let trimmed = sid.trim().to_string();
+                        self.config.poesessid =
+                            (!trimmed.is_empty()).then_some(trimmed);
+                        // Push live so the next search authenticates immediately.
+                        self.client.set_poesessid(self.config.poesessid.clone());
+                        changed = true;
+                    }
+                    if self.config.poesessid.is_some() {
+                        ui.colored_label(ONLINE_DOT, ph::CHECK_CIRCLE);
+                    }
+                });
+                ui.label(
+                    RichText::new(
+                        "Optional — only the Instant Buyout Teleport button needs it. \
+                         Browser DevTools → Application → Cookies → pathofexile.com → \
+                         POESESSID. Sent only to pathofexile.com; treat it like a password.",
+                    )
+                    .weak()
+                    .small(),
+                );
 
                 ui.separator();
 
@@ -2012,6 +2079,9 @@ struct RowData {
     seller_hover: Option<String>,
     whisper: Option<String>,
     character: Option<String>,
+    /// Instant Buyout teleport token (authenticated fetch only). When present the
+    /// Hideout button becomes a one-click teleport into the seller's hideout.
+    hideout_token: Option<String>,
     /// The actual item for this listing (icon + mods), for the (i) preview.
     /// `None` for currency-exchange offers.
     item: Option<ItemPreview>,
@@ -2027,7 +2097,12 @@ struct ItemPreview {
     frame_type: u64,
 }
 
-fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>) {
+fn show_results(
+    ui: &mut egui::Ui,
+    pc: &PriceCheck,
+    copied: &mut Option<String>,
+    teleport: &mut Option<String>,
+) {
     match pc.median_price() {
         Some(p) => {
             ui.label(
@@ -2066,18 +2141,24 @@ fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>)
                 seller_hover: l.indexed.as_ref().map(|i| format!("listed {i}")),
                 whisper: l.whisper.clone(),
                 character: l.account.last_character_name.clone(),
+                hideout_token: l.hideout_token.clone(),
                 item: Some(item_preview(&e.item)),
             }
         })
         .collect();
-    results_table(ui, &rows, copied);
+    results_table(ui, &rows, copied, teleport);
 }
 
 /// The shared results table (item listings and exchange offers): striped,
 /// full-width, aligned columns — price (auto) · seller (fills, truncates) ·
 /// actions (auto). `vscroll(false)` so it sizes to content in the auto-height
 /// popup instead of scrolling.
-fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String>) {
+fn results_table(
+    ui: &mut egui::Ui,
+    rows: &[RowData],
+    copied: &mut Option<String>,
+    teleport: &mut Option<String>,
+) {
     use egui_extras::{Column, TableBuilder};
     if rows.is_empty() {
         return;
@@ -2111,7 +2192,15 @@ fn results_table(ui: &mut egui::Ui, rows: &[RowData], copied: &mut Option<String
                         }
                     });
                     row.col(|ui| {
-                        action_buttons(ui, r.whisper.as_deref(), r.character.as_deref(), &r.seller, copied);
+                        action_buttons(
+                            ui,
+                            r.whisper.as_deref(),
+                            r.character.as_deref(),
+                            r.hideout_token.as_deref(),
+                            &r.seller,
+                            copied,
+                            teleport,
+                        );
                     });
                     if let Some(item) = &r.item {
                         // contains_pointer() is true whenever the cursor is over
@@ -2278,8 +2367,10 @@ fn action_buttons(
     ui: &mut egui::Ui,
     whisper: Option<&str>,
     character: Option<&str>,
+    hideout_token: Option<&str>,
     seller: &str,
     copied: &mut Option<String>,
+    teleport: &mut Option<String>,
 ) {
     if let Some(w) = whisper {
         if ui
@@ -2295,7 +2386,21 @@ fn action_buttons(
             .on_hover_text("Whisper (unavailable)");
     }
     chat_button(ui, ph::USER_PLUS, "Invite", character.map(|c| format!("/invite {c}")), copied);
-    chat_button(ui, ph::HOUSE, "Hideout", character.map(|c| format!("/hideout {c}")), copied);
+    // Hideout: an Instant Buyout listing carries a teleport token → one-click
+    // travel into the seller's hideout (buy from Ange). Otherwise it's an
+    // in-person listing and we fall back to the `/hideout <char>` chat command.
+    if let Some(token) = hideout_token {
+        if ui
+            .button(ph::HOUSE)
+            .on_hover_text("Teleport to seller's hideout (Instant Buyout)")
+            .clicked()
+        {
+            *teleport = Some(token.to_string());
+            *copied = Some(format!("teleport to {seller}"));
+        }
+    } else {
+        chat_button(ui, ph::HOUSE, "Hideout", character.map(|c| format!("/hideout {c}")), copied);
+    }
     chat_button(ui, ph::HANDSHAKE, "Trade", character.map(|c| format!("/tradewith {c}")), copied);
 }
 
@@ -2336,6 +2441,7 @@ fn exchange_rows(offers: &[ExchangeOffer], pay: &str) -> Vec<RowData> {
             seller_hover: o.stock.map(|s| format!("stock: {}", fmt_amount(s))),
             whisper: o.whisper.clone(),
             character: o.character.clone(),
+            hideout_token: None,
             item: None,
         })
         .collect()
@@ -2811,6 +2917,8 @@ pub fn build_app(
         items,
         currencies,
     ));
+    // Authenticate (for Instant Buyout teleport tokens) if a session is saved.
+    client.set_poesessid(config.poesessid.clone());
 
     Ok(QuickModeApp::new(
         rt, client, config, leagues, hotkey_rx, tray,

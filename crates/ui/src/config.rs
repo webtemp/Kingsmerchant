@@ -66,6 +66,16 @@ pub struct Config {
     /// Fixed-mode top-left position, in output-logical pixels from the top-left.
     pub fixed_x: i32,
     pub fixed_y: i32,
+    /// Your `POESESSID` trade-site session cookie (32-hex). `null` = not set.
+    ///
+    /// Optional. Only needed for the **Teleport** button on Instant Buyout
+    /// listings: those are GGG's async market (buy from Ange in the seller's
+    /// hideout) and the trade API only returns the per-listing teleport token to
+    /// an *authenticated* request. With this set, searches/fetches carry the
+    /// cookie and the Hideout button teleports you straight in — exactly what the
+    /// trade site's button does. Sent ONLY to pathofexile.com; grants trade-API
+    /// access to your account, so treat it like a password.
+    pub poesessid: Option<String>,
 }
 
 impl Default for Config {
@@ -92,6 +102,7 @@ impl Default for Config {
             position_mode: "center".to_string(),
             fixed_x: 100,
             fixed_y: 100,
+            poesessid: None,
         }
     }
 }
