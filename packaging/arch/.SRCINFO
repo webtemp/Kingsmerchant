@@ -1,0 +1,21 @@
+pkgbase = poe2ddd
+	pkgdesc = Native POE2 price-check overlay for KDE Plasma 6 Wayland
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/OWNER/poe2ddd
+	arch = x86_64
+	license = MIT OR GPL-3.0-or-later
+	makedepends = cargo
+	depends = gcc-libs
+	depends = libxkbcommon
+	depends = wayland
+	depends = libglvnd
+	depends = xclip
+	depends = xdotool
+	depends = xdg-utils
+	depends = hicolor-icon-theme
+	install = poe2ddd.install
+	source = poe2ddd-0.1.0.tar.gz::https://github.com/OWNER/poe2ddd/archive/refs/tags/v0.1.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = poe2ddd

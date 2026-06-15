@@ -1,0 +1,78 @@
+# Maintainer: Deyan Danailov <webtemp@gmail.com>
+
+# >>> Set this to your GitHub username before publishing. The repo is assumed
+# >>> to be github.com/<_gh>/poe2ddd and the release tag to be v$pkgver.
+_gh=OWNER
+
+pkgname=poe2ddd
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Native POE2 price-check overlay for KDE Plasma 6 Wayland"
+arch=('x86_64')
+url="https://github.com/${_gh}/poe2ddd"
+license=('MIT OR GPL-3.0-or-later')
+
+# Runtime libs — verified against the built binary (ldd + dlopen strings):
+#   libxkbcommon.so.0       -> libxkbcommon   (linked)
+#   libwayland-client.so.0  -> wayland        (dlopen'd by the overlay)
+#   libEGL.so.1             -> libglvnd       (dlopen'd for the GL surface)
+#   libgcc_s.so.1           -> gcc-libs
+# The overlay is Wayland (wlr-layer-shell), but POE2 runs under Proton as an
+# XWayland client, so we reach its clipboard/window via X11 tooling:
+#   xclip     -> read/write the X11 CLIPBOARD selection POE2 uses
+#   xdotool   -> locate the POE2 window for popup placement
+#   xdg-open  -> the "open on trade site" link (xdg-utils)
+depends=(
+    'gcc-libs'
+    'libxkbcommon'
+    'wayland'
+    'libglvnd'
+    'xclip'
+    'xdotool'
+    'xdg-utils'
+    'hicolor-icon-theme'
+)
+makedepends=('cargo')
+install="${pkgname}.install"
+
+# GitHub generates the tag tarball on demand; it extracts to ${pkgname}-${pkgver}/.
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+# Replace with the real digest after tagging:  updpkgsums
+sha256sums=('SKIP')
+
+prepare() {
+    cd "${pkgname}-${pkgver}"
+    export RUSTUP_TOOLCHAIN=stable
+    # Vendor all crates now so build() can run fully offline (--frozen).
+    cargo fetch --locked --target "${CARCH}-unknown-linux-gnu"
+}
+
+build() {
+    cd "${pkgname}-${pkgver}"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    # default-members is the `poe2ddd` app crate; -p keeps it explicit and skips
+    # the workspace's other binaries (e.g. the standalone poe2-overlay).
+    cargo build --frozen --release --package poe2ddd
+}
+
+# No check(): the workspace's tests touch evdev/uinput and DISPLAY, which aren't
+# available in a clean build chroot. Run `cargo test` outside packaging instead.
+
+package() {
+    cd "${pkgname}-${pkgver}"
+
+    install -Dm755 "target/release/poe2ddd" "${pkgdir}/usr/bin/poe2ddd"
+    install -Dm644 "assets/poe2ddd.desktop" \
+        "${pkgdir}/usr/share/applications/poe2ddd.desktop"
+    install -Dm644 "assets/poe2ddd.svg" \
+        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/poe2ddd.svg"
+
+    # MIT is not a "common" license on Arch, so its text must ship. Both halves
+    # of the disjunction are installed. (See the LICENSE note in PUBLISHING.md —
+    # these files must exist in the repo root before tagging.)
+    install -Dm644 "LICENSE-MIT" \
+        "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-MIT"
+    install -Dm644 "LICENSE-GPL3" \
+        "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-GPL3"
+}

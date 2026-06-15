@@ -1,0 +1,27 @@
+_input_group_notice() {
+    cat <<'EOF'
+
+==> poe2ddd needs your user in the `input` group for the global Ctrl+C hotkey
+    (evdev read) and chat injection (uinput write). Without it the hotkey
+    SILENTLY does nothing — no error, no popup. One-time setup:
+
+        sudo usermod -aG input "$USER"
+
+    Then log out and back in for it to take effect.
+
+==> Requires a KDE Plasma 6 *Wayland* session (the overlay uses wlr-layer-shell;
+    GNOME/Mutter has no layer-shell and will not show the popup).
+
+EOF
+}
+
+post_install() {
+    _input_group_notice
+}
+
+post_upgrade() {
+    # Only re-print if they're still not in the group.
+    if ! id -nG "${SUDO_USER:-$USER}" 2>/dev/null | grep -qw input; then
+        _input_group_notice
+    fi
+}

@@ -25,6 +25,20 @@ from `~/.config/poe2ddd/config.json` (seeded on first run, switchable from the
 selector); `POE_LEAGUE` / `POE_REALM` override it for one run. Set
 `RUST_LOG=debug` for detail.
 
+## Input access (required)
+
+> [!IMPORTANT]
+> Both the global **Ctrl+C** hotkey (evdev read) and chat injection for the
+> Whisper/Invite buttons (uinput write) need your user to be in the `input`
+> group:
+>
+> ```sh
+> sudo usermod -aG input "$USER"   # then log out and back in
+> ```
+>
+> Without this the hotkey **silently does nothing** — no error, no popup. This
+> is the #1 "it doesn't work" cause.
+
 ## Platform notes
 
 - **Hotkeys** read `/dev/input/by-id/*-event-kbd` directly via evdev — there is
