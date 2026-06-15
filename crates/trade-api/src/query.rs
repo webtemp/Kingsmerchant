@@ -11,8 +11,9 @@ use parser::{Item, Rarity};
 
 use crate::definitions::{ItemDefinitions, StatDefinitions};
 use crate::model::{
-    EquipmentFilters, Filters, OptionFilter, PriceRange, Query, SearchRequest, Sort, StatFilter,
-    StatGroup, StatValue, Status, TradeFilterFields, TradeFilters, TypeFilterFields, TypeFilters,
+    EquipmentFilters, Filters, MiscFilters, OptionFilter, PriceRange, Query, SearchRequest, Sort,
+    StatFilter, StatGroup, StatValue, Status, TradeFilterFields, TradeFilters, TypeFilterFields,
+    TypeFilters,
 };
 
 /// Which listings a search should return, by seller/trade availability.
@@ -83,6 +84,7 @@ pub fn build_search_query(
             },
         }),
         equipment_filters: None,
+        misc_filters: None,
         trade_filters: None,
     };
 
@@ -169,6 +171,13 @@ pub struct EquipmentSelection {
     pub max: Option<f64>,
 }
 
+/// A boolean misc filter (corrupted, mirrored, …); `on` → require `true`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MiscSelection {
+    pub key: String,
+    pub on: bool,
+}
+
 /// Everything the user can tune in detailed mode (PRD §4.7): listing status,
 /// per-stat affix filters, equipment-property filters, and a price range.
 #[derive(Debug, Clone, Default)]
@@ -176,6 +185,8 @@ pub struct DetailedFilters {
     pub status: ListingStatus,
     pub stats: Vec<StatSelection>,
     pub equipment: Vec<EquipmentSelection>,
+    /// Boolean attribute filters (corrupted, identified, …).
+    pub misc: Vec<MiscSelection>,
     /// Minimum item quality (goes in `type_filters.quality`); `None` = no filter.
     pub quality: Option<f64>,
     /// Minimum item level (goes in `type_filters.ilvl`); `None` = no filter.
@@ -220,6 +231,7 @@ pub fn build_detailed_query(
     let filters = Filters {
         type_filters,
         equipment_filters: build_equipment_filters(&f.equipment),
+        misc_filters: build_misc_filters(&f.misc),
         trade_filters,
     };
 
@@ -239,6 +251,22 @@ pub fn build_detailed_query(
             filters,
         },
         sort: Some(Sort::price_asc()),
+    }
+}
+
+/// Collect the checked boolean attributes into the `misc_filters` group (each
+/// `{ "option": "true" }`); unchecked ones are omitted (not filtered).
+fn build_misc_filters(selections: &[MiscSelection]) -> Option<MiscFilters> {
+    let mut filters = BTreeMap::new();
+    for s in selections {
+        if s.on {
+            filters.insert(s.key.clone(), OptionFilter::new("true"));
+        }
+    }
+    if filters.is_empty() {
+        None
+    } else {
+        Some(MiscFilters { filters })
     }
 }
 

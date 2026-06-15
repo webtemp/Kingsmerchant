@@ -114,6 +114,8 @@ pub struct Filters {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub equipment_filters: Option<EquipmentFilters>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub misc_filters: Option<MiscFilters>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trade_filters: Option<TradeFilters>,
 }
 
@@ -121,8 +123,16 @@ impl Filters {
     pub fn is_empty(&self) -> bool {
         self.type_filters.is_none()
             && self.equipment_filters.is_none()
+            && self.misc_filters.is_none()
             && self.trade_filters.is_none()
     }
+}
+
+/// The `misc_filters` group: boolean item attributes (corrupted, mirrored,
+/// identified, …), keyed by trade filter id, each `{ "option": "true"/"false" }`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MiscFilters {
+    pub filters: BTreeMap<String, OptionFilter>,
 }
 
 /// The `equipment_filters` group: an item's defence/offence properties (armour

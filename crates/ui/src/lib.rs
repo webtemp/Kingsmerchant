@@ -21,8 +21,8 @@ use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
     build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, DetailedFilters,
-    EquipmentSelection, League, ListingStatus, PriceCheck, PriceEstimate, PriceFilter,
-    ReqwestTransport, ResultEntry, StatSelection, TradeClient,
+    EquipmentSelection, League, ListingStatus, MiscSelection, PriceCheck, PriceEstimate,
+    PriceFilter, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -256,6 +256,26 @@ impl MinFilter {
     }
 }
 
+/// Boolean item attributes for the Miscellaneous section (trade filter id,
+/// label), sorted alphabetically by label. All off by default.
+const MISC_OPTIONS: &[(&str, &str)] = &[
+    ("corrupted", "Corrupted"),
+    ("crafted", "Crafted"),
+    ("desecrated", "Desecrated"),
+    ("fractured_item", "Fractured"),
+    ("identified", "Identified"),
+    ("mirrored", "Mirrored"),
+    ("sanctified", "Sanctified"),
+    ("twice_corrupted", "Twice Corrupted"),
+];
+
+/// A boolean Miscellaneous toggle (e.g. Corrupted). Checked → require `true`.
+struct MiscToggle {
+    key: &'static str,
+    label: &'static str,
+    on: bool,
+}
+
 /// Currencies offered in the price-range dropdown (id, label). Empty id = any.
 const PRICE_CURRENCIES: &[(&str, &str)] = &[
     ("", "any"),
@@ -370,6 +390,9 @@ pub struct QuickModeApp {
     /// Item-level filter (default-on for any item with an item level — a major
     /// price driver).
     ilvl_filter: MinFilter,
+    /// Boolean Miscellaneous attribute toggles (corrupted, mirrored, …), all
+    /// off by default; persist across items.
+    misc: Vec<MiscToggle>,
     /// A filter edit is pending a debounced live re-query.
     filter_dirty: bool,
     /// When the last filter edit happened (debounce timer base).
@@ -453,6 +476,10 @@ impl QuickModeApp {
             price_filter: PriceFilterState::default(),
             quality_filter: MinFilter::default(),
             ilvl_filter: MinFilter::default(),
+            misc: MISC_OPTIONS
+                .iter()
+                .map(|(key, label)| MiscToggle { key, label, on: false })
+                .collect(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),
             estimate: None,
@@ -576,6 +603,14 @@ impl QuickModeApp {
             status: parse_status(&self.config.trade_status),
             stats: self.filters.iter().map(StatFilterRow::selection).collect(),
             equipment: self.equipment.iter().map(EquipmentRow::selection).collect(),
+            misc: self
+                .misc
+                .iter()
+                .map(|m| MiscSelection {
+                    key: m.key.to_string(),
+                    on: m.on,
+                })
+                .collect(),
             quality: self.quality_filter.value(),
             item_level: self.ilvl_filter.value(),
             price: self.price_filter.to_filter(),
@@ -1021,6 +1056,18 @@ impl QuickModeApp {
                             }
                         });
                 }
+
+                // Miscellaneous: boolean attribute filters, collapsed by default.
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new(RichText::new("Miscellaneous").strong())
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            for m in &mut self.misc {
+                                changed |= ui.checkbox(&mut m.on, m.label).changed();
+                            }
+                        });
+                    });
 
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {

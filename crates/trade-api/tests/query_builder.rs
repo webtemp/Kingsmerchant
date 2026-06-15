@@ -6,7 +6,8 @@
 use parser::parse_item;
 use trade_api::{
     build_detailed_query, build_search_query, category_for, DetailedFilters, EquipmentSelection,
-    ItemDefinitions, ListingStatus, PriceFilter, QueryOptions, StatDefinitions, StatSelection,
+    ItemDefinitions, ListingStatus, MiscSelection, PriceFilter, QueryOptions, StatDefinitions,
+    StatSelection,
 };
 
 fn stats() -> StatDefinitions {
@@ -313,6 +314,27 @@ fn detailed_query_carries_sockets_and_quality() {
     let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
     assert_eq!(tf.quality.as_ref().unwrap().min.as_ref().unwrap().as_i64(), Some(23));
     assert_eq!(tf.ilvl.as_ref().unwrap().min.as_ref().unwrap().as_i64(), Some(82));
+}
+
+#[test]
+fn detailed_query_carries_checked_misc_filters() {
+    let item = parse_item(RARE_RING).unwrap();
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            misc: vec![
+                MiscSelection { key: "corrupted".to_string(), on: true },
+                MiscSelection { key: "mirrored".to_string(), on: false },
+            ],
+            ..Default::default()
+        },
+    );
+    let misc = &req.query.filters.misc_filters.as_ref().unwrap().filters;
+    // Only the checked one is emitted, as option "true".
+    assert_eq!(misc.len(), 1);
+    assert_eq!(misc["corrupted"].option, "true");
+    assert!(!misc.contains_key("mirrored"));
 }
 
 #[test]
