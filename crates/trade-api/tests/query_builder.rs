@@ -303,14 +303,16 @@ fn detailed_query_carries_sockets_and_quality() {
                 max: None,
             }],
             quality: Some(23.0),
+            item_level: Some(82.0),
             ..Default::default()
         },
     );
-    // Sockets ride in equipment_filters; quality rides in type_filters.
+    // Sockets ride in equipment_filters; quality + ilvl ride in type_filters.
     let eq = &req.query.filters.equipment_filters.as_ref().unwrap().filters;
     assert_eq!(eq["rune_sockets"].min.as_ref().unwrap().as_i64(), Some(3));
     let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
     assert_eq!(tf.quality.as_ref().unwrap().min.as_ref().unwrap().as_i64(), Some(23));
+    assert_eq!(tf.ilvl.as_ref().unwrap().min.as_ref().unwrap().as_i64(), Some(82));
 }
 
 #[test]

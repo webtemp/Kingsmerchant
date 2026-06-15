@@ -231,22 +231,19 @@ impl PriceFilterState {
     }
 }
 
-/// The item-quality filter (PRD §4.7), routed to `type_filters.quality`.
+/// A single-value "≥ min" filter with an enable toggle (item quality, item
+/// level — both routed to `type_filters`).
 #[derive(Default)]
-struct QualityFilterState {
+struct MinFilter {
     enabled: bool,
     min: String,
 }
 
-impl QualityFilterState {
-    /// Built from an item: enabled (with the item's quality as min) when quality
-    /// is above the normal 20% currency cap — i.e. a bonus-quality / Exceptional
-    /// base where quality is part of the value.
-    fn from_item(item: &Item) -> Self {
-        let q = item.quality.unwrap_or(0);
-        QualityFilterState {
-            enabled: q > 20,
-            min: if q > 0 { q.to_string() } else { String::new() },
+impl MinFilter {
+    fn new(enabled: bool, min: Option<u32>) -> Self {
+        MinFilter {
+            enabled,
+            min: min.filter(|v| *v > 0).map(|v| v.to_string()).unwrap_or_default(),
         }
     }
 
@@ -266,6 +263,24 @@ const PRICE_CURRENCIES: &[(&str, &str)] = &[
     ("divine", "divine"),
     ("chaos", "chaos"),
 ];
+
+/// A checkbox + label + min field for a single-value filter. Returns whether it
+/// changed.
+fn min_filter_row(ui: &mut egui::Ui, label: &str, filter: &mut MinFilter) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed |= ui.checkbox(&mut filter.enabled, "").changed();
+        ui.label(label);
+        changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut filter.min)
+                    .hint_text("min")
+                    .desired_width(44.0),
+            )
+            .changed();
+    });
+    changed
+}
 
 /// A small green "implicit" pill, drawn before an implicit filter's label.
 fn implicit_pill(ui: &mut egui::Ui) {
@@ -322,7 +337,10 @@ pub struct QuickModeApp {
     /// Price-range filter.
     price_filter: PriceFilterState,
     /// Item-quality filter (default-on for bonus-quality bases).
-    quality_filter: QualityFilterState,
+    quality_filter: MinFilter,
+    /// Item-level filter (default-on for any item with an item level — a major
+    /// price driver).
+    ilvl_filter: MinFilter,
     /// A filter edit is pending a debounced live re-query.
     filter_dirty: bool,
     /// When the last filter edit happened (debounce timer base).
@@ -404,7 +422,8 @@ impl QuickModeApp {
             filters: Vec::new(),
             equipment: Vec::new(),
             price_filter: PriceFilterState::default(),
-            quality_filter: QualityFilterState::default(),
+            quality_filter: MinFilter::default(),
+            ilvl_filter: MinFilter::default(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),
             estimate: None,
@@ -471,7 +490,11 @@ impl QuickModeApp {
         let exceptional = self.is_exceptional_base(&item);
         self.filters = self.build_filter_rows(&item);
         self.equipment = build_equipment_rows(&item, self.config.filter_min_percent, exceptional);
-        self.quality_filter = QualityFilterState::from_item(&item);
+        // Quality: on when above the normal 20% cap (bonus quality).
+        let quality = item.quality.unwrap_or(0);
+        self.quality_filter = MinFilter::new(quality > 20, (quality > 0).then_some(quality as u32));
+        // Item level: on for any item that has one (a major price driver).
+        self.ilvl_filter = MinFilter::new(item.item_level.is_some(), item.item_level);
         self.price_filter = PriceFilterState::default();
         self.filter_dirty = false; // no stale debounce from the previous item
         // poeprices ML estimate is rares-only and doesn't depend on the
@@ -525,6 +548,7 @@ impl QuickModeApp {
             stats: self.filters.iter().map(StatFilterRow::selection).collect(),
             equipment: self.equipment.iter().map(EquipmentRow::selection).collect(),
             quality: self.quality_filter.value(),
+            item_level: self.ilvl_filter.value(),
             price: self.price_filter.to_filter(),
         }
     }
@@ -919,19 +943,10 @@ impl QuickModeApp {
                     changed |= self.price_filter.currency != before;
                 });
 
-                // Item quality (type_filters.quality) — default-on for bonus
-                // quality, off otherwise.
-                ui.horizontal(|ui| {
-                    changed |= ui.checkbox(&mut self.quality_filter.enabled, "").changed();
-                    ui.label("Quality ≥");
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.quality_filter.min)
-                                .hint_text("%")
-                                .desired_width(40.0),
-                        )
-                        .changed();
-                });
+                // Item level (type_filters.ilvl) — default-on; a major price
+                // driver. And item quality (type_filters.quality).
+                changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
+                changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
 
                 // Defences / equipment properties (armour / evasion / ES / …),
                 // built from the item's stats block, not its affix mods.

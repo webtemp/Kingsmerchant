@@ -79,6 +79,7 @@ pub fn build_search_query(
                 category: Some(OptionFilter::new(c)),
                 rarity: None,
                 quality: None,
+                ilvl: None,
             },
         }),
         equipment_filters: None,
@@ -177,6 +178,8 @@ pub struct DetailedFilters {
     pub equipment: Vec<EquipmentSelection>,
     /// Minimum item quality (goes in `type_filters.quality`); `None` = no filter.
     pub quality: Option<f64>,
+    /// Minimum item level (goes in `type_filters.ilvl`); `None` = no filter.
+    pub item_level: Option<f64>,
     pub price: PriceFilter,
 }
 
@@ -201,12 +204,14 @@ pub fn build_detailed_query(
     // type_filters holds the category AND the quality filter, so emit it if
     // either is present.
     let quality = f.quality.map(StatValue::min);
-    let type_filters = if category_opt.is_some() || quality.is_some() {
+    let ilvl = f.item_level.map(StatValue::min);
+    let type_filters = if category_opt.is_some() || quality.is_some() || ilvl.is_some() {
         Some(TypeFilters {
             filters: TypeFilterFields {
                 category: category_opt.map(OptionFilter::new),
                 rarity: None,
                 quality,
+                ilvl,
             },
         })
     } else {

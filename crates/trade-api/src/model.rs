@@ -189,6 +189,10 @@ pub struct TypeFilterFields {
     /// it, not `equipment_filters`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<StatValue>,
+    /// Item level (`{min,max}`) — a major price driver (an ilvl-82 base can be
+    /// worth far more than ilvl-81). Also in `type_filters`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ilvl: Option<StatValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
