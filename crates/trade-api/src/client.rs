@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 
 use crate::definitions::{ItemDefinitions, StatDefinitions};
 use crate::error::Error;
+use crate::exchange::{CurrencyDefinitions, ExchangeCheck};
 use crate::http::{HttpRequest, HttpResponse, HttpTransport, Method};
 use crate::model::{FetchResponse, Price, ResultEntry, SearchRequest, SearchResponse};
 use crate::price;
@@ -69,6 +70,8 @@ pub struct TradeClient<T: HttpTransport> {
     league: RwLock<String>,
     stats: StatDefinitions,
     items: ItemDefinitions,
+    /// Bulk-exchange currency catalogue (`data/static`), for pricing stackables.
+    currencies: CurrencyDefinitions,
     limiter: Mutex<RateLimiter>,
     /// When the in-flight (or next) request is allowed to fire, if it's been
     /// rate-limit-delayed. The UI polls [`retry_in`](Self::retry_in) to show a
@@ -83,6 +86,7 @@ impl<T: HttpTransport> TradeClient<T> {
         config: ClientConfig,
         stats: StatDefinitions,
         items: ItemDefinitions,
+        currencies: CurrencyDefinitions,
     ) -> Self {
         TradeClient {
             league: RwLock::new(config.league.clone()),
@@ -90,6 +94,7 @@ impl<T: HttpTransport> TradeClient<T> {
             config,
             stats,
             items,
+            currencies,
             limiter: Mutex::new(RateLimiter::new()),
             retry_at: StdMutex::new(None),
         }
@@ -119,6 +124,12 @@ impl<T: HttpTransport> TradeClient<T> {
 
     pub fn items(&self) -> &ItemDefinitions {
         &self.items
+    }
+
+    /// The bulk-exchange currency catalogue (`data/static`). The UI uses it to
+    /// decide whether an item is a stackable priced via the exchange.
+    pub fn currencies(&self) -> &CurrencyDefinitions {
+        &self.currencies
     }
 
     pub fn config(&self) -> &ClientConfig {
@@ -200,6 +211,34 @@ impl<T: HttpTransport> TradeClient<T> {
         self.run_query(&request, max_listings).await
     }
 
+    /// Price a stackable item via the bulk **exchange** (PRD §4.4): one POST,
+    /// no fetch round. `want_id` is the `data/static` currency id; `pay` is the
+    /// currency to price in (e.g. `exalted`). Offers come back cheapest-first.
+    pub async fn price_check_exchange(
+        &self,
+        want_id: &str,
+        pay: &str,
+    ) -> Result<ExchangeCheck, Error> {
+        // The exchange has no "instant buyout" notion — every offer is a buyout
+        // ratio — so we just ask for live (online) sellers.
+        let body = crate::exchange::exchange_body(want_id, pay, "online")?;
+        let url = self.with_realm(format!(
+            "{}/api/trade2/exchange/{}",
+            self.config.base_url,
+            encode_path_segment(&self.league())
+        ));
+        let resp = self
+            .send(HttpRequest {
+                method: Method::Post,
+                url,
+                headers: Vec::new(),
+                body: Some(body),
+            })
+            .await?;
+        let resp = ok_or_api_error(resp)?;
+        crate::exchange::parse_exchange(&resp.body, want_id, pay)
+    }
+
     /// Search then fetch the cheapest `max_listings` for a built request.
     async fn run_query(
         &self,
@@ -273,12 +312,15 @@ impl<T: HttpTransport> TradeClient<T> {
 pub async fn fetch_definitions<T: HttpTransport>(
     transport: &T,
     base_url: &str,
-) -> Result<(StatDefinitions, ItemDefinitions), Error> {
+) -> Result<(StatDefinitions, ItemDefinitions, CurrencyDefinitions), Error> {
     let stats_json = get_body(transport, &format!("{base_url}/api/trade2/data/stats")).await?;
     let items_json = get_body(transport, &format!("{base_url}/api/trade2/data/items")).await?;
+    // The bulk-exchange currency catalogue (currency/runes/fragments/…).
+    let static_json = get_body(transport, &format!("{base_url}/api/trade2/data/static")).await?;
     Ok((
         StatDefinitions::from_json(&stats_json)?,
         ItemDefinitions::from_json(&items_json)?,
+        CurrencyDefinitions::from_json(&static_json)?,
     ))
 }
 

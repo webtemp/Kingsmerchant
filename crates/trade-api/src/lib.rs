@@ -20,6 +20,7 @@
 pub mod client;
 pub mod definitions;
 pub mod error;
+pub mod exchange;
 pub mod http;
 pub mod model;
 pub mod poeprices;
@@ -33,6 +34,7 @@ pub use client::{
 };
 pub use definitions::{ItemDefinitions, LocalContext, MappedStat, StatDefinitions};
 pub use error::Error;
+pub use exchange::{CurrencyDefinitions, CurrencyEntry, ExchangeCheck, ExchangeOffer};
 pub use http::{HttpRequest, HttpResponse, HttpTransport, Method, ReqwestTransport};
 pub use model::{Price, ResultEntry, SearchRequest, SearchResponse};
 pub use poeprices::PriceEstimate;

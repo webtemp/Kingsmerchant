@@ -21,8 +21,9 @@ use egui::{Color32, RichText};
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
     build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, DetailedFilters,
-    EquipmentSelection, League, ListingStatus, MiscSelection, PriceCheck, PriceEstimate,
-    PriceFilter, ReqwestTransport, ResultEntry, StatSelection, TradeClient,
+    EquipmentSelection, ExchangeCheck, ExchangeOffer, League, ListingStatus, MiscSelection,
+    PriceCheck, PriceEstimate, PriceFilter, ReqwestTransport, ResultEntry, StatSelection,
+    TradeClient,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -55,6 +56,27 @@ enum Msg {
     /// poeprices.info ML estimate (rares). `None` = poeprices declined to price
     /// it; `Err` = it failed.
     Estimate(Box<Result<Option<PriceEstimate>, String>>),
+    /// Bulk-exchange result for a stackable (currency/rune/fragment/…).
+    Exchange(Box<Result<ExchangeCheck, String>>),
+}
+
+/// Which pricing path the loaded item uses (PRD §4.4): a normal per-item search,
+/// or the bulk currency exchange for stackables.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PriceMode {
+    Item,
+    Exchange,
+}
+
+/// Background state of a bulk-exchange price check (parallel to [`Phase`], which
+/// covers the per-item search).
+#[derive(Default)]
+enum ExchangePhase {
+    #[default]
+    Idle,
+    Loading,
+    Done(ExchangeCheck),
+    Failed(String),
 }
 
 /// What the global-hotkey watcher (or the tray / config watcher) observed.
@@ -496,6 +518,15 @@ pub struct QuickModeApp {
     /// A note shown in the settings panel after an action (saved / restart
     /// needed for hotkeys, …).
     settings_note: Option<String>,
+    /// Whether the loaded item prices via the per-item search or the bulk
+    /// currency exchange (PRD §4.4).
+    mode: PriceMode,
+    /// Background state of the bulk-exchange check (used in [`PriceMode::Exchange`]).
+    exchange_phase: ExchangePhase,
+    /// The `data/static` exchange id of the loaded stackable (the `want`).
+    exchange_want_id: String,
+    /// Currency the exchange prices are shown in (the `have`); default Exalted.
+    pay_currency: String,
 }
 
 /// Whitespace-collapsed form of clipboard text. Two copies of the SAME item can
@@ -576,6 +607,10 @@ impl QuickModeApp {
             settings_close_requested: false,
             quit_requested: false,
             settings_note: None,
+            mode: PriceMode::Item,
+            exchange_phase: ExchangePhase::Idle,
+            exchange_want_id: String::new(),
+            pay_currency: "exalted".to_string(),
         }
     }
 
@@ -647,6 +682,20 @@ impl QuickModeApp {
         self.icon_url = None;
         self.estimate = None;
         self.estimate_loading = false;
+        self.exchange_phase = ExchangePhase::Idle;
+
+        // Stackables (currency, runes, fragments, essences, …) aren't sold as
+        // individual listings — they trade via the bulk exchange, which the
+        // per-item search can't price (PRD §4.4). Route them there instead.
+        if let Some(want_id) = self.exchange_id_for(&item) {
+            self.mode = PriceMode::Exchange;
+            self.exchange_want_id = want_id;
+            self.item = Some(item);
+            self.spawn_exchange_query(ctx);
+            return;
+        }
+        self.mode = PriceMode::Item;
+
         // "Exceptional" bases carry a tier prefix that resolve_base strips
         // (e.g. "Exceptional Obliterator Bow" → "Obliterator Bow"); on those the
         // extra sockets / quality are the value, so default those filters on.
@@ -684,11 +733,50 @@ impl QuickModeApp {
         });
     }
 
-    /// Re-run the search for the already-loaded item, keeping the current filter
-    /// state (used by the detailed panel and by a league switch).
+    /// The bulk-exchange currency id for an item, if it's a stackable that
+    /// prices via the exchange rather than the per-item search. Tries the item
+    /// name then the base-type line against the `data/static` catalogue.
+    fn exchange_id_for(&self, item: &Item) -> Option<String> {
+        [item.name.as_deref(), item.base_type.as_deref()]
+            .into_iter()
+            .flatten()
+            .find_map(|name| self.client.currencies().lookup(name).map(|e| e.id.clone()))
+    }
+
+    /// Price the loaded stackable via the bulk exchange on a background task,
+    /// paying in the currently-selected `pay_currency`.
+    fn spawn_exchange_query(&mut self, ctx: &egui::Context) {
+        self.exchange_phase = ExchangePhase::Loading;
+        let client = Arc::clone(&self.client);
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        let want = self.exchange_want_id.clone();
+        let pay = self.pay_currency.clone();
+        tracing::info!(want = %want, pay = %pay, "exchange check");
+        self.rt.spawn(async move {
+            let result = client
+                .price_check_exchange(&want, &pay)
+                .await
+                .map_err(|e| e.to_string());
+            if let Err(ref e) = result {
+                tracing::error!(error = %e, "exchange price check failed");
+            }
+            let _ = tx.send(Msg::Exchange(Box::new(result)));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Re-run the price check for the already-loaded item, keeping current
+    /// state (used by the detailed panel, the pay-currency selector, and a
+    /// league switch). Routes to the search or the exchange per the mode.
     fn rerun_query(&mut self, ctx: &egui::Context) {
-        if let Some(item) = self.item.clone() {
-            self.spawn_query(ctx, item);
+        match self.mode {
+            PriceMode::Item => {
+                if let Some(item) = self.item.clone() {
+                    self.spawn_query(ctx, item);
+                }
+            }
+            PriceMode::Exchange => self.spawn_exchange_query(ctx),
         }
     }
 
@@ -876,6 +964,12 @@ impl QuickModeApp {
                         Err(e) => tracing::debug!(error = %e, "poeprices estimate failed"),
                     }
                 }
+                Msg::Exchange(result) => {
+                    self.exchange_phase = match *result {
+                        Ok(ex) => ExchangePhase::Done(ex),
+                        Err(e) => ExchangePhase::Failed(e),
+                    };
+                }
             }
         }
 
@@ -1010,26 +1104,10 @@ impl QuickModeApp {
             }
         }
 
-        // The filter panel (PRD §4.7), between the item and the listings. Edits
-        // re-run the search after a short debounce; "Apply now" fires immediately.
-        {
-            ui.add_space(6.0);
-            let apply_now = self.filter_panel(ui);
-            // Fire once edits go quiet and nothing is in flight. The overlay
-            // redraws continuously, so this is re-checked every frame.
-            let debounced = self.filter_dirty
-                && self.filter_changed_at.elapsed() >= FILTER_DEBOUNCE
-                && !matches!(self.phase, Phase::Loading);
-            if apply_now || debounced {
-                self.filter_dirty = false;
-                self.rerun_query(&ctx);
-            }
-        }
-
         ui.add_space(6.0);
 
-        // Rate-limit feedback (PRD §4.4): don't fire blindly — tell the user
-        // we're waiting on the trade API's bucket.
+        // Rate-limit feedback (PRD §4.4, shared by both modes): don't fire
+        // blindly — tell the user we're waiting on the trade API's bucket.
         if let Some(wait) = self.client.retry_in() {
             let secs = (wait.as_millis() as u64).div_ceil(1000);
             ui.colored_label(
@@ -1037,44 +1115,60 @@ impl QuickModeApp {
                 format!("⏳ rate limited — retrying in {secs}s"),
             );
         }
-        if matches!(self.phase, Phase::Loading) {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("searching…");
-            });
-        }
-
-        // poeprices.info ML estimate badge (rares — PRD §4.7).
-        self.estimate_badge(ui);
-
-        ui.separator();
 
         let mut copied: Option<String> = None;
         let mut open_trade: Option<String> = None;
-        match &self.phase {
-            Phase::Idle => {
-                ui.label(
-                    RichText::new("Waiting for an item…")
-                        .weak()
-                        .italics(),
-                );
-            }
-            Phase::Loading => {}
-            Phase::Failed(e) => {
-                ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
-            }
-            Phase::Done(pc) => {
-                show_results(ui, pc, &mut copied);
-                ui.add_space(6.0);
-                if ui
-                    .button("🌐 Open on trade site")
-                    .on_hover_text("Opens your browser with this exact search")
-                    .clicked()
+        match self.mode {
+            // Stackables (currency/runes/…) price via the bulk exchange.
+            PriceMode::Exchange => self.exchange_content(ui, &ctx, &mut copied, &mut open_trade),
+            // Normal items: the stat-filter panel + per-item listings.
+            PriceMode::Item => {
+                // The filter panel (PRD §4.7), between the item and the listings.
+                // Edits re-run the search after a debounce; "Apply now" is
+                // immediate.
                 {
-                    // Built only on click — the URL encodes the full query
-                    // (disabled filters included) and is too costly to rebuild
-                    // every frame.
-                    open_trade = Some(self.trade_url());
+                    ui.add_space(6.0);
+                    let apply_now = self.filter_panel(ui);
+                    let debounced = self.filter_dirty
+                        && self.filter_changed_at.elapsed() >= FILTER_DEBOUNCE
+                        && !matches!(self.phase, Phase::Loading);
+                    if apply_now || debounced {
+                        self.filter_dirty = false;
+                        self.rerun_query(&ctx);
+                    }
+                }
+                ui.add_space(6.0);
+                if matches!(self.phase, Phase::Loading) {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("searching…");
+                    });
+                }
+                // poeprices.info ML estimate badge (rares — PRD §4.7).
+                self.estimate_badge(ui);
+                ui.separator();
+                match &self.phase {
+                    Phase::Idle => {
+                        ui.label(RichText::new("Waiting for an item…").weak().italics());
+                    }
+                    Phase::Loading => {}
+                    Phase::Failed(e) => {
+                        ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
+                    }
+                    Phase::Done(pc) => {
+                        show_results(ui, pc, &mut copied);
+                        ui.add_space(6.0);
+                        if ui
+                            .button("🌐 Open on trade site")
+                            .on_hover_text("Opens your browser with this exact search")
+                            .clicked()
+                        {
+                            // Built only on click — the URL encodes the full
+                            // query (disabled filters included) and is too costly
+                            // to rebuild every frame.
+                            open_trade = Some(self.trade_url());
+                        }
+                    }
                 }
             }
         }
@@ -1096,6 +1190,99 @@ impl QuickModeApp {
                 Color32::from_rgb(0x4c, 0xd1, 0x37),
                 format!("✓ Copied {status} — paste into POE2 chat (Enter)"),
             );
+        }
+    }
+
+    /// Render the bulk-exchange results for a stackable (PRD §4.4): a pay-with
+    /// currency selector, the median + cheapest offers with whisper buttons, and
+    /// a link to the exchange page. No stat filters (they don't apply).
+    fn exchange_content(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        copied: &mut Option<String>,
+        open_trade: &mut Option<String>,
+    ) {
+        // Pick what to pay with. Offers are listed in the seller's currency, so
+        // we query one currency at a time (default Exalted) and the list stays
+        // sortable — sidestepping exalted-vs-divine normalisation.
+        ui.horizontal(|ui| {
+            ui.label("Pay with");
+            let before = self.pay_currency.clone();
+            egui::ComboBox::from_id_salt("pay-currency")
+                .selected_text(pay_label(&self.pay_currency))
+                .show_ui(ui, |ui| {
+                    for (id, label) in PAY_CURRENCIES {
+                        ui.selectable_value(&mut self.pay_currency, id.to_string(), *label);
+                    }
+                });
+            if self.pay_currency != before {
+                self.spawn_exchange_query(ctx);
+            }
+        });
+        if matches!(self.exchange_phase, ExchangePhase::Loading) {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("checking exchange…");
+            });
+        }
+        ui.separator();
+
+        match &self.exchange_phase {
+            ExchangePhase::Idle => {
+                ui.label(RichText::new("Waiting for the exchange…").weak().italics());
+            }
+            ExchangePhase::Loading => {}
+            ExchangePhase::Failed(e) => {
+                ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
+            }
+            ExchangePhase::Done(ex) => {
+                let pay = pay_label(&ex.pay_currency);
+                match ex.median_unit_price() {
+                    Some(m) => {
+                        ui.label(
+                            RichText::new(format!("Median: {} {} each", fmt_amount(m), pay))
+                                .size(18.0)
+                                .strong(),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            RichText::new(format!(
+                                "No {pay} offers — try a different pay currency."
+                            ))
+                            .italics(),
+                        );
+                    }
+                }
+                ui.label(
+                    RichText::new(format!(
+                        "{} offer(s) · showing cheapest {}",
+                        ex.offers.len(),
+                        SHOWN
+                    ))
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                egui::Grid::new("exchange-offers")
+                    .striped(true)
+                    .num_columns(3)
+                    .spacing([10.0, 10.0])
+                    .show(ui, |ui| {
+                        for offer in ex.cheapest(SHOWN) {
+                            exchange_row(ui, offer, pay, copied);
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(6.0);
+                if ui
+                    .button("🌐 Open exchange page")
+                    .on_hover_text("Opens the in-game-style currency exchange in your browser")
+                    .clicked()
+                {
+                    *open_trade = Some(exchange_url(&self.config.league, &ex.id));
+                }
+            }
         }
     }
 
@@ -1786,6 +1973,66 @@ fn listing_row(ui: &mut egui::Ui, entry: &ResultEntry, copied: &mut Option<Strin
     });
 }
 
+/// Currencies offered in the exchange "pay with" selector (id, label).
+const PAY_CURRENCIES: &[(&str, &str)] = &[
+    ("exalted", "Exalted"),
+    ("divine", "Divine"),
+    ("chaos", "Chaos"),
+];
+
+fn pay_label(id: &str) -> &str {
+    PAY_CURRENCIES
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, l)| *l)
+        .unwrap_or("Exalted")
+}
+
+/// Deep link to the bulk-exchange page for a result (PRD §4.4).
+fn exchange_url(league: &str, id: &str) -> String {
+    format!(
+        "https://www.pathofexile.com/trade2/exchange/poe2/{}/{}",
+        percent_encode(league),
+        id
+    )
+}
+
+/// One bulk-exchange offer row: unit price, seller (+ online dot / stock), and
+/// Whisper / Invite / Hideout / Trade buttons (the whisper is pre-filled).
+fn exchange_row(ui: &mut egui::Ui, offer: &ExchangeOffer, pay: &str, copied: &mut Option<String>) {
+    ui.label(RichText::new(format!("{} {}", fmt_amount(offer.unit_price), pay)).strong());
+
+    let dot = if offer.online {
+        Color32::from_rgb(0x4c, 0xd1, 0x37)
+    } else {
+        Color32::DARK_GRAY
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(dot, "●");
+        let label = ui.label(&offer.account);
+        if let Some(stock) = offer.stock {
+            label.on_hover_text(format!("stock: {}", fmt_amount(stock)));
+        }
+    });
+
+    let character = offer.character.clone();
+    let seller = offer.account.clone();
+    ui.horizontal(|ui| {
+        if let Some(whisper) = &offer.whisper {
+            if ui.button("💬").on_hover_text("Whisper").clicked() {
+                copy_to_clipboard(whisper);
+                *copied = Some(format!("whisper to {seller}"));
+            }
+        } else {
+            ui.add_enabled(false, egui::Button::new("💬"))
+                .on_hover_text("Whisper (unavailable)");
+        }
+        chat_button(ui, "➕", "Invite", character.as_deref().map(|c| format!("/invite {c}")), copied);
+        chat_button(ui, "🏠", "Hideout", character.as_deref().map(|c| format!("/hideout {c}")), copied);
+        chat_button(ui, "💱", "Trade", character.as_deref().map(|c| format!("/tradewith {c}")), copied);
+    });
+}
+
 /// An icon button that copies a chat `command` to the clipboard. `name` is the
 /// hover label. Disabled (greyed) when we couldn't build a command (e.g. the
 /// listing has no character name).
@@ -2121,7 +2368,7 @@ pub fn build_app(
     let rt = tokio::runtime::Runtime::new()?;
     let transport = ReqwestTransport::new(USER_AGENT)?;
     tracing::info!("fetching trade definitions…");
-    let (stats, items) = rt
+    let (stats, items, currencies) = rt
         .block_on(fetch_definitions(&transport, BASE_URL))
         .map_err(|e| anyhow::anyhow!("loading definitions: {e}"))?;
     // A leagues failure shouldn't block startup — the selector just falls back
@@ -2135,7 +2382,13 @@ pub fn build_app(
 
     let mut client_config = ClientConfig::new(&config.league);
     client_config.realm = config.realm.clone();
-    let client = Arc::new(TradeClient::new(transport, client_config, stats, items));
+    let client = Arc::new(TradeClient::new(
+        transport,
+        client_config,
+        stats,
+        items,
+        currencies,
+    ));
 
     Ok(QuickModeApp::new(
         rt, client, config, leagues, hotkey_rx, tray,

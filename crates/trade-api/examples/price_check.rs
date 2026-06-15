@@ -24,8 +24,8 @@ use std::io::Read;
 
 use trade_api::http::{HttpRequest, HttpTransport, Method};
 use trade_api::{
-    build_search_query, ClientConfig, ItemDefinitions, QueryOptions, ReqwestTransport,
-    StatDefinitions, TradeClient,
+    build_search_query, ClientConfig, CurrencyDefinitions, ItemDefinitions, QueryOptions,
+    ReqwestTransport, StatDefinitions, TradeClient,
 };
 
 const BASE: &str = "https://www.pathofexile.com";
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let league = std::env::var("POE_LEAGUE").unwrap_or_else(|_| "Standard".to_string());
     let mut config = ClientConfig::new(&league);
     config.realm = std::env::var("POE_REALM").ok();
-    let client = TradeClient::new(transport, config, stats, items);
+    let client = TradeClient::new(transport, config, stats, items, CurrencyDefinitions::default());
 
     println!("searching league {league:?} …");
     match client.price_check(&item, opts, 10).await {
