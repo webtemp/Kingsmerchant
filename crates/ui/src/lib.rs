@@ -49,6 +49,8 @@ const FILTER_DEBOUNCE: Duration = Duration::from_secs(4);
 /// In-game-ish colour for rolled mod text.
 const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
 const HEADER_BG: Color32 = Color32::from_rgb(0x17, 0x17, 0x1c);
+/// Gold accent (matches the app icon) for the headline median price.
+const ACCENT_GOLD: Color32 = Color32::from_rgb(0xe6, 0xc2, 0x5a);
 
 /// Popup width — wide enough for the filter panel.
 pub const POPUP_WIDTH: u32 = 600;
@@ -1347,7 +1349,8 @@ impl QuickModeApp {
                         ui.label(
                             RichText::new(format!("Median: {} {} each", fmt_amount(m), pay))
                                 .size(18.0)
-                                .strong(),
+                                .strong()
+                                .color(ACCENT_GOLD),
                         );
                     }
                     None => {
@@ -2009,6 +2012,8 @@ struct ItemPreview {
     name: Option<String>,
     base: Option<String>,
     mods: Vec<String>,
+    /// Trade `frameType` (0 normal, 1 magic, 2 rare, 3 unique, …) → rarity colour.
+    frame_type: u64,
 }
 
 fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>) {
@@ -2017,7 +2022,8 @@ fn show_results(ui: &mut egui::Ui, pc: &PriceCheck, copied: &mut Option<String>)
             ui.label(
                 RichText::new(format!("Median: {} {}", fmt_amount(p.amount), p.currency))
                     .size(18.0)
-                    .strong(),
+                    .strong()
+                    .color(ACCENT_GOLD),
             );
         }
         None => {
@@ -2106,27 +2112,53 @@ fn item_info_button(ui: &mut egui::Ui, item: &ItemPreview) {
     ui.button(ph::INFO)
         .on_hover_text("Show item")
         .on_hover_ui(|ui| {
-            ui.set_max_width(280.0);
-            if let Some(icon) = &item.icon {
-                ui.add(
-                    egui::Image::new(icon)
-                        .fit_to_exact_size(egui::vec2(64.0, 64.0))
-                        .rounding(4.0),
-                );
-            }
-            if let Some(name) = &item.name {
-                ui.label(RichText::new(name).strong().size(15.0));
-            }
-            if let Some(base) = &item.base {
-                ui.label(RichText::new(base).weak());
-            }
-            if !item.mods.is_empty() {
-                ui.separator();
-                for m in &item.mods {
-                    ui.label(RichText::new(m).color(AFFIX_BLUE));
-                }
-            }
+            // Frame it like an in-game tooltip: rarity-coloured border + name.
+            let color = frame_color(item.frame_type);
+            egui::Frame::none()
+                .fill(HEADER_BG)
+                .stroke(egui::Stroke::new(1.5, color))
+                .rounding(6.0)
+                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .show(ui, |ui| {
+                    ui.set_max_width(300.0);
+                    ui.horizontal(|ui| {
+                        if let Some(icon) = &item.icon {
+                            ui.add(
+                                egui::Image::new(icon)
+                                    .fit_to_exact_size(egui::vec2(52.0, 52.0))
+                                    .rounding(4.0),
+                            );
+                            ui.add_space(4.0);
+                        }
+                        ui.vertical(|ui| {
+                            if let Some(name) = &item.name {
+                                ui.label(RichText::new(name).color(color).strong().size(15.0));
+                            }
+                            if let Some(base) = &item.base {
+                                ui.label(RichText::new(base).color(color).weak());
+                            }
+                        });
+                    });
+                    if !item.mods.is_empty() {
+                        thin_separator(ui);
+                        for m in &item.mods {
+                            ui.label(RichText::new(m).color(AFFIX_BLUE));
+                        }
+                    }
+                });
         });
+}
+
+/// Trade `frameType` → its in-game rarity colour (mirrors [`rarity_color`]).
+fn frame_color(frame_type: u64) -> Color32 {
+    match frame_type {
+        1 => Color32::from_rgb(0x88, 0x88, 0xff), // magic
+        2 => Color32::from_rgb(0xff, 0xff, 0x77), // rare
+        3 => Color32::from_rgb(0xaf, 0x60, 0x25), // unique
+        4 => Color32::from_rgb(0x1b, 0xa2, 0x9b), // gem
+        5 => Color32::from_rgb(0xaa, 0x99, 0x77), // currency
+        _ => Color32::from_rgb(0xc8, 0xc8, 0xc8), // normal / other
+    }
 }
 
 /// Pull the previewable fields out of a fetch result's raw `item` JSON.
@@ -2148,6 +2180,7 @@ fn item_preview(item: &serde_json::Value) -> ItemPreview {
         name: s("name"),
         base: s("typeLine"),
         mods,
+        frame_type: item.get("frameType").and_then(|v| v.as_u64()).unwrap_or(0),
     }
 }
 
