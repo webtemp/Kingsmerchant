@@ -5,6 +5,8 @@ use parser::Rarity;
 
 /// In-game-ish colour for rolled mod text.
 pub(super) const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
+/// Dark backing for the item/preview cards (inset against the lighter popup).
+pub(super) const HEADER_BG: Color32 = Color32::from_rgb(0x17, 0x17, 0x1c);
 /// Gold accent (matches the app icon) for the headline median price.
 pub(super) const ACCENT_GOLD: Color32 = Color32::from_rgb(0xe6, 0xc2, 0x5a);
 /// Green "online" indicator.

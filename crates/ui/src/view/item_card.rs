@@ -10,13 +10,10 @@ use std::fmt::Write as _;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, ModSource, Modifier};
 
-use super::theme::{frame_color, rarity_color, AFFIX_BLUE};
+use super::theme::{frame_color, rarity_color, AFFIX_BLUE, HEADER_BG};
 
 // ---- palette ---------------------------------------------------------------
 
-/// Solid card background. Deliberately *not* near-black: these cards float over
-/// POE2's dark scene, so a too-dark fill reads as transparent/invisible.
-const CARD_FILL: Color32 = Color32::from_rgb(0x2a, 0x2c, 0x34);
 /// Defence / property values (armour, evasion, requirements).
 const PROP_COLOR: Color32 = Color32::from_rgb(0x8f, 0xb8, 0xd6);
 // Mod-text colours, matching the trade site's affix colouring.
@@ -301,15 +298,13 @@ fn framed(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let inner = egui::Frame::none()
-        .fill(CARD_FILL)
+        .fill(HEADER_BG)
         .stroke(egui::Stroke::new(1.5, border))
         .rounding(6.0)
         .inner_margin(margin);
     if let Some(a) = accent {
-        // Solid fill on the outer ring too, so the accent never leaves a
-        // see-through gap around the card.
         egui::Frame::none()
-            .fill(CARD_FILL)
+            .fill(HEADER_BG)
             .stroke(egui::Stroke::new(1.0, a))
             .rounding(9.0)
             .inner_margin(egui::Margin::same(3.0))
@@ -505,7 +500,6 @@ pub(super) fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPrevie
     egui::Area::new(egui::Id::new("item-preview"))
         .order(egui::Order::Tooltip)
         .interactable(false)
-        .fade_in(false)
         .constrain(true)
         // Bottom-centre pivot: centred on the cursor's x, growing upward, with
         // the whole card kept above the cursor (see PREVIEW_CURSOR_GAP).
@@ -535,11 +529,14 @@ fn render_item_preview(ui: &mut egui::Ui, item: &ItemPreview) {
             ui.set_max_width(320.0);
             ui.horizontal(|ui| {
                 if let Some(icon) = &item.icon {
-                    // Paint the icon into a fixed 48x48 box so a slow/failed load
-                    // can't steal space from the text.
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
-                    egui::Image::new(icon).rounding(4.0).paint_at(ui, rect);
+                    // Same as the main card: fit (not stretch) into a ≤48px box;
+                    // `fit_to_exact_size` keeps the aspect ratio, `paint_at` did
+                    // not — which is why preview icons came out stretched.
+                    ui.add(
+                        egui::Image::new(icon)
+                            .fit_to_exact_size(egui::vec2(48.0, 48.0))
+                            .rounding(4.0),
+                    );
                     ui.add_space(6.0);
                 }
                 ui.vertical(|ui| {
