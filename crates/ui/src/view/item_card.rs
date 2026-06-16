@@ -487,10 +487,17 @@ fn json_pairs(item: &serde_json::Value, key: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Gap between the cursor and the preview's bottom edge. Must stay positive:
+/// the preview is a top-layer (Tooltip) area, so if it covered the cursor it
+/// would occlude the listing row, flipping its `contains_pointer()` off every
+/// other frame — the row stops being hovered, the preview vanishes, reappears,
+/// and so on, which reads as a flickering, half-transparent tooltip.
+const PREVIEW_CURSOR_GAP: f32 = 12.0;
+
 /// Show the item preview horizontally centred on the cursor and floating just
-/// above it (the cursor sits ~3px inside the bottom edge) — a non-interactive,
-/// top-most tooltip. `constrain(true)` keeps it inside the surface (the popup
-/// can't draw outside its own bounds).
+/// above it (with [`PREVIEW_CURSOR_GAP`] of clearance so it never covers the
+/// pointer). A non-interactive, top-most tooltip; `constrain(true)` keeps it
+/// inside the surface (the popup can't draw outside its own bounds).
 pub(super) fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPreview) {
     let Some(pos) = ctx.pointer_latest_pos() else {
         return;
@@ -498,14 +505,11 @@ pub(super) fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPrevie
     egui::Area::new(egui::Id::new("item-preview"))
         .order(egui::Order::Tooltip)
         .interactable(false)
-        // Disable the default fade-in: the area follows the cursor and is
-        // re-shown each frame, so its fade age keeps resetting and it never
-        // reaches full opacity — it renders near-invisible. Show it solid.
         .fade_in(false)
         .constrain(true)
-        // Bottom-centre pivot: the area is centred on the cursor's x and grows
-        // upward, nudged down 3px so the cursor sits just inside the bottom.
-        .fixed_pos(pos + egui::vec2(0.0, 3.0))
+        // Bottom-centre pivot: centred on the cursor's x, growing upward, with
+        // the whole card kept above the cursor (see PREVIEW_CURSOR_GAP).
+        .fixed_pos(pos - egui::vec2(0.0, PREVIEW_CURSOR_GAP))
         .pivot(egui::Align2::CENTER_BOTTOM)
         .show(ctx, |ui| {
             render_item_preview(ui, item);
