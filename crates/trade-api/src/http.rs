@@ -42,14 +42,12 @@ pub trait HttpTransport: Send + Sync {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, Error>;
 }
 
-/// Production transport: `reqwest` configured for rustls (PRD §6, "not
-/// openssl").
+/// Production transport: `reqwest` configured for rustls (not openssl).
 pub struct ReqwestTransport {
     client: reqwest::Client,
     user_agent: String,
-    /// Optional `Cookie:` header value. Anonymous queries work for search and
-    /// fetch in v1; this is reserved for later auth (PRD §10 v1.3 "Login with
-    /// PoE Account", e.g. a `POESESSID=…`).
+    /// Optional `Cookie:` header value, reserved for later auth (e.g. a
+    /// `POESESSID=…`). Anonymous queries work for search and fetch.
     cookie: Option<String>,
 }
 
@@ -66,6 +64,7 @@ impl ReqwestTransport {
     }
 
     /// Attach a `Cookie:` header value sent with every request.
+    #[must_use]
     pub fn with_cookie(mut self, cookie: impl Into<String>) -> Self {
         self.cookie = Some(cookie.into());
         self
@@ -90,7 +89,9 @@ impl HttpTransport for ReqwestTransport {
             builder = builder.header(k, v);
         }
         if let Some(body) = request.body {
-            builder = builder.header("content-type", "application/json").body(body);
+            builder = builder
+                .header("content-type", "application/json")
+                .body(body);
         }
 
         let response = builder
@@ -101,7 +102,12 @@ impl HttpTransport for ReqwestTransport {
         let headers = response
             .headers()
             .iter()
-            .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
             .collect();
         let body = response
             .text()
@@ -113,4 +119,24 @@ impl HttpTransport for ReqwestTransport {
             body,
         })
     }
+}
+
+/// Percent-encode a string for use in a URL path segment or query value
+/// (RFC 3986 unreserved chars pass through; everything else becomes `%XX`).
+/// League ids like `Runes of Aldur` carry spaces that would otherwise produce
+/// an invalid URL.
+pub(crate) fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "%{b:02X}");
+            }
+        }
+    }
+    out
 }

@@ -1,5 +1,5 @@
 //! Stat-id mapping + base-type splitting against the recorded (real) snapshot
-//! subsets in `tests/fixtures/api/` (PRD §4.3, §4.4, §7).
+//! subsets in `tests/fixtures/api/`.
 
 use parser::{parse_item, ModKind, ModSource, Modifier};
 use trade_api::{ItemDefinitions, StatDefinitions};
@@ -29,7 +29,12 @@ fn modifier(kind: ModKind, source: Option<ModSource>, stat: &str) -> Modifier {
 fn implicit_resistance_maps_to_implicit_id() {
     let defs = stats();
     let m = defs
-        .map_stat_line(&ModKind::Implicit, None, "+30(20-30)% to Lightning Resistance", false)
+        .map_stat_line(
+            &ModKind::Implicit,
+            None,
+            "+30(20-30)% to Lightning Resistance",
+            false,
+        )
         .expect("lightning resistance maps");
     assert_eq!(m.id, "implicit.stat_1671376347");
     assert_eq!(m.stat_type, "implicit");
@@ -41,7 +46,12 @@ fn implicit_resistance_maps_to_implicit_id() {
 fn explicit_prefix_evasion_maps_to_explicit_id() {
     let defs = stats();
     let m = defs
-        .map_stat_line(&ModKind::Prefix, None, "+221(203-233) to Evasion Rating", false)
+        .map_stat_line(
+            &ModKind::Prefix,
+            None,
+            "+221(203-233) to Evasion Rating",
+            false,
+        )
         .expect("evasion maps");
     assert_eq!(m.id, "explicit.stat_2144192055");
     assert_eq!(m.values, [221.0]);
@@ -53,10 +63,20 @@ fn same_text_resolves_to_different_id_by_affix_type() {
     // The exact same template, mapped as an implicit vs a normal explicit,
     // must resolve to the implicit. and explicit. ids respectively.
     let implicit = defs
-        .map_stat_line(&ModKind::Implicit, None, "+30% to Lightning Resistance", false)
+        .map_stat_line(
+            &ModKind::Implicit,
+            None,
+            "+30% to Lightning Resistance",
+            false,
+        )
         .unwrap();
     let explicit = defs
-        .map_stat_line(&ModKind::Suffix, None, "+23(21-25)% to Lightning Resistance", false)
+        .map_stat_line(
+            &ModKind::Suffix,
+            None,
+            "+23(21-25)% to Lightning Resistance",
+            false,
+        )
         .unwrap();
     assert_eq!(implicit.id, "implicit.stat_1671376347");
     assert_eq!(explicit.id, "explicit.stat_1671376347");
@@ -81,10 +101,20 @@ fn fractured_source_prefers_fractured_id() {
 fn spell_damage_and_cast_speed_map() {
     let defs = stats();
     let sd = defs
-        .map_stat_line(&ModKind::Prefix, None, "63(55-64)% increased Spell Damage", false)
+        .map_stat_line(
+            &ModKind::Prefix,
+            None,
+            "63(55-64)% increased Spell Damage",
+            false,
+        )
         .unwrap();
     let cs = defs
-        .map_stat_line(&ModKind::Suffix, None, "17(17-20)% increased Cast Speed", false)
+        .map_stat_line(
+            &ModKind::Suffix,
+            None,
+            "17(17-20)% increased Cast Speed",
+            false,
+        )
         .unwrap();
     assert_eq!(sd.id, "explicit.stat_2974417149");
     assert_eq!(cs.id, "explicit.stat_2891184298");
@@ -119,13 +149,23 @@ fn prefer_local_picks_the_local_stat_variant() {
     let defs = StatDefinitions::from_json(json).unwrap();
 
     let local = defs
-        .map_stat_line(&ModKind::Prefix, None, "103(101-110)% increased Evasion Rating", true)
+        .map_stat_line(
+            &ModKind::Prefix,
+            None,
+            "103(101-110)% increased Evasion Rating",
+            true,
+        )
         .unwrap();
     assert_eq!(local.id, "explicit.stat_124859000");
 
     // Without the local preference (e.g. on a ring) we get the global id.
     let global = defs
-        .map_stat_line(&ModKind::Prefix, None, "103(101-110)% increased Evasion Rating", false)
+        .map_stat_line(
+            &ModKind::Prefix,
+            None,
+            "103(101-110)% increased Evasion Rating",
+            false,
+        )
         .unwrap();
     assert_eq!(global.id, "explicit.stat_2106365538");
 }
@@ -150,14 +190,22 @@ fn quiver_accuracy_is_global_not_local() {
         .iter()
         .find(|m| m.id.contains("803737631") || m.id.contains("691932474"))
         .expect("accuracy maps");
-    assert_eq!(acc.id, "explicit.stat_803737631", "quiver accuracy must be global");
+    assert_eq!(
+        acc.id, "explicit.stat_803737631",
+        "quiver accuracy must be global"
+    );
 }
 
 #[test]
 fn unmappable_stat_line_is_dropped_not_panicking() {
     let defs = stats();
     assert!(defs
-        .map_stat_line(&ModKind::Prefix, None, "Grants Eternal Youth and Free Snacks", false)
+        .map_stat_line(
+            &ModKind::Prefix,
+            None,
+            "Grants Eternal Youth and Free Snacks",
+            false
+        )
         .is_none());
 }
 
@@ -168,17 +216,19 @@ fn real_subset_indexes_many_entries() {
     assert!(defs.len() >= 20, "got {}", defs.len());
 }
 
-// ---- base-type splitting (PRD §4.3: magic bases left None by the parser) ----
+// ---- base-type splitting (magic bases left None by the parser) -------------
 
 #[test]
 fn splits_magic_base_from_fused_name() {
     let defs = items();
     assert_eq!(
-        defs.split_magic_base("Professor's Volatile Wand of Expertise").as_deref(),
+        defs.split_magic_base("Professor's Volatile Wand of Expertise")
+            .as_deref(),
         Some("Volatile Wand"),
     );
     assert_eq!(
-        defs.split_magic_base("Glinting Sapphire Ring of the Drake").as_deref(),
+        defs.split_magic_base("Glinting Sapphire Ring of the Drake")
+            .as_deref(),
         Some("Sapphire Ring"),
     );
 }
@@ -188,7 +238,8 @@ fn prefers_the_longest_matching_base() {
     let defs = items();
     // "Topaz Ring" must win over a hypothetical bare "Ring" base.
     assert_eq!(
-        defs.split_magic_base("Hale Topaz Ring of Grounding").as_deref(),
+        defs.split_magic_base("Hale Topaz Ring of Grounding")
+            .as_deref(),
         Some("Topaz Ring"),
     );
 }
@@ -196,7 +247,10 @@ fn prefers_the_longest_matching_base() {
 #[test]
 fn magic_base_split_returns_none_when_unknown() {
     let defs = items();
-    assert_eq!(defs.split_magic_base("Whirling Nonsense of Madeupness"), None);
+    assert_eq!(
+        defs.split_magic_base("Whirling Nonsense of Madeupness"),
+        None
+    );
 }
 
 #[test]
@@ -207,7 +261,10 @@ fn resolve_base_strips_display_tier_prefix() {
     ]}]}"#;
     let defs = ItemDefinitions::from_json(json).unwrap();
 
-    assert_eq!(defs.resolve_base("Exceptional Crude Bow").as_deref(), Some("Crude Bow"));
+    assert_eq!(
+        defs.resolve_base("Exceptional Crude Bow").as_deref(),
+        Some("Crude Bow")
+    );
     // An exact known base (even a longer one) is kept intact.
     assert_eq!(
         defs.resolve_base("Runeforged Crude Bow").as_deref(),
@@ -237,7 +294,9 @@ fn granted_skill_maps_to_skill_id_with_level_as_value() {
     ]}]}"#;
     let defs = StatDefinitions::from_json(json).expect("inline skill stats parse");
 
-    let d = defs.map_granted_skill("Level 19 Discipline").expect("discipline maps");
+    let d = defs
+        .map_granted_skill("Level 19 Discipline")
+        .expect("discipline maps");
     assert_eq!(d.id, "skill.discipline");
     assert_eq!(d.filter_value(), Some(19.0));
 
@@ -249,6 +308,8 @@ fn granted_skill_maps_to_skill_id_with_level_as_value() {
     assert_eq!(w.filter_value(), Some(20.0));
 
     // Unknown skill / malformed input → None.
-    assert!(defs.map_granted_skill("Level 19 Not A Real Skill").is_none());
+    assert!(defs
+        .map_granted_skill("Level 19 Not A Real Skill")
+        .is_none());
     assert!(defs.map_granted_skill("garbage").is_none());
 }

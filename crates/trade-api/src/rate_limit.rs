@@ -1,17 +1,15 @@
-//! Rate-limit bucket tracking (PRD §4.4).
+//! Rate-limit bucket tracking.
 //!
-//! The official trade API advertises its limits on every response via
-//! `X-Rate-Limit-<Rule>` headers and the live usage via `…-<Rule>-State`.
-//! A rule value is a comma-separated list of `max:window:penalty` triples
-//! (seconds), e.g. real captured `5:10:60,15:60:300,30:300:1800` — "5 requests
-//! per 10s (else a 60s ban), 15 per 60s, 30 per 300s". The matching state
-//! header reads `hits:window:active_penalty`.
+//! The trade API advertises limits via `X-Rate-Limit-<Rule>` headers and live
+//! usage via `…-<Rule>-State`. A rule is a comma-separated list of
+//! `max:window:penalty` triples (seconds), e.g. `5:10:60,15:60:300,30:300:1800`
+//! ("5 requests per 10s else a 60s ban, …"); the state header reads
+//! `hits:window:active_penalty`.
 //!
-//! We mirror EE2 / awakened-poe-trade: track the timestamps of the requests we
-//! send and, before sending another, project whether it would breach any
-//! bucket. If it would, we report how long to wait rather than firing blindly.
-//! Active server-side penalties (the state header's third field, or a 429's
-//! `Retry-After`) are honoured as hard waits on top of that.
+//! We track the timestamps of requests we send and, before the next, project
+//! whether it would breach any bucket; if so we report how long to wait.
+//! Server-side penalties (state header's third field, or a 429 `Retry-After`)
+//! are honoured as hard waits on top.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

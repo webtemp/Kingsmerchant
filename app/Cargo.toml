@@ -1,9 +1,19 @@
 [package]
 name = "poe2ddd"
 version = "0.1.0"
+description = "Native POE2 price-check overlay for KDE Plasma 6 Wayland."
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "poe2ddd"

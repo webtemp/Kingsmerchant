@@ -1,13 +1,9 @@
-//! POE2 item-text parser (PRD §4.3).
+//! POE2 item-text parser: clipboard item text → [`Item`] struct.
+//! Pure logic, no IO/network/UI.
 //!
-//! Pure logic: clipboard item text → [`Item`] struct. No IO, no network, no UI.
-//! The stat/item-definition snapshots mentioned in §4.3 (which *do* need
-//! network IO) are a separate concern wired in by the binary; this crate only
-//! turns the text the game writes into structured data.
-//!
-//! Targets POE2's **advanced** item description format (the one with
-//! `{ Prefix Modifier "..." (Tier: N) - Tags }` descriptors), which is what a
-//! price-check tool needs to read mod tiers and value ranges.
+//! Targets POE2's **advanced** item format (with
+//! `{ Prefix Modifier "..." (Tier: N) - Tags }` descriptors) so we can read mod
+//! tiers and value ranges.
 
 mod model;
 mod parse;

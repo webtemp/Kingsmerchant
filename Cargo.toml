@@ -17,6 +17,13 @@ default-members = ["app"]
 edition = "2021"
 license = "MIT OR GPL-3.0-or-later"
 rust-version = "1.96"
+authors = ["Deyan Danailov <webtemp@gmail.com>"]
+# TODO: replace OWNER with the GitHub account once the repo is pushed.
+repository = "https://github.com/OWNER/poe2ddd"
+homepage = "https://github.com/OWNER/poe2ddd"
+readme = "README.md"
+keywords = ["poe2", "path-of-exile", "trade", "overlay", "wayland"]
+categories = ["games"]
 
 [workspace.dependencies]
 anyhow = "1"
@@ -26,3 +33,36 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
+
+# Workspace-wide lints. Each crate opts in with `[lints]\nworkspace = true`.
+# `unsafe_code` is denied everywhere; the `overlay` crate (EGL/glutin FFI) opts
+# back in with a documented crate-level `#![allow(unsafe_code)]`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Pragmatic opt-outs so pedantic stays signal, not noise.
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow" # deliberate f32<->u32 pixel rounding
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"       # u32->i32 pixel coords for Wayland regions
+struct_field_names = "allow"
+doc_markdown = "allow"             # flags POE2/GGG/iLvl etc. as needing backticks
+too_many_lines = "allow"           # egui render fns are long by nature
+struct_excessive_bools = "allow"   # UI/overlay signal flags are clearer as bools
+similar_names = "allow"
+float_cmp = "allow"                # exact-literal asserts in tests
+
+# Optimised, slimmed binary for distribution. `panic` is left as the default
+# (unwind) so a panic in a best-effort watcher thread doesn't abort the app.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

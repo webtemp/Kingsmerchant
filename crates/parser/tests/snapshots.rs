@@ -1,4 +1,4 @@
-//! Snapshot tests against real game-copied item strings (PRD §4.3, §7).
+//! Snapshot tests against real game-copied item strings.
 //!
 //! Each `tests/items/*.txt` fixture is a verbatim POE2 clipboard capture. We
 //! parse it and snapshot the resulting struct; `cargo insta review` shows any

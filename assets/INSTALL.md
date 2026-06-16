@@ -40,8 +40,8 @@ If you keep the binary elsewhere, edit the `Exec=` line in the installed
 
 ## 3. One-time: input group (global hotkeys)
 
-poe2ddd reads keyboards directly via evdev for the global Ctrl+C hotkey
-(PRD §4.1), which needs membership in the `input` group:
+poe2ddd reads keyboards directly via evdev for the global Ctrl+C hotkey,
+which needs membership in the `input` group:
 
 ```sh
 sudo usermod -aG input "$USER"

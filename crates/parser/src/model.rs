@@ -29,10 +29,9 @@ impl Rarity {
 
 /// Which kind of modifier a descriptor declares.
 ///
-/// POE2 labels modifiers with more than the affix slot: rares use
-/// `Prefix`/`Suffix`/`Implicit`, uniques use `Unique Modifier`, and corrupted
-/// items can carry e.g. `Corruption Enhancement`. Unknown labels are preserved
-/// verbatim in [`Other`](ModKind::Other) rather than dropped.
+/// POE2 labels modifiers with the affix slot (`Prefix`/`Suffix`/`Implicit`),
+/// `Unique Modifier`, or others like `Corruption Enhancement`. Unknown labels
+/// are preserved verbatim in [`Other`](ModKind::Other).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModKind {
     Implicit,
@@ -53,9 +52,9 @@ pub enum ModSource {
     Crafted,
 }
 
-/// A single modifier, parsed from an advanced-format `{ ... }` descriptor plus
-/// the stat line(s) that follow it. One descriptor can grant several stat lines
-/// (e.g. a hybrid prefix), so [`stats`](Modifier::stats) is a list.
+/// A single modifier: an advanced-format `{ ... }` descriptor plus the stat
+/// line(s) that follow. One descriptor can grant several stats (e.g. a hybrid
+/// prefix), so [`stats`](Modifier::stats) is a list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Modifier {
     pub kind: ModKind,
@@ -98,9 +97,10 @@ pub struct Requirements {
 
 /// A fully parsed item.
 ///
-/// Fields are populated best-effort: anything the parser doesn't recognize is
-/// left at its default rather than causing a failure, so unfamiliar item types
-/// still yield a usable header (class, rarity, name).
+/// Best-effort: unrecognized input is left at default rather than failing, so
+/// unfamiliar item types still yield a usable header. Some fields (`stack_size`,
+/// `rune_mods`, `flavour_text`, `notes`, `mirrored`, `unidentified`, `flags`)
+/// are parsed but not yet read by any consumer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     /// Raw `Item Class:` value, e.g. `Body Armours`, `Rings`, `Support Gems`.

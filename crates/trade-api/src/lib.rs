@@ -1,4 +1,4 @@
-//! POE2 trade API client (PRD §4.4).
+//! POE2 trade API client.
 //!
 //! Takes a parsed [`parser::Item`] and prices it against the official trade
 //! API: build a search query, `POST .../trade2/search/{league}` for a query id
@@ -10,8 +10,7 @@
 //! * [`definitions`] + [`stat_text`] — map the parser's raw stat text (e.g.
 //!   `+118(100-119) to maximum Life`) to GGG stat ids + filter values, using
 //!   the `trade2/data/stats` / `data/items` snapshots, and split magic bases.
-//! * [`query`] — assemble a [`SearchRequest`](model::SearchRequest) from an
-//!   [`Item`](parser::Item).
+//! * [`query`] — assemble a [`SearchRequest`] from an [`Item`](parser::Item).
 //! * [`rate_limit`] — track the `X-Rate-Limit-*` headers into per-window
 //!   buckets and report how long to wait before the next request is safe.
 //!

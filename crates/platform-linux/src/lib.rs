@@ -1,8 +1,7 @@
 //! Linux platform layer for poe2ddd.
 //!
-//! Phase 0 spike scope: global hotkey detection via evdev and clipboard
-//! reads via the wlr-data-control protocol. Later phases add layer-shell
-//! overlay, xdotool window polling, etc. (see PRD §6).
+//! Platform integration: evdev hotkeys, X11 clipboard, uinput injection,
+//! xdotool window polling, and the system tray.
 
 pub mod clipboard;
 pub mod inject;

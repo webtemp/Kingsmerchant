@@ -1,5 +1,5 @@
-//! KDE/freedesktop system-tray icon via the StatusNotifierItem protocol
-//! (PRD §4.9), using `ksni` (NOT the legacy XEmbed tray).
+//! KDE/freedesktop system-tray icon via the StatusNotifierItem protocol,
+//! using `ksni` (NOT the legacy XEmbed tray).
 //!
 //! The tray runs on its own background thread (ksni's blocking service). It
 //! talks to the app two ways:
@@ -17,7 +17,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::{menu::StandardItem, Category, Icon, MenuItem, ToolTip};
 
-/// A menu action the user triggered from the tray (PRD §4.9 menu).
+/// A menu action the user triggered from the tray.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
     /// "Open Settings" — show the settings surface.
@@ -26,8 +26,7 @@ pub enum TrayAction {
     Quit,
 }
 
-/// What the tooltip should report (PRD §4.9: "Listening" / "Rate limited Ns" /
-/// "API error").
+/// What the tooltip should report (Listening / Rate limited / API error).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayState {
     /// Idle, watching for the price-check hotkey.

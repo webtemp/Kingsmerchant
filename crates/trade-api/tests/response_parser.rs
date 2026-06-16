@@ -1,4 +1,4 @@
-//! Response-parser tests (PRD §7): decode the recorded search/fetch JSON
+//! Response-parser tests: decode the recorded search/fetch JSON
 //! fixtures offline and assert the fields + price aggregation a popup needs.
 
 use trade_api::model::{FetchResponse, SearchResponse};
@@ -35,7 +35,12 @@ fn parses_fetch_listings_with_prices_and_whispers() {
     let price = first.listing.price.as_ref().unwrap();
     assert_eq!(price.amount, 2.0);
     assert_eq!(price.currency, "exalted");
-    assert!(first.listing.whisper.as_ref().unwrap().starts_with("@SellerOne"));
+    assert!(first
+        .listing
+        .whisper
+        .as_ref()
+        .unwrap()
+        .starts_with("@SellerOne"));
 }
 
 #[test]

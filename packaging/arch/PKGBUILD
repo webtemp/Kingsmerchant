@@ -73,6 +73,6 @@ package() {
     # these files must exist in the repo root before tagging.)
     install -Dm644 "LICENSE-MIT" \
         "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-MIT"
-    install -Dm644 "LICENSE-GPL3" \
-        "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-GPL3"
+    install -Dm644 "LICENSE-GPL" \
+        "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-GPL"
 }

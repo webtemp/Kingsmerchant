@@ -6,10 +6,9 @@ first, the AUR second.
 
 ## 0. Repo prerequisites (do these once, before tagging)
 
-- [ ] **Add license files to the repo root.** `Cargo.toml` declares
-      `MIT OR GPL-3.0-or-later`, but no text ships. Create `LICENSE-MIT` and
-      `LICENSE-GPL3` — `package()` installs both, and `namcap` flags MIT
-      otherwise.
+- [ ] **License files exist in the repo root** (`LICENSE-MIT` and
+      `LICENSE-GPL`, both present) — `package()` installs both, and `namcap`
+      flags MIT otherwise.
 - [ ] **`Cargo.lock` is committed** (it is) — required for the offline
       `--frozen` build.
 

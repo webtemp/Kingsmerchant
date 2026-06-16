@@ -1,4 +1,4 @@
-//! Request-builder tests (PRD §7): a parsed item + the real definition snapshot
+//! Request-builder tests: a parsed item + the real definition snapshot
 //! subsets → the search body we'd POST. Bodies are snapshotted as JSON with
 //! `insta` (run `cargo insta review` on a diff), and key fields asserted
 //! directly.
@@ -92,7 +92,13 @@ fn rare_ring_query_searches_by_category_not_base_type() {
     // Rares search the whole category, not the exact base type (Topaz Ring).
     assert_eq!(query.type_, None);
     assert_eq!(query.name, None);
-    let category = &query.filters.type_filters.as_ref().unwrap().filters.category;
+    let category = &query
+        .filters
+        .type_filters
+        .as_ref()
+        .unwrap()
+        .filters
+        .category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
 
     // Three stat lines all map; default options emit them disabled.
@@ -134,7 +140,14 @@ fn unique_query_sets_both_name_and_type() {
     let req = build_search_query(&item, &stats(), &items(), QueryOptions::default());
     assert_eq!(req.query.name.as_deref(), Some("Mageblood"));
     assert_eq!(req.query.type_.as_deref(), Some("Utility Belt"));
-    let category = &req.query.filters.type_filters.as_ref().unwrap().filters.category;
+    let category = &req
+        .query
+        .filters
+        .type_filters
+        .as_ref()
+        .unwrap()
+        .filters
+        .category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.belt");
 }
 
@@ -172,7 +185,7 @@ fn securable_status_selects_instant_buyout_listings() {
     assert_eq!(online.query.status.option, "online");
 }
 
-// ---- detailed mode (PRD §4.7) ---------------------------------------------
+// ---- detailed mode --------------------------------------------------------
 
 #[test]
 fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
@@ -203,7 +216,14 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
     // Category-based search (no exact base type) carries over from the quick
     // query.
     assert_eq!(req.query.type_, None);
-    let category = &req.query.filters.type_filters.as_ref().unwrap().filters.category;
+    let category = &req
+        .query
+        .filters
+        .type_filters
+        .as_ref()
+        .unwrap()
+        .filters
+        .category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
 
     // Both selections appear; disabled mirrors !enabled.
@@ -215,7 +235,14 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
         .unwrap();
     assert!(!enabled.disabled);
     assert_eq!(
-        enabled.value.as_ref().unwrap().min.as_ref().unwrap().as_i64(),
+        enabled
+            .value
+            .as_ref()
+            .unwrap()
+            .min
+            .as_ref()
+            .unwrap()
+            .as_i64(),
         Some(25)
     );
     let disabled = filters
@@ -271,7 +298,14 @@ fn detailed_query_with_nothing_active_is_a_bare_base_search() {
     assert!(req.query.filters.trade_filters.is_none());
     assert!(req.query.filters.equipment_filters.is_none());
     assert_eq!(req.query.type_, None);
-    let category = &req.query.filters.type_filters.as_ref().unwrap().filters.category;
+    let category = &req
+        .query
+        .filters
+        .type_filters
+        .as_ref()
+        .unwrap()
+        .filters
+        .category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
 }
 
@@ -331,11 +365,23 @@ fn detailed_query_carries_sockets_and_quality() {
         },
     );
     // Sockets ride in equipment_filters; quality + ilvl ride in type_filters.
-    let eq = &req.query.filters.equipment_filters.as_ref().unwrap().filters;
+    let eq = &req
+        .query
+        .filters
+        .equipment_filters
+        .as_ref()
+        .unwrap()
+        .filters;
     assert_eq!(eq["rune_sockets"].min.as_ref().unwrap().as_i64(), Some(3));
     let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
-    assert_eq!(tf.quality.as_ref().unwrap().min.as_ref().unwrap().as_i64(), Some(23));
-    assert_eq!(tf.ilvl.as_ref().unwrap().min.as_ref().unwrap().as_i64(), Some(82));
+    assert_eq!(
+        tf.quality.as_ref().unwrap().min.as_ref().unwrap().as_i64(),
+        Some(23)
+    );
+    assert_eq!(
+        tf.ilvl.as_ref().unwrap().min.as_ref().unwrap().as_i64(),
+        Some(82)
+    );
 }
 
 #[test]
@@ -346,8 +392,14 @@ fn detailed_query_carries_checked_misc_filters() {
         &items(),
         &DetailedFilters {
             misc: vec![
-                MiscSelection { key: "corrupted".to_string(), on: true },
-                MiscSelection { key: "mirrored".to_string(), on: false },
+                MiscSelection {
+                    key: "corrupted".to_string(),
+                    on: true,
+                },
+                MiscSelection {
+                    key: "mirrored".to_string(),
+                    on: false,
+                },
             ],
             ..Default::default()
         },

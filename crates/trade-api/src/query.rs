@@ -1,9 +1,9 @@
-//! Building a [`SearchRequest`] from a parsed [`parser::Item`] (PRD §4.4).
+//! Building a [`SearchRequest`] from a parsed [`parser::Item`].
 //!
-//! What we can pin down exactly we put in `type`/`name`; the affix rolls become
-//! stat filters via the stat-definition snapshot. By default the mapped stat
-//! filters are emitted *disabled* — the base/name search is the broad query a
-//! price check wants, and detailed mode (Phase 5) flips individual mods on.
+//! Exact bits go in `type`/`name`; affix rolls become stat filters via the
+//! stat-definition snapshot. Mapped stat filters are emitted *disabled* by
+//! default — the broad base/name search is what a price check wants; detailed
+//! mode flips individual mods on.
 
 use std::collections::BTreeMap;
 
@@ -125,8 +125,8 @@ pub fn build_search_query(
     }
 }
 
-/// One per-stat filter the user can toggle in detailed mode (PRD §4.7), built
-/// from the item's mapped stats. `min`/`max` are the active range bounds.
+/// One per-stat filter the user can toggle in detailed mode, built from the
+/// item's mapped stats. `min`/`max` are the active range bounds.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatSelection {
     pub id: String,
@@ -150,7 +150,7 @@ impl StatSelection {
     }
 }
 
-/// Detailed-mode price-range filter (PRD §4.7).
+/// Detailed-mode price-range filter.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PriceFilter {
     pub min: Option<f64>,
@@ -165,9 +165,9 @@ impl PriceFilter {
     }
 }
 
-/// One equipment-property filter in detailed mode (PRD §4.7): an item's defence
-/// or offence stat (`ar`, `ev`, `es`, `block`, `spirit`, …), built from the
-/// item's parsed properties rather than its affix mods.
+/// One equipment-property filter in detailed mode: an item's defence or offence
+/// stat (`ar`, `ev`, `es`, `block`, `spirit`, …), built from the item's parsed
+/// properties rather than its affix mods.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EquipmentSelection {
     /// Trade filter id, e.g. `ev` for Evasion.
@@ -184,8 +184,8 @@ pub struct MiscSelection {
     pub on: bool,
 }
 
-/// Everything the user can tune in detailed mode (PRD §4.7): listing status,
-/// per-stat affix filters, equipment-property filters, and a price range.
+/// Everything the user can tune in detailed mode: listing status, per-stat
+/// affix filters, equipment-property filters, and a price range.
 #[derive(Debug, Clone, Default)]
 pub struct DetailedFilters {
     pub status: ListingStatus,
@@ -200,11 +200,10 @@ pub struct DetailedFilters {
     pub price: PriceFilter,
 }
 
-/// Build the detailed-mode search request (PRD §4.7): same exact name / type /
-/// category as the quick query, but the stat filters come from explicit
-/// per-stat selections (each emitted with `disabled = !enabled`, so the
-/// resulting trade-site link mirrors exactly what the user sees), plus
-/// equipment-property filters and an optional price-range filter.
+/// Build the detailed-mode search request: same name / type / category as the
+/// quick query, but stat filters come from explicit per-stat selections (each
+/// `disabled = !enabled`, so the trade-site link mirrors what the user sees),
+/// plus equipment-property and optional price-range filters.
 pub fn build_detailed_query(
     item: &Item,
     items: &ItemDefinitions,
@@ -213,9 +212,11 @@ pub fn build_detailed_query(
     let category_opt = category_for(&item.item_class);
     let (name, type_) = query_name_and_type(item, items, category_opt);
 
-    let trade_filters = PriceRange::new(f.price.min, f.price.max, f.price.currency.clone())
-        .map(|price| TradeFilters {
-            filters: TradeFilterFields { price: Some(price) },
+    let trade_filters =
+        PriceRange::new(f.price.min, f.price.max, f.price.currency.clone()).map(|price| {
+            TradeFilters {
+                filters: TradeFilterFields { price: Some(price) },
+            }
         });
 
     // type_filters holds the category, the rarity, and the quality/ilvl filters,
@@ -223,22 +224,19 @@ pub fn build_detailed_query(
     let quality = f.quality.map(StatValue::min);
     let ilvl = f.item_level.map(StatValue::min);
     let rarity = rarity_option(&item.rarity).map(OptionFilter::new);
-    let type_filters = if category_opt.is_some()
-        || rarity.is_some()
-        || quality.is_some()
-        || ilvl.is_some()
-    {
-        Some(TypeFilters {
-            filters: TypeFilterFields {
-                category: category_opt.map(OptionFilter::new),
-                rarity,
-                quality,
-                ilvl,
-            },
-        })
-    } else {
-        None
-    };
+    let type_filters =
+        if category_opt.is_some() || rarity.is_some() || quality.is_some() || ilvl.is_some() {
+            Some(TypeFilters {
+                filters: TypeFilterFields {
+                    category: category_opt.map(OptionFilter::new),
+                    rarity,
+                    quality,
+                    ilvl,
+                },
+            })
+        } else {
+            None
+        };
     let filters = Filters {
         type_filters,
         equipment_filters: build_equipment_filters(&f.equipment),
@@ -299,11 +297,10 @@ fn build_equipment_filters(selections: &[EquipmentSelection]) -> Option<Equipmen
     }
 }
 
-/// Name/type for the query. A *rare* with a known category drops the exact base
-/// type and searches the whole *category* instead (e.g. "body armour", not
-/// "Corsair Coat") — we want comparable rares across bases. Normal/magic/unique
-/// items keep their exact base: a white "Prismatic Ring" must stay that base
-/// (you're buying the base + implicit), not become "all rings".
+/// Name/type for the query. A *rare* with a known category drops its exact base
+/// and searches the whole category (comparable rares across bases). Other
+/// rarities keep their exact base — a white "Prismatic Ring" must stay that
+/// base (you're buying the base + implicit), not become "all rings".
 fn query_name_and_type(
     item: &Item,
     items: &ItemDefinitions,
@@ -350,8 +347,8 @@ fn name_and_type(item: &Item, items: &ItemDefinitions) -> (Option<String>, Optio
         }
         // The parser leaves a magic item's base fused in `name`; split it out.
         Rarity::Magic => {
-            let base =
-                resolved_base().or_else(|| item.name.as_deref().and_then(|n| items.split_magic_base(n)));
+            let base = resolved_base()
+                .or_else(|| item.name.as_deref().and_then(|n| items.split_magic_base(n)));
             (None, base)
         }
         // Rare drops to the category in `query_name_and_type`, so its type is

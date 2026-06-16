@@ -1,5 +1,5 @@
 //! The trade client: ties query building, the HTTP seam, rate-limit gating and
-//! response parsing into search + fetch + price-check operations (PRD §4.4).
+//! response parsing into search + fetch + price-check operations.
 
 use std::sync::{Mutex as StdMutex, RwLock};
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ pub const FETCH_BATCH: usize = 10;
 pub struct ClientConfig {
     /// Scheme + host, no trailing slash. Defaults to the official site.
     pub base_url: String,
-    /// League id, e.g. `Mirage` (PRD §4.8 populates this from the leagues API).
+    /// League id, e.g. `Mirage` (populated from the leagues API).
     pub league: String,
     /// Realm (`pc` / `sony` / `xbox`); anonymous queries are realm-aware.
     pub realm: Option<String>,
@@ -50,7 +50,7 @@ pub struct PriceCheck {
 }
 
 impl PriceCheck {
-    /// Median asking price over the modal currency (PRD §4.6).
+    /// Median asking price over the modal currency.
     pub fn median_price(&self) -> Option<Price> {
         price::median_price(&self.listings)
     }
@@ -64,24 +64,21 @@ impl PriceCheck {
 pub struct TradeClient<T: HttpTransport> {
     transport: T,
     config: ClientConfig,
-    /// The active league. Held behind a lock so the UI can switch leagues at
-    /// runtime (PRD §4.8 selector) without rebuilding the whole client — the
-    /// definitions are league-independent. Seeded from `config.league`.
+    /// Active league, behind a lock so the UI can switch at runtime without
+    /// rebuilding the client (definitions are league-independent).
     league: RwLock<String>,
-    /// Optional `POESESSID` session cookie. When set, every gated request
-    /// (search / fetch / exchange / teleport) carries `Cookie: POESESSID=…`, so
-    /// the fetch response includes the per-listing `hideout_token` needed to
-    /// teleport to Instant Buyout sellers. Runtime-settable from Settings.
+    /// Optional `POESESSID` session cookie. When set, gated requests carry
+    /// `Cookie: POESESSID=…` so fetch responses include the per-listing
+    /// `hideout_token` needed to teleport to Instant Buyout sellers.
     poesessid: RwLock<Option<String>>,
     stats: StatDefinitions,
     items: ItemDefinitions,
     /// Bulk-exchange currency catalogue (`data/static`), for pricing stackables.
     currencies: CurrencyDefinitions,
     limiter: Mutex<RateLimiter>,
-    /// When the in-flight (or next) request is allowed to fire, if it's been
-    /// rate-limit-delayed. The UI polls [`retry_in`](Self::retry_in) to show a
-    /// "throttled, retrying in Ns" note (PRD §4.4). Plain `std` mutex: only ever
-    /// locked briefly, never across an await.
+    /// When the next request may fire, if rate-limit-delayed; polled by
+    /// [`retry_in`](Self::retry_in) for the "retrying in Ns" note. Plain `std`
+    /// mutex: locked only briefly, never across an await.
     retry_at: StdMutex<Option<Instant>>,
 }
 
@@ -118,8 +115,8 @@ impl<T: HttpTransport> TradeClient<T> {
         self.league.read().expect("league lock").clone()
     }
 
-    /// Switch the league future searches target (PRD §4.8). Cheap — definitions
-    /// are league-independent, so no rebuild.
+    /// Switch the league future searches target. Cheap — definitions are
+    /// league-independent, so no rebuild.
     pub fn set_league(&self, league: impl Into<String>) {
         *self.league.write().expect("league lock") = league.into();
     }
@@ -168,13 +165,14 @@ impl<T: HttpTransport> TradeClient<T> {
 
     /// Submit a search query, returning the query id + result hashes.
     pub async fn search(&self, request: &SearchRequest) -> Result<SearchResponse, Error> {
-        let body = serde_json::to_string(request).map_err(|e| Error::decode("search request", e))?;
+        let body =
+            serde_json::to_string(request).map_err(|e| Error::decode("search request", e))?;
         // The league is a path segment and can contain spaces ("Runes of
         // Aldur"), so it must be percent-encoded.
         let url = self.with_realm(format!(
             "{}/api/trade2/search/{}",
             self.config.base_url,
-            encode_path_segment(&self.league())
+            crate::http::percent_encode(&self.league())
         ));
         let resp = self
             .send(HttpRequest {
@@ -199,7 +197,8 @@ impl<T: HttpTransport> TradeClient<T> {
                 self.config.base_url, csv, query_id
             );
             if let Some(realm) = &self.config.realm {
-                url.push_str(&format!("&realm={realm}"));
+                url.push_str("&realm=");
+                url.push_str(realm);
             }
             let resp = self
                 .send(HttpRequest {
@@ -229,8 +228,8 @@ impl<T: HttpTransport> TradeClient<T> {
         self.run_query(&request, max_listings).await
     }
 
-    /// Detailed-mode price check (PRD §4.7): the filters (per-stat, equipment,
-    /// price) come from the UI instead of the quick query's base-type defaults.
+    /// Detailed-mode price check: the filters (per-stat, equipment, price) come
+    /// from the UI instead of the quick query's base-type defaults.
     pub async fn price_check_detailed(
         &self,
         item: &Item,
@@ -241,9 +240,9 @@ impl<T: HttpTransport> TradeClient<T> {
         self.run_query(&request, max_listings).await
     }
 
-    /// Price a stackable item via the bulk **exchange** (PRD §4.4): one POST,
-    /// no fetch round. `want_id` is the `data/static` currency id; `pay` is the
-    /// currency to price in (e.g. `exalted`). Offers come back cheapest-first.
+    /// Price a stackable item via the bulk **exchange**: one POST, no fetch
+    /// round. `want_id` is the `data/static` currency id; `pay` is the currency
+    /// to price in (e.g. `exalted`). Offers come back cheapest-first.
     pub async fn price_check_exchange(
         &self,
         want_id: &str,
@@ -255,7 +254,7 @@ impl<T: HttpTransport> TradeClient<T> {
         let url = self.with_realm(format!(
             "{}/api/trade2/exchange/{}",
             self.config.base_url,
-            encode_path_segment(&self.league())
+            crate::http::percent_encode(&self.league())
         ));
         let resp = self
             .send(HttpRequest {
@@ -269,14 +268,14 @@ impl<T: HttpTransport> TradeClient<T> {
         crate::exchange::parse_exchange(&resp.body, want_id, pay)
     }
 
-    /// Teleport into an Instant Buyout seller's hideout (to buy from Ange the
-    /// Merchant), the way the trade site's button does. `token` is a listing's
+    /// Teleport into an Instant Buyout seller's hideout, as the trade site's
+    /// button does. `token` is a listing's
     /// [`hideout_token`](crate::model::Listing::hideout_token) from an
-    /// authenticated fetch — it expires ≈5 min after the fetch, so call this
-    /// promptly. Requires a `POESESSID` (else the API answers 401 Unauthorized).
+    /// authenticated fetch; it expires ≈5 min, so call promptly. Needs a
+    /// `POESESSID` (else 401).
     ///
-    /// **This has an in-game effect**: it pulls your character into the seller's
-    /// hideout. Fire it only on an explicit user action.
+    /// **Has an in-game effect**: pulls your character into the seller's
+    /// hideout. Fire only on explicit user action.
     pub async fn teleport_to_hideout(&self, token: &str) -> Result<(), Error> {
         let url = format!("{}/api/trade2/whisper", self.config.base_url);
         let body = serde_json::json!({ "token": token }).to_string();
@@ -288,7 +287,10 @@ impl<T: HttpTransport> TradeClient<T> {
                 headers: vec![
                     ("X-Requested-With".to_string(), "XMLHttpRequest".to_string()),
                     ("Origin".to_string(), self.config.base_url.clone()),
-                    ("Referer".to_string(), format!("{}/trade2", self.config.base_url)),
+                    (
+                        "Referer".to_string(),
+                        format!("{}/trade2", self.config.base_url),
+                    ),
                 ],
                 body: Some(body),
             })
@@ -313,9 +315,9 @@ impl<T: HttpTransport> TradeClient<T> {
         })
     }
 
-    /// Secondary ML price estimate from poeprices.info (PRD §4.4, detailed mode
-    /// only). Takes the raw clipboard `item_text`. Not run through the GGG rate
-    /// limiter — it's a different service with its own limits, handled inside.
+    /// Secondary ML price estimate from poeprices.info (detailed mode only).
+    /// Takes raw clipboard `item_text`. Not gated by the GGG rate limiter — a
+    /// different service with its own limits, handled inside.
     pub async fn price_estimate(
         &self,
         item_text: &str,
@@ -325,16 +327,17 @@ impl<T: HttpTransport> TradeClient<T> {
 
     fn with_realm(&self, mut url: String) -> String {
         if let Some(realm) = &self.config.realm {
-            url.push_str(&format!("?realm={realm}"));
+            url.push_str("?realm=");
+            url.push_str(realm);
         }
         url
     }
 
     /// Send one request through the rate-limit gate, retrying through a 429.
     async fn send(&self, mut request: HttpRequest) -> Result<HttpResponse, Error> {
-        // Attach the session cookie (if set) so the response carries the
-        // authenticated-only fields (e.g. `hideout_token`). Don't clobber a
-        // Cookie the caller already supplied.
+        const MAX_ATTEMPTS: u32 = 3;
+        // Attach the session cookie (if set) for authenticated-only fields
+        // (e.g. `hideout_token`); don't clobber a caller-supplied Cookie.
         if let Some(cookie) = self.cookie_header() {
             if !request
                 .headers
@@ -344,7 +347,6 @@ impl<T: HttpTransport> TradeClient<T> {
                 request.headers.push(("Cookie".to_string(), cookie));
             }
         }
-        const MAX_ATTEMPTS: u32 = 3;
         for attempt in 0..MAX_ATTEMPTS {
             let delay = self.limiter.lock().await.delay_before_next(Instant::now());
             if !delay.is_zero() {
@@ -377,8 +379,8 @@ impl<T: HttpTransport> TradeClient<T> {
     }
 }
 
-/// Fetch the live `trade2/data/stats` + `data/items` snapshots (PRD §4.3,
-/// refreshed on app start). Anonymous; no auth required.
+/// Fetch the live `trade2/data/stats` + `data/items` snapshots (refreshed on
+/// app start). Anonymous; no auth required.
 pub async fn fetch_definitions<T: HttpTransport>(
     transport: &T,
     base_url: &str,
@@ -394,7 +396,7 @@ pub async fn fetch_definitions<T: HttpTransport>(
     ))
 }
 
-/// A trade league as offered by `trade2/data/leagues` (PRD §4.8 selector).
+/// A trade league as offered by `trade2/data/leagues`.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct League {
     /// League id used as the search path segment (e.g. `Runes of Aldur`).
@@ -427,22 +429,6 @@ async fn get_body<T: HttpTransport>(transport: &T, url: &str) -> Result<String, 
         })
         .await?;
     ok_or_api_error(resp).map(|r| r.body)
-}
-
-/// Percent-encode a URL path segment (RFC 3986 unreserved chars pass through).
-/// League ids like `Runes of Aldur` carry spaces that would otherwise produce
-/// an invalid URL.
-fn encode_path_segment(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 fn ok_or_api_error(resp: HttpResponse) -> Result<HttpResponse, Error> {

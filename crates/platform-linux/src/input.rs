@@ -1,16 +1,15 @@
 //! Global hotkey detection by reading evdev keyboards directly.
 //!
-//! Per PRD §4.1 we read `/dev/input/by-id/*-event-kbd` rather than going
-//! through the compositor (KDE Plasma 6 Wayland has no usable global-shortcut
-//! path for an XWayland-targeted overlay). The user must be in the `input`
-//! group for the device nodes to be readable.
+//! We read `/dev/input/by-id/*-event-kbd` rather than going through the
+//! compositor (KDE Plasma 6 Wayland has no usable global-shortcut path for an
+//! XWayland-targeted overlay). The user must be in the `input` group for the
+//! device nodes to be readable.
 //!
-//! We bind to POE2's own copy combos on purpose (§4.1): the game does the
-//! copy, we just observe the keypress and then read the resulting clipboard.
+//! We bind to POE2's own copy combos on purpose: the game does the copy, we just
+//! observe the keypress and then read the resulting clipboard.
 //!
-//! One blocking reader thread per keyboard. The default-threadpool footgun
-//! called out in the PRD is a Node/libuv concern; std threads have no such
-//! cap, so connecting >4 keyboards is fine here.
+//! One blocking reader thread per keyboard; std threads have no pool cap, so
+//! many keyboards is fine.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -56,7 +55,7 @@ pub struct Binding {
 impl Binding {
     /// Parse `"Ctrl+Alt+C"`-style strings (case-insensitive modifiers; the last
     /// `+`-segment is the key). Errors on an unknown key name.
-    pub fn parse(s: &str) -> anyhow::Result<Self> {
+    pub(crate) fn parse(s: &str) -> anyhow::Result<Self> {
         let mut ctrl = false;
         let mut alt = false;
         let mut shift = false;
@@ -66,21 +65,29 @@ impl Binding {
                 "ctrl" | "control" => ctrl = true,
                 "alt" => alt = true,
                 "shift" => shift = true,
-                other => key = Some(key_from_name(other).ok_or_else(|| {
-                    anyhow::anyhow!("unknown key `{part}` in hotkey `{s}`")
-                })?),
+                other => {
+                    key =
+                        Some(key_from_name(other).ok_or_else(|| {
+                            anyhow::anyhow!("unknown key `{part}` in hotkey `{s}`")
+                        })?);
+                }
             }
         }
         let key = key.ok_or_else(|| anyhow::anyhow!("no key in hotkey `{s}`"))?;
-        Ok(Binding { key, ctrl, alt, shift })
+        Ok(Binding {
+            key,
+            ctrl,
+            alt,
+            shift,
+        })
     }
 
-    fn matches(&self, key: Key, ctrl: bool, alt: bool, shift: bool) -> bool {
+    fn matches(self, key: Key, ctrl: bool, alt: bool, shift: bool) -> bool {
         self.key == key && self.ctrl == ctrl && self.alt == alt && self.shift == shift
     }
 }
 
-/// The configurable hotkeys (PRD §4.8 makes these rebindable).
+/// The configurable, rebindable hotkeys.
 #[derive(Debug, Clone, Copy)]
 pub struct HotkeyBindings {
     pub quick: Binding,
@@ -93,11 +100,36 @@ pub struct HotkeyBindings {
 impl Default for HotkeyBindings {
     fn default() -> Self {
         HotkeyBindings {
-            quick: Binding { key: Key::KEY_C, ctrl: true, alt: false, shift: false },
-            detailed: Binding { key: Key::KEY_C, ctrl: true, alt: true, shift: false },
-            close: Binding { key: Key::KEY_ESC, ctrl: false, alt: false, shift: false },
-            macro_: Binding { key: Key::KEY_F5, ctrl: false, alt: false, shift: false },
-            macro2: Binding { key: Key::KEY_F2, ctrl: false, alt: false, shift: false },
+            quick: Binding {
+                key: Key::KEY_C,
+                ctrl: true,
+                alt: false,
+                shift: false,
+            },
+            detailed: Binding {
+                key: Key::KEY_C,
+                ctrl: true,
+                alt: true,
+                shift: false,
+            },
+            close: Binding {
+                key: Key::KEY_ESC,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            },
+            macro_: Binding {
+                key: Key::KEY_F5,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            },
+            macro2: Binding {
+                key: Key::KEY_F2,
+                ctrl: false,
+                alt: false,
+                shift: false,
+            },
         }
     }
 }
@@ -181,16 +213,42 @@ fn key_from_name(name: &str) -> Option<Key> {
 
 fn ascii_key(c: char) -> Option<Key> {
     Some(match c {
-        'a' => Key::KEY_A, 'b' => Key::KEY_B, 'c' => Key::KEY_C, 'd' => Key::KEY_D,
-        'e' => Key::KEY_E, 'f' => Key::KEY_F, 'g' => Key::KEY_G, 'h' => Key::KEY_H,
-        'i' => Key::KEY_I, 'j' => Key::KEY_J, 'k' => Key::KEY_K, 'l' => Key::KEY_L,
-        'm' => Key::KEY_M, 'n' => Key::KEY_N, 'o' => Key::KEY_O, 'p' => Key::KEY_P,
-        'q' => Key::KEY_Q, 'r' => Key::KEY_R, 's' => Key::KEY_S, 't' => Key::KEY_T,
-        'u' => Key::KEY_U, 'v' => Key::KEY_V, 'w' => Key::KEY_W, 'x' => Key::KEY_X,
-        'y' => Key::KEY_Y, 'z' => Key::KEY_Z,
-        '0' => Key::KEY_0, '1' => Key::KEY_1, '2' => Key::KEY_2, '3' => Key::KEY_3,
-        '4' => Key::KEY_4, '5' => Key::KEY_5, '6' => Key::KEY_6, '7' => Key::KEY_7,
-        '8' => Key::KEY_8, '9' => Key::KEY_9,
+        'a' => Key::KEY_A,
+        'b' => Key::KEY_B,
+        'c' => Key::KEY_C,
+        'd' => Key::KEY_D,
+        'e' => Key::KEY_E,
+        'f' => Key::KEY_F,
+        'g' => Key::KEY_G,
+        'h' => Key::KEY_H,
+        'i' => Key::KEY_I,
+        'j' => Key::KEY_J,
+        'k' => Key::KEY_K,
+        'l' => Key::KEY_L,
+        'm' => Key::KEY_M,
+        'n' => Key::KEY_N,
+        'o' => Key::KEY_O,
+        'p' => Key::KEY_P,
+        'q' => Key::KEY_Q,
+        'r' => Key::KEY_R,
+        's' => Key::KEY_S,
+        't' => Key::KEY_T,
+        'u' => Key::KEY_U,
+        'v' => Key::KEY_V,
+        'w' => Key::KEY_W,
+        'x' => Key::KEY_X,
+        'y' => Key::KEY_Y,
+        'z' => Key::KEY_Z,
+        '0' => Key::KEY_0,
+        '1' => Key::KEY_1,
+        '2' => Key::KEY_2,
+        '3' => Key::KEY_3,
+        '4' => Key::KEY_4,
+        '5' => Key::KEY_5,
+        '6' => Key::KEY_6,
+        '7' => Key::KEY_7,
+        '8' => Key::KEY_8,
+        '9' => Key::KEY_9,
         _ => return None,
     })
 }
@@ -247,11 +305,7 @@ fn keyboard_paths() -> anyhow::Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .ends_with(KBD_SUFFIX)
-        {
+        if entry.file_name().to_string_lossy().ends_with(KBD_SUFFIX) {
             paths.push(entry.path());
         }
     }
@@ -261,7 +315,14 @@ fn keyboard_paths() -> anyhow::Result<Vec<PathBuf>> {
 
 /// Blocking read loop for one keyboard. Tracks this keyboard's modifier state
 /// and emits a hotkey when a key matching a configured [`Binding`] is pressed.
-fn reader_loop(mut device: Device, label: String, tx: Sender<HotkeyEvent>, bindings: HotkeyBindings) {
+// Owns its inputs: this runs as a thread body for the process lifetime.
+#[allow(clippy::needless_pass_by_value)]
+fn reader_loop(
+    mut device: Device,
+    label: String,
+    tx: Sender<HotkeyEvent>,
+    bindings: HotkeyBindings,
+) {
     let mut ctrl = false;
     let mut alt = false;
     let mut shift = false;
@@ -327,11 +388,26 @@ mod tests {
     fn exact_match_disambiguates_quick_and_detailed() {
         let b = HotkeyBindings::default();
         // Ctrl+C → quick; Ctrl+Alt+C → detailed; neither bare nor wrong-mods.
-        assert_eq!(b.event_for(Key::KEY_C, true, false, false), Some(HotkeyEvent::QuickCopy));
-        assert_eq!(b.event_for(Key::KEY_C, true, true, false), Some(HotkeyEvent::DetailedCopy));
+        assert_eq!(
+            b.event_for(Key::KEY_C, true, false, false),
+            Some(HotkeyEvent::QuickCopy)
+        );
+        assert_eq!(
+            b.event_for(Key::KEY_C, true, true, false),
+            Some(HotkeyEvent::DetailedCopy)
+        );
         assert_eq!(b.event_for(Key::KEY_C, false, false, false), None);
-        assert_eq!(b.event_for(Key::KEY_F5, false, false, false), Some(HotkeyEvent::Macro));
-        assert_eq!(b.event_for(Key::KEY_F2, false, false, false), Some(HotkeyEvent::Macro2));
-        assert_eq!(b.event_for(Key::KEY_ESC, false, false, false), Some(HotkeyEvent::Close));
+        assert_eq!(
+            b.event_for(Key::KEY_F5, false, false, false),
+            Some(HotkeyEvent::Macro)
+        );
+        assert_eq!(
+            b.event_for(Key::KEY_F2, false, false, false),
+            Some(HotkeyEvent::Macro2)
+        );
+        assert_eq!(
+            b.event_for(Key::KEY_ESC, false, false, false),
+            Some(HotkeyEvent::Close)
+        );
     }
 }

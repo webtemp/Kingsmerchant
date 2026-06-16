@@ -1,5 +1,5 @@
-//! Aggregating listing prices for quick mode (PRD §4.6): a median asking price
-//! and the cheapest few live listings.
+//! Aggregating listing prices for quick mode: a median asking price and the
+//! cheapest few live listings.
 
 use std::collections::HashMap;
 
@@ -16,8 +16,11 @@ pub fn modal_currency(entries: &[ResultEntry]) -> Option<String> {
         }
         *counts.entry(c).or_default() += 1;
     }
+    // `max_by_key` returns the *last* of equally-maximum elements, so reverse
+    // the first-seen order to make ties resolve to the first-seen currency.
     order
         .into_iter()
+        .rev()
         .max_by_key(|c| counts[c])
         .map(str::to_string)
 }
@@ -38,7 +41,7 @@ pub fn median_price(entries: &[ResultEntry]) -> Option<Price> {
     amounts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = amounts.len() / 2;
     let amount = if amounts.len().is_multiple_of(2) {
-        (amounts[mid - 1] + amounts[mid]) / 2.0
+        f64::midpoint(amounts[mid - 1], amounts[mid])
     } else {
         amounts[mid]
     };

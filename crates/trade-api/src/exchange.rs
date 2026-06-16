@@ -1,18 +1,15 @@
-//! POE2 bulk currency **exchange** (PRD §4.4).
+//! POE2 bulk currency **exchange**.
 //!
-//! Stackable items — currency, runes, fragments, essences, waystones, … — are
-//! NOT sold as individual listings, so the per-item `search` endpoint finds
-//! nothing for them. They trade through the bulk exchange:
-//! `POST /api/trade2/exchange/{league}` with a `want` currency id and the
-//! `have` currencies you'll pay with. Each result is an *offer* (a ratio like
-//! "3 exalted : 1 rune"), so the unit price is `pay_amount / get_amount` in the
-//! pay currency.
+//! Stackables (currency, runes, fragments, essences, waystones, …) aren't sold
+//! as individual listings, so the per-item `search` finds nothing. They trade
+//! through `POST /api/trade2/exchange/{league}` with a `want` currency id and
+//! the `have` currencies you'll pay with. Each result is an *offer* (a ratio),
+//! so unit price is `pay_amount / get_amount`.
 //!
-//! Item names map to exchange ids via the `trade2/data/static` catalogue
-//! ([`CurrencyDefinitions`]). We query a single pay currency at a time (default
-//! Exalted, chosen in the UI) so every offer is in one currency and the list is
-//! trivially sortable — sidestepping the exalted-vs-divine normalisation
-//! problem (PRD currency notes).
+//! Names map to exchange ids via `trade2/data/static` ([`CurrencyDefinitions`]).
+//! We query one pay currency at a time (default Exalted) so every offer is in
+//! one currency and trivially sortable, sidestepping exalted-vs-divine
+//! normalisation.
 
 use std::collections::HashMap;
 
@@ -29,12 +26,11 @@ pub struct CurrencyDefinitions {
     by_name: HashMap<String, CurrencyEntry>,
 }
 
-/// One exchangeable currency: its short id, display text, and (optional) image.
+/// One exchangeable currency: its short id and display text.
 #[derive(Debug, Clone)]
 pub struct CurrencyEntry {
     pub id: String,
     pub text: String,
-    pub image: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -54,8 +50,6 @@ struct StaticEntry {
     id: String,
     #[serde(default)]
     text: Option<String>,
-    #[serde(default)]
-    image: Option<String>,
 }
 
 impl CurrencyDefinitions {
@@ -67,11 +61,9 @@ impl CurrencyDefinitions {
         for group in doc.result {
             for entry in group.entries {
                 if let Some(text) = entry.text {
-                    by_name.entry(text.clone()).or_insert(CurrencyEntry {
-                        id: entry.id,
-                        text,
-                        image: entry.image,
-                    });
+                    by_name
+                        .entry(text.clone())
+                        .or_insert(CurrencyEntry { id: entry.id, text });
                 }
             }
         }
@@ -192,10 +184,8 @@ pub struct ExchangeCheck {
 #[derive(Debug, Clone)]
 pub struct ExchangeOffer {
     /// Price per unit of the wanted item, in the pay currency
-    /// (`pay_amount / get_amount`).
+    /// (the seller's pay-amount divided by their get-amount).
     pub unit_price: f64,
-    pub pay_amount: f64,
-    pub get_amount: f64,
     /// How many units the seller has in stock.
     pub stock: Option<f64>,
     pub account: String,
@@ -215,7 +205,7 @@ impl ExchangeCheck {
         // offers is already sorted ascending by unit_price.
         let mid = self.offers.len() / 2;
         Some(if self.offers.len().is_multiple_of(2) {
-            (self.offers[mid - 1].unit_price + self.offers[mid].unit_price) / 2.0
+            f64::midpoint(self.offers[mid - 1].unit_price, self.offers[mid].unit_price)
         } else {
             self.offers[mid].unit_price
         })
@@ -236,12 +226,7 @@ pub fn parse_exchange(json: &str, want_id: &str, pay: &str) -> Result<ExchangeCh
     let mut offers = Vec::new();
     for wrap in resp.result.into_values() {
         let listing = wrap.listing;
-        let online = listing
-            .account
-            .online
-            .as_ref()
-            .map(|o| o.status.is_none())
-            .unwrap_or(false);
+        let online = listing.account.is_online();
         let account = listing.account.name.clone();
         let character = listing.account.last_character_name.clone();
         for offer in &listing.offers {
@@ -251,8 +236,6 @@ pub fn parse_exchange(json: &str, want_id: &str, pay: &str) -> Result<ExchangeCh
             }
             offers.push(ExchangeOffer {
                 unit_price: offer.exchange.amount / offer.item.amount,
-                pay_amount: offer.exchange.amount,
-                get_amount: offer.item.amount,
                 stock: offer.item.stock,
                 account: account.clone(),
                 character: character.clone(),
@@ -279,10 +262,9 @@ pub fn parse_exchange(json: &str, want_id: &str, pay: &str) -> Result<ExchangeCh
     })
 }
 
-/// Build the ready-to-paste trade whisper from the exchange templates. POE2's
-/// exchange whisper is a template with `{0}` (the item) and `{1}` (the price),
-/// each itself a template with `{0}` for the amount, e.g.
-/// `@seller … {0} … {1} …` + item `{0} Exalted Orb` + pay `{0} <rune>`.
+/// Build the ready-to-paste whisper from the exchange templates. The outer
+/// whisper has `{0}` (item) and `{1}` (price); each is itself a template with
+/// `{0}` for the amount.
 fn build_whisper(template: Option<&str>, item: &RawSide, pay: &RawSide) -> Option<String> {
     let template = template?;
     let item_part = item
@@ -354,7 +336,10 @@ mod tests {
         assert_eq!(check.id, "5n2ORePVta");
         assert!(!check.offers.is_empty());
         // Cheapest-first, all priced in exalted, with a filled whisper.
-        assert!(check.offers.windows(2).all(|w| w[0].unit_price <= w[1].unit_price));
+        assert!(check
+            .offers
+            .windows(2)
+            .all(|w| w[0].unit_price <= w[1].unit_price));
         let first = &check.offers[0];
         assert!(first.unit_price > 0.0);
         let whisper = first.whisper.as_deref().unwrap_or("");

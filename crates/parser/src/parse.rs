@@ -1,11 +1,9 @@
 //! The parser itself: POE2 clipboard text → [`Item`].
 //!
-//! POE2 item text is a series of sections separated by lines of dashes
-//! (`--------`). The first section is always a header (`Item Class:`,
-//! `Rarity:`, name lines). We classify each remaining section by its content
-//! rather than its position, because which sections appear — and in what order
-//! — varies by item type (a ring has no Quality/Sockets section, a sceptre has
-//! a `Grants Skill` section, a waystone has map-modifier properties, etc.).
+//! Item text is dash-separated (`--------`) sections; the first is always a
+//! header (`Item Class:`, `Rarity:`, name lines). Remaining sections are
+//! classified by content, not position, since which appear and in what order
+//! varies by item type.
 
 use std::sync::OnceLock;
 
@@ -46,25 +44,22 @@ pub fn parse_item(input: &str) -> Result<Item, ParseError> {
         } else if let Some(v) = line.strip_prefix("Rarity:") {
             rarity = Some(Rarity::parse(v.trim()));
         } else if line.trim().starts_with("You cannot use this item") {
-            // POE2 inserts this usability note (when the current character can't
-            // use the item) into the header AND a separator after it, pushing
-            // the real name/base into the next section. It is NOT the base type.
+            // Usability note + a separator land in the header, pushing the real
+            // name/base into the next section. Not the base type.
             unusable = true;
         } else if !line.trim().is_empty() {
             name_lines.push(line.trim());
         }
     }
 
-    // `Rarity:` is the reliable "this is a POE2 item" marker (PRD §4.2). Most
-    // copies also carry `Item Class:`, but a few (e.g. meta gems copied from the
-    // trade site) omit it, so it's optional.
+    // `Rarity:` is the reliable "this is a POE2 item" marker. `Item Class:` is
+    // optional — a few copies (e.g. meta gems from the trade site) omit it.
     let rarity = rarity.ok_or(ParseError::NotAnItem)?;
     let item_class = item_class.unwrap_or_default();
 
-    // When the usability note occupied the header, the name/base were split off
-    // into the next section — adopt it as the name lines (and skip re-parsing it
-    // as a property section below). A valid item always carries its name in the
-    // header, so an empty header-name only happens in this note case.
+    // Usability note in the header means name/base were split into the next
+    // section: adopt it as the name lines (and skip re-parsing it below). An
+    // empty header-name only happens in this case.
     let mut name_section = None;
     if name_lines.is_empty() && unusable {
         if let Some(section) = sections.get(1) {
@@ -144,8 +139,10 @@ fn is_separator(line: &str) -> bool {
 }
 
 /// Assign the header's name line(s) to `name` / `base_type` per rarity.
+// Arms are kept separate per rarity for documentation even where bodies match.
+#[allow(clippy::match_same_arms)]
 fn split_name(rarity: &Rarity, lines: &[&str]) -> (Option<String>, Option<String>) {
-    let get = |i: usize| lines.get(i).map(|s| s.to_string());
+    let get = |i: usize| lines.get(i).map(std::string::ToString::to_string);
     match rarity {
         // Identified: title then base type. Unidentified rares/uniques show
         // only the base type (no rolled name), so a single line is the base.
@@ -197,10 +194,9 @@ fn classify_section(section: &[&str], item: &mut Item) {
         if let Some(v) = t.strip_prefix("Item Level:") {
             item.item_level = v.trim().parse().ok();
         } else if let Some(v) = t.strip_prefix("Requires:") {
-            // Items can have several `Requires:` lines (e.g. a gem requiring a
-            // level *and* a weapon type); merge so a later line doesn't clobber
-            // the attributes parsed from an earlier one.
-            merge_requirements(&mut item.requirements, parse_requirements(v));
+            // Items can have several `Requires:` lines; merge so a later line
+            // doesn't clobber attributes from an earlier one.
+            merge_requirements(&mut item.requirements, &parse_requirements(v));
         } else if let Some(v) = t.strip_prefix("Sockets:") {
             item.sockets = Some(v.trim().to_string());
         } else if let Some(v) = t.strip_prefix("Quality:") {
@@ -253,7 +249,7 @@ fn parse_requirements(value: &str) -> Requirements {
 }
 
 /// Fold non-`None` fields of `from` into `into`, keeping existing values.
-fn merge_requirements(into: &mut Requirements, from: Requirements) {
+fn merge_requirements(into: &mut Requirements, from: &Requirements) {
     into.level = from.level.or(into.level);
     into.strength = from.strength.or(into.strength);
     into.dexterity = from.dexterity.or(into.dexterity);
@@ -431,10 +427,8 @@ mod tests {
 
     #[test]
     fn unusable_item_keeps_its_name_and_base() {
-        // When the character can't use an item, POE2 inserts "You cannot use
-        // this item…" into the header + a separator, pushing the name/base into
-        // the next section. The name/base must still be read (else a unique is
-        // searched by garbage and finds nothing).
+        // "You cannot use this item" + a separator land in the header; the
+        // name/base must still be read from the next section.
         let text = "Item Class: Sceptres\n\
             Rarity: Unique\n\
             You cannot use this item. Its stats will be ignored\n\
@@ -453,7 +447,10 @@ mod tests {
         assert_eq!(item.item_level, Some(84));
         // The granted skills are still captured (as properties).
         assert_eq!(
-            item.properties.iter().filter(|p| p.name == "Grants Skill").count(),
+            item.properties
+                .iter()
+                .filter(|p| p.name == "Grants Skill")
+                .count(),
             2
         );
     }
@@ -515,7 +512,10 @@ mod tests {
     #[test]
     fn descriptor_variants() {
         // Full: name + tier + multiple tags.
-        let m = parse_descriptor(r#"{ Suffix Modifier "of the Ice" (Tier: 2) - Elemental, Cold, Resistance }"#).unwrap();
+        let m = parse_descriptor(
+            r#"{ Suffix Modifier "of the Ice" (Tier: 2) - Elemental, Cold, Resistance }"#,
+        )
+        .unwrap();
         assert_eq!(m.kind, ModKind::Suffix);
         assert_eq!(m.source, None);
         assert_eq!(m.name.as_deref(), Some("of the Ice"));
@@ -550,15 +550,23 @@ mod tests {
 
     #[test]
     fn descriptor_source_qualifiers() {
-        let desecrated = parse_descriptor(r#"{ Desecrated Suffix Modifier "of Mastery" (Tier: 2) — Attack, Speed }"#).unwrap();
+        let desecrated = parse_descriptor(
+            r#"{ Desecrated Suffix Modifier "of Mastery" (Tier: 2) — Attack, Speed }"#,
+        )
+        .unwrap();
         assert_eq!(desecrated.kind, ModKind::Suffix);
         assert_eq!(desecrated.source, Some(ModSource::Desecrated));
 
-        let fractured = parse_descriptor(r#"{ Fractured Suffix Modifier "of Unmaking" (Tier: 1) — Attack, Critical }"#).unwrap();
+        let fractured = parse_descriptor(
+            r#"{ Fractured Suffix Modifier "of Unmaking" (Tier: 1) — Attack, Critical }"#,
+        )
+        .unwrap();
         assert_eq!(fractured.kind, ModKind::Suffix);
         assert_eq!(fractured.source, Some(ModSource::Fractured));
 
-        let crafted = parse_descriptor(r#"{ Crafted Prefix Modifier "Motivating" (Tier: 3) — Damage }"#).unwrap();
+        let crafted =
+            parse_descriptor(r#"{ Crafted Prefix Modifier "Motivating" (Tier: 3) — Damage }"#)
+                .unwrap();
         assert_eq!(crafted.kind, ModKind::Prefix);
         assert_eq!(crafted.source, Some(ModSource::Crafted));
     }

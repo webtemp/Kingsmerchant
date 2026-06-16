@@ -1,11 +1,10 @@
-//! Persistent settings (PRD §4.8). Read on startup, rewritten when the user
-//! changes a setting (currently just the league, via the popup selector) so the
-//! choice survives restarts — no env vars needed.
+//! Persistent settings. Read on startup, rewritten when the user changes a
+//! setting (currently just the league) so the choice survives restarts.
 //!
-//! Lives at `$XDG_CONFIG_HOME/poe2ddd/config.json` (i.e.
-//! `~/.config/poe2ddd/config.json`). Hand-editable JSON; a missing or malformed
-//! file falls back to defaults rather than erroring. Hot-reload (file watcher)
-//! is a later phase — for now it's read once at launch and written on change.
+//! Lives at `$XDG_CONFIG_HOME/poe2ddd/config.json`. Hand-editable JSON; a
+//! missing or malformed file falls back to defaults. A file watcher hot-reloads
+//! edits (see the `watchers` module), so writes are atomic to avoid the watcher
+//! observing a half-written file.
 
 use std::path::PathBuf;
 
@@ -36,14 +35,13 @@ pub struct Config {
     /// (100 = exact roll; 90 = 10% below, a looser default search). 1..=100.
     pub filter_min_percent: u32,
     /// Chat command typed into POE2 when the macro hotkey is pressed (via a
-    /// uinput virtual keyboard: opens chat, types this, sends). `null` disables
-    /// it. Injection steps past the clipboard-only design (PRD App. B) — opt-in.
+    /// uinput virtual keyboard: opens chat, types this, sends). `null` disables it.
     pub f5_command: Option<String>,
     /// Second chat macro (default `/exit`, on F2) — same mechanism as
     /// [`f5_command`](Self::f5_command). `null` disables it.
     pub macro2_command: Option<String>,
-    /// Rebindable hotkeys (PRD §4.8). Strings like `"Ctrl+C"`, `"Ctrl+Alt+C"`,
-    /// `"F5"`, `"Escape"` — modifiers `Ctrl`/`Alt`/`Shift` + one key.
+    /// Rebindable hotkeys. Strings like `"Ctrl+C"`, `"F5"`, `"Escape"` —
+    /// modifiers `Ctrl`/`Alt`/`Shift` + one key.
     pub hotkey_quick: String,
     pub hotkey_detailed: String,
     pub hotkey_macro: String,
@@ -57,23 +55,20 @@ pub struct Config {
     /// Which listings to search: `securable` (Instant Buyout — default),
     /// `online` (In Person), `available` (both), or `any`.
     pub trade_status: String,
-    /// Where the popup appears (PRD §4.5/§4.8):
+    /// Where the popup appears:
     /// - `center` — centered on the output (default).
     /// - `fixed` — at [`fixed_x`](Self::fixed_x) / [`fixed_y`](Self::fixed_y).
-    /// - `at-cursor` — next to the cursor at Ctrl+C (Phase 7; currently falls
-    ///   back to `center`).
+    /// - `at-cursor` — next to the cursor (not yet implemented; falls back to
+    ///   `center`).
     pub position_mode: String,
     /// Fixed-mode top-left position, in output-logical pixels from the top-left.
     pub fixed_x: i32,
     pub fixed_y: i32,
     /// Your `POESESSID` trade-site session cookie (32-hex). `null` = not set.
     ///
-    /// Optional. Only needed for the **Teleport** button on Instant Buyout
-    /// listings: those are GGG's async market (buy from Ange in the seller's
-    /// hideout) and the trade API only returns the per-listing teleport token to
-    /// an *authenticated* request. With this set, searches/fetches carry the
-    /// cookie and the Hideout button teleports you straight in — exactly what the
-    /// trade site's button does. Sent ONLY to pathofexile.com; grants trade-API
+    /// Optional; only needed for the **Teleport** button on Instant Buyout
+    /// listings, whose teleport token the trade API returns only to an
+    /// authenticated request. Sent ONLY to pathofexile.com; grants trade-API
     /// access to your account, so treat it like a password.
     pub poesessid: Option<String>,
 }
@@ -126,7 +121,9 @@ impl Config {
             .map(PathBuf::from)
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| {
-                let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
                 home.join(".config")
             });
         base.join("poe2ddd").join("config.json")
@@ -134,10 +131,9 @@ impl Config {
 
     /// Load from disk, falling back to defaults on a missing or invalid file.
     ///
-    /// The loaded config is always written back out, so the file on disk is
-    /// seeded on first run AND backfilled with any newly-added fields (with
-    /// their defaults) — otherwise new settings would be applied at runtime but
-    /// never visible/editable in the file.
+    /// Always written back out, so the file is seeded on first run and
+    /// backfilled with any newly-added fields — otherwise new settings would
+    /// apply at runtime but never be visible/editable in the file.
     pub fn load() -> Self {
         let path = Self::path();
         let config = Self::load_no_write();
@@ -148,7 +144,7 @@ impl Config {
     }
 
     /// Load from disk WITHOUT the backfill write-back. Used by the hot-reload
-    /// watcher (PRD §4.8), which must not re-trigger itself by writing the file.
+    /// watcher, which must not re-trigger itself by writing the file.
     pub fn load_no_write() -> Self {
         let path = Self::path();
         match std::fs::read_to_string(&path) {
@@ -161,13 +157,20 @@ impl Config {
     }
 
     /// Write back to disk (creating the directory if needed).
+    ///
+    /// Writes to a sibling temp file and atomically `rename`s it into place, so
+    /// a concurrent reader (the hot-reload watcher) never sees a truncated file
+    /// and parses it as "invalid → defaults", silently wiping live settings.
     pub fn save(&self) -> anyhow::Result<()> {
         let path = Self::path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, json)?;
+        // Per-pid temp name so two instances don't clobber each other's temp.
+        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &path)?;
         Ok(())
     }
 }

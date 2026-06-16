@@ -1,21 +1,15 @@
-//! Chat-command injection into the focused window (POE2), the fast way.
+//! Fast chat-command injection into the focused window (POE2).
 //!
-//! We do NOT type the command out character-by-character — that's slow and you
-//! watch every letter appear. Instead, like Exiled-Exchange-2, we put the
-//! command on the clipboard and **paste** it: tap Enter (open chat), Ctrl+V
-//! (whole command appears at once), Enter (send). The user's clipboard is saved
-//! and restored around it.
+//! Rather than type character-by-character, we put the command on the clipboard
+//! and paste it: tap Enter (open chat), Ctrl+V, Enter (send). The user's
+//! clipboard is saved and restored around it. Two things keep it instant: paste
+//! not type (one Ctrl+V regardless of length), and a persistent uinput keyboard
+//! reused across presses (avoiding the ~250ms enumeration wait each time).
 //!
-//! Two things make this instant vs the old approach:
-//!   * **paste, not type** — one Ctrl+V regardless of command length;
-//!   * a **persistent** uinput virtual keyboard, created once and reused, so we
-//!     don't pay the ~250ms device-enumeration wait on every press.
-//!
-//! Same uinput mechanism as ydotool: a kernel virtual *hardware* keyboard, so
-//! the compositor delivers the keys to the focused window — including XWayland
-//! POE2 (PRD §9.1's "can't inject" is only true for X11 XTEST / wtype). It types
-//! into whatever's focused, so POE2 must be focused (the hotkey is gated on
-//! that). Opt-in; steps past the clipboard-only anti-cheat envelope (App. B).
+//! uinput is a kernel virtual hardware keyboard, so the compositor delivers keys
+//! to the focused window, including XWayland POE2 (unlike X11 XTEST / wtype).
+//! Types into whatever's focused, so POE2 must be focused (the hotkey gates on
+//! that). Opt-in.
 
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -36,15 +30,14 @@ static DEVICE: OnceLock<Mutex<VirtualDevice>> = OnceLock::new();
 /// existing text with Ctrl+A first (mirrors EE2's `AUTO_CLEAR`).
 const AUTO_CLEAR_PREFIXES: &[char] = &['#', '%', '@', '$', '&', '/'];
 
-/// Brief settle so the xclip selection helper is serving before the FIRST
-/// keystroke. `write_clipboard_text` already blocks until xclip forks and owns
-/// the selection, so this is just a safety margin — and it's BEFORE chat opens,
-/// so it's invisible (unlike a mid-sequence sleep).
+/// Brief settle so the xclip selection helper is serving before the first
+/// keystroke. A safety margin (write already blocks until xclip owns the
+/// selection); invisible since it's before chat opens.
 const CLIPBOARD_SETTLE: Duration = Duration::from_millis(25);
 
-/// Open chat, paste `command`, and send it — fast, so the chat box only flashes
-/// (the EE2 feel) instead of visibly lingering open. Blocks ~250ms only on the
-/// very first call (device setup); afterwards ~80ms. Call off the UI thread.
+/// Open chat, paste `command`, and send it — fast, so the chat box barely
+/// flashes. Blocks ~250ms only on the first call (device setup); ~80ms after.
+/// Call off the UI thread.
 pub fn send_chat_command(command: &str) -> Result<()> {
     // Save the user's clipboard, set ours, paste, restore (so we don't clobber
     // whatever they had copied — e.g. the item they just priced).
@@ -56,19 +49,19 @@ pub fn send_chat_command(command: &str) -> Result<()> {
         .next()
         .is_some_and(|c| AUTO_CLEAR_PREFIXES.contains(&c));
     {
-        let mut device = device()?.lock().expect("inject device lock");
-        // Settle the clipboard BEFORE the burst — invisible (no key sent yet), and
-        // it guarantees the paste reads our text rather than stale content.
+        // Recover from a poisoned lock: a prior panic mid-emit doesn't corrupt
+        // the VirtualDevice, and we'd rather keep injecting than panic forever.
+        let mut device = device()?
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Settle before the burst — invisible, and guarantees the paste reads
+        // our text rather than stale content.
         thread::sleep(CLIPBOARD_SETTLE);
-        // Fire the whole sequence with NO gaps between keys, so POE2 receives it
-        // within a single input tick: it drains the queue in order (open chat →
-        // [clear] → paste → send) and closes the input before ever drawing a frame
-        // with the chat box open — the EE2 "chat never appears" effect. We do NOT
-        // pace with thread::sleep: tiny sleeps overshoot (scheduler granularity)
-        // and would push a key into the next frame, which is exactly the visible
-        // flash we're removing. Ordering is preserved by the kernel (uinput emits
-        // are delivered in order), so a same-tick burst still pastes into the
-        // now-open chat, not the game.
+        // Fire the whole sequence with no gaps, so POE2 drains it in order within
+        // one input tick and closes chat before drawing a frame with it open
+        // ("chat never appears"). No pacing sleeps: tiny sleeps overshoot and push
+        // a key into the next frame — the visible flash we're avoiding. The kernel
+        // preserves uinput emit order, so the burst still pastes into now-open chat.
         tap(&mut device, Key::KEY_ENTER)?; // open chat
         if !auto_clear {
             ctrl_tap(&mut device, Key::KEY_A)?; // clear any leftover text first
@@ -131,7 +124,9 @@ fn tap(device: &mut VirtualDevice, key: Key) -> Result<()> {
 /// Ctrl + key (press Ctrl, tap key, release Ctrl).
 fn ctrl_tap(device: &mut VirtualDevice, key: Key) -> Result<()> {
     emit(device, Key::KEY_LEFTCTRL, 1)?;
-    emit(device, key, 1)?;
-    emit(device, key, 0)?;
-    emit(device, Key::KEY_LEFTCTRL, 0)
+    let tapped = emit(device, key, 1).and_then(|()| emit(device, key, 0));
+    // Always release Ctrl, even if the inner tap failed, so we never leave the
+    // virtual modifier logically stuck down in POE2.
+    let released = emit(device, Key::KEY_LEFTCTRL, 0);
+    tapped.and(released)
 }

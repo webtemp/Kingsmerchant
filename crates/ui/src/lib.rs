@@ -1,106 +1,74 @@
-//! The price-check UI (PRD §4.6, §4.7): the egui view + app logic, windowing
-//! agnostic so the `overlay` crate can drive it on a layer surface.
+//! The price-check UI: the egui view + app logic, windowing agnostic so the
+//! `overlay` crate can drive it on a layer surface.
 //!
-//! Flow: Ctrl+C on an item → parse it → search + fetch via `trade-api` on a
-//! background tokio task → show the median asking price and the cheapest
-//! listings, each with Whisper / Invite / Hideout / Trade-with buttons that copy
-//! the chat command to the clipboard (we can't type into POE2 on Wayland, so
-//! the user pastes — PRD §4.6, §9.1). The popup is pinned open with a filter
-//! panel (per-stat toggles, price range, similar-item) that re-queries live.
+//! Flow: Ctrl+C on an item → parse → search/fetch via `trade-api` on a tokio
+//! task → show the median price and cheapest listings, each with buttons that
+//! copy the chat command to the clipboard (we can't type into POE2 on Wayland).
+//! The popup pins open with a filter panel that re-queries live.
+//!
+//! Split across modules: `model` (shared types + pure helpers), `query`
+//! (background tasks), `watchers` (OS-thread hotkey/config watchers) and
+//! `view` (egui rendering). [`QuickModeApp`] and its lifecycle live here.
 
 pub mod config;
 
+mod model;
+mod query;
+mod view;
+mod watchers;
+
+pub use watchers::{spawn_config_watcher, spawn_hotkey_watcher};
+
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use std::collections::HashSet;
-
 use config::Config;
-use egui::{Color32, RichText};
-use egui_phosphor::regular as ph;
-use parser::{Item, ModKind, Rarity};
+use parser::Item;
 use trade_api::{
-    build_detailed_query, fetch_definitions, fetch_leagues, ClientConfig, DetailedFilters,
-    EquipmentSelection, ExchangeCheck, ExchangeOffer, League, ListingStatus, MiscSelection,
-    PriceCheck, PriceEstimate, PriceFilter, ReqwestTransport, StatSelection,
+    fetch_definitions, fetch_leagues, ClientConfig, League, PriceEstimate, ReqwestTransport,
     TradeClient,
+};
+
+use model::{
+    item_hash, EquipmentRow, ExchangePhase, MinFilter, MiscToggle, Msg, Phase, PriceFilterState,
+    PriceMode, StatFilterRow, View, MISC_OPTIONS,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
 const USER_AGENT: &str = "poe2ddd/0.1 (+phase3 ui)";
 /// Fetch a sample of this many so the median is meaningful; show the cheapest N.
-const SAMPLE: usize = 10;
-const SHOWN: usize = 10;
-/// How long to wait for POE2 to write the clipboard after Ctrl+C. The PRD §4.2
-/// budget was 500ms; we're more patient (1s) because POE2's write latency is
-/// variable, and a too-short window is what made some presses "do nothing".
-const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(1000);
-/// How long a price-check result stays "fresh": re-viewing the same item within
-/// this window re-shows the cached results without hitting the API again (PRD
-/// §4.4 rate-limit care); after it, a re-view refreshes.
-const CACHE_TTL: Duration = Duration::from_secs(120);
-const POLL_INTERVAL: Duration = Duration::from_millis(8);
-/// Quiet period after the last filter edit before a live re-query fires (PRD
-/// §4.7 "debounced"). Deliberately long so toggling several filters fires one
-/// request, not a burst — easier on the rate limiter. "Apply now" bypasses it.
-const FILTER_DEBOUNCE: Duration = Duration::from_secs(4);
-
-/// In-game-ish colour for rolled mod text.
-const AFFIX_BLUE: Color32 = Color32::from_rgb(0x8a, 0x8a, 0xf0);
-const HEADER_BG: Color32 = Color32::from_rgb(0x17, 0x17, 0x1c);
-/// Gold accent (matches the app icon) for the headline median price.
-const ACCENT_GOLD: Color32 = Color32::from_rgb(0xe6, 0xc2, 0x5a);
+pub(crate) const SAMPLE: usize = 10;
+pub(crate) const SHOWN: usize = 10;
+/// How long to wait for POE2 to write the clipboard after Ctrl+C. Generous (1s)
+/// because POE2's write latency is variable and a short window drops presses.
+pub(crate) const CLIPBOARD_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long a price-check result stays fresh: re-viewing the same item within
+/// this window re-shows cached results without re-hitting the API.
+const CACHE_TTL: Duration = Duration::from_mins(2);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(8);
+/// Quiet period after the last filter edit before a live re-query fires. Long
+/// so toggling several filters fires one request, not a burst. "Apply now"
+/// bypasses it.
+pub(crate) const FILTER_DEBOUNCE: Duration = Duration::from_secs(4);
 
 /// Popup width — wide enough for the filter panel.
 pub const POPUP_WIDTH: u32 = 600;
 
 pub type Client = TradeClient<ReqwestTransport>;
 
-/// Result of a background price check, sent back to the UI thread.
-enum Msg {
-    Result(Box<Result<PriceCheck, String>>),
-    /// poeprices.info ML estimate (rares). `None` = poeprices declined to price
-    /// it; `Err` = it failed.
-    Estimate(Box<Result<Option<PriceEstimate>, String>>),
-    /// Bulk-exchange result for a stackable (currency/rune/fragment/…).
-    Exchange(Box<Result<ExchangeCheck, String>>),
-    /// Outcome of an Instant Buyout hideout teleport (`Ok` = GGG accepted it).
-    Teleport(Result<(), String>),
-}
-
-/// Which pricing path the loaded item uses (PRD §4.4): a normal per-item search,
-/// or the bulk currency exchange for stackables.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PriceMode {
-    Item,
-    Exchange,
-}
-
-/// Background state of a bulk-exchange price check (parallel to [`Phase`], which
-/// covers the per-item search).
-#[derive(Default)]
-enum ExchangePhase {
-    #[default]
-    Idle,
-    Loading,
-    Done(ExchangeCheck),
-    Failed(String),
-}
-
 /// What the global-hotkey watcher (or the tray / config watcher) observed.
 /// Everything that needs to reach the UI thread funnels through this one
 /// channel, which [`pump`](QuickModeApp::pump) drains every frame.
 pub enum Hotkey {
-    /// A price-check combo was pressed and POE2 is focused — pop the popup
-    /// IMMEDIATELY into a "reading…" state, before the (up-to-1s) clipboard poll
-    /// runs, so the user gets instant feedback that something is happening.
+    /// A price-check combo was pressed and POE2 is focused — pop the popup into
+    /// a "reading…" state before the clipboard poll runs, for instant feedback.
     CopyStarted,
     /// A new item landed on the clipboard (Ctrl+C / Ctrl+Alt+C — both open the
     /// pinned filter popup).
     Item { text: String },
     /// The clipboard never produced an item before the timeout — usually POE2
-    /// skipping the copy on a static cursor (PRD §9.3).
+    /// skipping the copy on a static cursor.
     Missed,
     /// Escape was pressed — dismiss the popup.
     Close,
@@ -115,346 +83,9 @@ pub enum Hotkey {
     OpenSettings,
     /// Quit the app (from the tray menu).
     Quit,
-    /// `config.json` changed on disk (PRD §4.8 hot-reload) — apply the
-    /// live-reloadable fields. Boxed: it's the largest variant and rare.
+    /// `config.json` changed on disk — apply the live-reloadable fields.
+    /// Boxed: it's the largest variant and rare.
     ConfigReloaded(Box<Config>),
-}
-
-#[derive(Default)]
-enum Phase {
-    #[default]
-    Idle,
-    Loading,
-    Done(PriceCheck),
-    Failed(String),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum View {
-    Item,
-    Text,
-}
-
-/// One toggleable stat filter in the detailed panel (PRD §4.7), built from the
-/// item's mapped stats. `min`/`max` are text buffers (blank = unbounded) so the
-/// numeric fields can be cleared.
-struct StatFilterRow {
-    id: String,
-    /// Human-ish label (the canonical stat template, e.g. `#% to Fire Resistance`).
-    label: String,
-    enabled: bool,
-    min: String,
-    max: String,
-    /// The item's own rolled value, used to seed the min and to relax it for
-    /// the "Similar item" preset.
-    rolled: Option<f64>,
-    /// This filter is an implicit mod — flagged with a pill and off by default.
-    is_implicit: bool,
-}
-
-impl StatFilterRow {
-    fn selection(&self) -> StatSelection {
-        StatSelection {
-            id: self.id.clone(),
-            enabled: self.enabled,
-            min: parse_num(&self.min),
-            max: parse_num(&self.max),
-        }
-    }
-}
-
-/// A defence/offence equipment-property filter (PRD §4.7), built from the item's
-/// parsed properties (e.g. `Evasion Rating: 1099`) rather than its affix mods.
-struct EquipmentRow {
-    /// Trade filter id (`ev`, `ar`, `es`, …).
-    key: String,
-    /// Display label (the property name, e.g. `Evasion Rating`).
-    label: String,
-    enabled: bool,
-    min: String,
-    max: String,
-}
-
-impl EquipmentRow {
-    fn selection(&self) -> EquipmentSelection {
-        EquipmentSelection {
-            key: self.key.clone(),
-            enabled: self.enabled,
-            min: parse_num(&self.min),
-            max: parse_num(&self.max),
-        }
-    }
-}
-
-/// Map a parsed item-property name to its trade equipment-filter id, for the
-/// properties worth filtering on (defences + spirit).
-fn equipment_key(property_name: &str) -> Option<&'static str> {
-    match property_name {
-        "Armour" => Some("ar"),
-        "Evasion Rating" => Some("ev"),
-        "Energy Shield" => Some("es"),
-        "Spirit" => Some("spirit"),
-        "Ward" => Some("ward"),
-        "Block" | "Block chance" => Some("block"),
-        _ => None,
-    }
-}
-
-/// First numeric run in a property value (`"1099 (augmented)"` → `1099`).
-fn first_number(s: &str) -> Option<f64> {
-    let start = s.find(|c: char| c.is_ascii_digit())?;
-    let rest = &s[start..];
-    let end = rest
-        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
-}
-
-/// Build equipment-property filter rows from the item's defences (PRD §4.7),
-/// prefilled with the item's value and ticked — the key thing you search armour
-/// by, but absent before because they're properties, not affix mods.
-fn build_equipment_rows(item: &Item, percent: u32, exceptional: bool) -> Vec<EquipmentRow> {
-    let mut rows: Vec<EquipmentRow> = item
-        .properties
-        .iter()
-        .filter_map(|prop| {
-            let key = equipment_key(&prop.name)?;
-            let value = first_number(&prop.value)?;
-            Some(EquipmentRow {
-                key: key.to_string(),
-                label: prop.name.clone(),
-                enabled: true,
-                min: fmt_amount(scaled_min(value, percent)),
-                max: String::new(),
-            })
-        })
-        .collect();
-
-    // Rune sockets (the "S S S" line). Usually not worth filtering — but on an
-    // Exceptional base the extra socket is the whole value, so default it ON
-    // (min = the item's own count) there; otherwise leave it available but off.
-    let sockets = socket_count(item);
-    if sockets > 0 {
-        rows.push(EquipmentRow {
-            key: "rune_sockets".to_string(),
-            label: "Rune sockets".to_string(),
-            enabled: exceptional,
-            min: sockets.to_string(),
-            max: String::new(),
-        });
-    }
-    rows
-}
-
-/// Number of rune sockets (count of `S` on the parsed `Sockets:` line).
-fn socket_count(item: &Item) -> usize {
-    item.sockets
-        .as_deref()
-        .map(|s| s.chars().filter(|c| *c == 'S').count())
-        .unwrap_or(0)
-}
-
-/// The detailed-mode price-range filter inputs (PRD §4.7).
-#[derive(Default)]
-struct PriceFilterState {
-    min: String,
-    max: String,
-    /// Currency id (`exalted`, …) or empty for "any".
-    currency: String,
-}
-
-impl PriceFilterState {
-    fn to_filter(&self) -> PriceFilter {
-        PriceFilter {
-            min: parse_num(&self.min),
-            max: parse_num(&self.max),
-            currency: if self.currency.is_empty() {
-                None
-            } else {
-                Some(self.currency.clone())
-            },
-        }
-    }
-}
-
-/// A single-value "≥ min" filter with an enable toggle (item quality, item
-/// level — both routed to `type_filters`).
-#[derive(Default)]
-struct MinFilter {
-    enabled: bool,
-    min: String,
-}
-
-impl MinFilter {
-    fn new(enabled: bool, min: Option<u32>) -> Self {
-        MinFilter {
-            enabled,
-            min: min.filter(|v| *v > 0).map(|v| v.to_string()).unwrap_or_default(),
-        }
-    }
-
-    fn value(&self) -> Option<f64> {
-        if self.enabled {
-            parse_num(&self.min)
-        } else {
-            None
-        }
-    }
-}
-
-/// Boolean item attributes for the Miscellaneous section (trade filter id,
-/// label), sorted alphabetically by label. All off by default.
-const MISC_OPTIONS: &[(&str, &str)] = &[
-    ("corrupted", "Corrupted"),
-    ("crafted", "Crafted"),
-    ("desecrated", "Desecrated"),
-    ("fractured_item", "Fractured"),
-    ("identified", "Identified"),
-    ("mirrored", "Mirrored"),
-    ("sanctified", "Sanctified"),
-    ("twice_corrupted", "Twice Corrupted"),
-];
-
-/// A boolean Miscellaneous toggle (e.g. Corrupted). Checked → require `true`.
-struct MiscToggle {
-    key: &'static str,
-    label: &'static str,
-    on: bool,
-}
-
-/// Currencies offered in the price-range dropdown (id, label). Empty id = any.
-const PRICE_CURRENCIES: &[(&str, &str)] = &[
-    ("", "any"),
-    ("exalted", "exalted"),
-    ("divine", "divine"),
-    ("chaos", "chaos"),
-];
-
-/// Width of each min/max filter field.
-const FILTER_FIELD_W: f32 = 60.0;
-
-/// Right-aligned min + max fields (they hug the right edge of the row so the
-/// columns line up and the row fills the width). Returns whether either changed.
-fn min_max_fields(ui: &mut egui::Ui, min: &mut String, max: &mut String) -> bool {
-    let mut changed = false;
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        // In a right-to-left layout the first item is rightmost, so max first.
-        changed |= ui
-            .add(
-                egui::TextEdit::singleline(max)
-                    .hint_text("max")
-                    .desired_width(FILTER_FIELD_W),
-            )
-            .changed();
-        changed |= ui
-            .add(
-                egui::TextEdit::singleline(min)
-                    .hint_text("min")
-                    .desired_width(FILTER_FIELD_W),
-            )
-            .changed();
-    });
-    changed
-}
-
-/// A checkbox + label for a single-value (min-only) filter, with the min field
-/// right-aligned to fill the row width. Returns whether it changed.
-fn min_filter_row(ui: &mut egui::Ui, label: &str, filter: &mut MinFilter) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        changed |= ui.checkbox(&mut filter.enabled, "").changed();
-        ui.label(label);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut filter.min)
-                        .hint_text("min")
-                        .desired_width(FILTER_FIELD_W),
-                )
-                .changed();
-        });
-    });
-    changed
-}
-
-/// A small green "implicit" pill, drawn before an implicit filter's label.
-fn implicit_pill(ui: &mut egui::Ui) {
-    egui::Frame::none()
-        .fill(Color32::from_rgb(0x2e, 0x7d, 0x32))
-        .rounding(7.0)
-        .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new("implicit")
-                    .color(Color32::from_rgb(0xe6, 0xff, 0xe6))
-                    .small(),
-            );
-        });
-}
-
-/// Label for the price-currency dropdown's current id.
-fn currency_label(id: &str) -> &str {
-    PRICE_CURRENCIES
-        .iter()
-        .find(|(cid, _)| *cid == id)
-        .map(|(_, label)| *label)
-        .unwrap_or("any")
-}
-
-/// Trade listing-status options for the settings dropdown (config id, label).
-const TRADE_STATUSES: &[(&str, &str)] = &[
-    ("securable", "Instant Buyout"),
-    ("online", "Online (In Person)"),
-    ("available", "Online + Buyout"),
-    ("any", "Any"),
-];
-
-fn trade_status_label(id: &str) -> &str {
-    TRADE_STATUSES
-        .iter()
-        .find(|(i, _)| *i == id)
-        .map(|(_, l)| *l)
-        .unwrap_or("Instant Buyout")
-}
-
-/// Popup position modes for the settings dropdown (config id, label).
-const POSITION_MODES: &[(&str, &str)] = &[("center", "Center"), ("fixed", "Fixed")];
-
-fn position_label(id: &str) -> &str {
-    POSITION_MODES
-        .iter()
-        .find(|(i, _)| *i == id)
-        .map(|(_, l)| *l)
-        .unwrap_or("Center")
-}
-
-/// A labelled, right-aligned hotkey-string text field. Sets `*changed` and
-/// returns whether it changed (the caller folds that into the restart flag,
-/// since bindings are only read at startup).
-fn hotkey_row(ui: &mut egui::Ui, label: &str, value: &mut String, changed: &mut bool) -> bool {
-    let mut row_changed = false;
-    ui.horizontal(|ui| {
-        ui.label(format!("  {label}"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            row_changed = ui
-                .add(egui::TextEdit::singleline(value).desired_width(140.0))
-                .changed();
-        });
-    });
-    if row_changed {
-        *changed = true;
-    }
-    row_changed
-}
-
-/// Parse a numeric filter buffer; blank or unparseable → no bound.
-fn parse_num(s: &str) -> Option<f64> {
-    let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        t.parse().ok()
-    }
 }
 
 pub struct QuickModeApp {
@@ -463,7 +94,7 @@ pub struct QuickModeApp {
     client: Arc<Client>,
     /// Persisted settings; rewritten when the league selector changes.
     config: Config,
-    /// Leagues offered in the top-right selector (PRD §4.8).
+    /// Leagues offered in the top-right selector.
     leagues: Vec<League>,
     item_text: String,
     view: View,
@@ -479,8 +110,7 @@ pub struct QuickModeApp {
     price_filter: PriceFilterState,
     /// Item-quality filter (default-on for bonus-quality bases).
     quality_filter: MinFilter,
-    /// Item-level filter (default-on for any item with an item level — a major
-    /// price driver).
+    /// Item-level filter (default-on for any item with one — a major price driver).
     ilvl_filter: MinFilter,
     /// Boolean Miscellaneous attribute toggles (corrupted, mirrored, …), all
     /// off by default; persist across items.
@@ -520,8 +150,8 @@ pub struct QuickModeApp {
     /// A Ctrl+C was just detected and we're polling the clipboard for the item —
     /// drives the instant "reading…" spinner so the popup never sits silent.
     awaiting_copy: bool,
-    /// Tray handle for pushing the current state to the tooltip (PRD §4.9).
-    /// `None` if the tray failed to start (no SNI host).
+    /// Tray handle for pushing state to the tooltip. `None` if the tray failed
+    /// to start (no SNI host).
     tray: Option<platform_linux::TrayHandle>,
     /// Set when the gear button or the tray's "Open Settings" fires — the
     /// overlay reads this to show the settings surface.
@@ -534,7 +164,7 @@ pub struct QuickModeApp {
     /// needed for hotkeys, …).
     settings_note: Option<String>,
     /// Whether the loaded item prices via the per-item search or the bulk
-    /// currency exchange (PRD §4.4).
+    /// currency exchange.
     mode: PriceMode,
     /// Background state of the bulk-exchange check (used in [`PriceMode::Exchange`]).
     exchange_phase: ExchangePhase,
@@ -544,37 +174,7 @@ pub struct QuickModeApp {
     pay_currency: String,
 }
 
-/// Whitespace-collapsed form of clipboard text. Two copies of the SAME item can
-/// differ by line endings / spacing (the XWayland clipboard bridge isn't
-/// byte-stable), which `trim()` alone wouldn't normalise — so we collapse every
-/// whitespace run to one space before comparing/hashing.
-fn normalize_item_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Stable hash identifying an item, for de-duplicating repeated Ctrl+C on the
-/// same item. Hashes the *parsed* structure (name / base / class / mod lines) so
-/// it's invariant to any clipboard text-formatting differences between copies;
-/// falls back to whitespace-normalised text if the item doesn't parse.
-fn item_hash(text: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    match parser::parse_item(text) {
-        Ok(item) => {
-            item.name.hash(&mut h);
-            item.base_type.hash(&mut h);
-            item.item_class.hash(&mut h);
-            for m in &item.modifiers {
-                m.stats.hash(&mut h);
-            }
-        }
-        Err(_) => normalize_item_text(text).hash(&mut h),
-    }
-    h.finish()
-}
-
 impl QuickModeApp {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
@@ -600,7 +200,11 @@ impl QuickModeApp {
             ilvl_filter: MinFilter::default(),
             misc: MISC_OPTIONS
                 .iter()
-                .map(|(key, label)| MiscToggle { key, label, on: false })
+                .map(|(key, label)| MiscToggle {
+                    key,
+                    label,
+                    on: false,
+                })
                 .collect(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),
@@ -684,10 +288,8 @@ impl QuickModeApp {
     }
 
     /// Persist a dragged popup position: switch to **fixed** mode at `(x, y)`
-    /// and save (PRD §4.5 "last position is remembered"). The overlay calls this
-    /// when the user finishes Alt-dragging the popup, so wherever you drop it is
-    /// where it stays — and the Settings position mode flips to Fixed with these
-    /// coordinates. No-op if nothing changed (avoids needless writes).
+    /// and save, so wherever the user drops the popup is where it stays.
+    /// No-op if nothing changed (avoids needless writes).
     pub fn set_fixed_position(&mut self, x: i32, y: i32) {
         if self.config.position_mode == "fixed"
             && self.config.fixed_x == x
@@ -703,273 +305,6 @@ impl QuickModeApp {
         }
     }
 
-    /// Start a *fresh* price check from `item_text` (a new Ctrl+C, the manual
-    /// button, or a paste). In detailed mode this rebuilds the filter panel from
-    /// the item and resets the price filter; a filter-driven re-query goes
-    /// through [`rerun_query`](Self::rerun_query) instead so toggles survive.
-    fn start_price_check(&mut self, ctx: &egui::Context) {
-        let item = match parser::parse_item(&self.item_text) {
-            Ok(item) => item,
-            Err(e) => {
-                self.phase = Phase::Failed(format!("Not a POE2 item: {e}"));
-                self.item = None;
-                return;
-            }
-        };
-        self.icon_url = None;
-        self.estimate = None;
-        self.estimate_loading = false;
-        self.exchange_phase = ExchangePhase::Idle;
-
-        // Stackables (currency, runes, fragments, essences, …) aren't sold as
-        // individual listings — they trade via the bulk exchange, which the
-        // per-item search can't price (PRD §4.4). Route them there instead.
-        if let Some(want_id) = self.exchange_id_for(&item) {
-            self.mode = PriceMode::Exchange;
-            self.exchange_want_id = want_id;
-            self.item = Some(item);
-            self.spawn_exchange_query(ctx);
-            return;
-        }
-        self.mode = PriceMode::Item;
-
-        // "Exceptional" bases carry a tier prefix that resolve_base strips
-        // (e.g. "Exceptional Obliterator Bow" → "Obliterator Bow"); on those the
-        // extra sockets / quality are the value, so default those filters on.
-        let exceptional = self.is_exceptional_base(&item);
-        self.filters = self.build_filter_rows(&item);
-        self.equipment = build_equipment_rows(&item, self.config.filter_min_percent, exceptional);
-        // Quality: on when above the normal 20% cap (bonus quality).
-        let quality = item.quality.unwrap_or(0);
-        self.quality_filter = MinFilter::new(quality > 20, (quality > 0).then_some(quality as u32));
-        // Item level: on for any item that has one (a major price driver).
-        self.ilvl_filter = MinFilter::new(item.item_level.is_some(), item.item_level);
-        self.price_filter = PriceFilterState::default();
-        self.filter_dirty = false; // no stale debounce from the previous item
-        // poeprices ML estimate is rares-only and doesn't depend on the
-        // filters, so fetch it once per fresh check (PRD §4.7).
-        if item.rarity == Rarity::Rare {
-            self.spawn_estimate(ctx);
-        }
-        self.item = Some(item.clone());
-        self.spawn_query(ctx, item);
-    }
-
-    /// Fetch the poeprices.info ML estimate for the current `item_text` on a
-    /// background task (rares).
-    fn spawn_estimate(&mut self, ctx: &egui::Context) {
-        self.estimate_loading = true;
-        let client = Arc::clone(&self.client);
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        let text = self.item_text.clone();
-        self.rt.spawn(async move {
-            let result = client.price_estimate(&text).await.map_err(|e| e.to_string());
-            let _ = tx.send(Msg::Estimate(Box::new(result)));
-            ctx.request_repaint();
-        });
-    }
-
-    /// Teleport into an Instant Buyout seller's hideout via the trade API
-    /// (one-click, like the trade site's button). `token` is the listing's
-    /// short-lived `hideout_token`. Runs off the UI thread; on failure the error
-    /// surfaces in the status line. POE2 will pull the character into the hideout
-    /// the moment GGG accepts it — so this is only ever fired on a button click.
-    fn spawn_teleport(&mut self, token: String, ctx: &egui::Context) {
-        self.copy_status = Some("teleport".to_string());
-        let client = Arc::clone(&self.client);
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        self.rt.spawn(async move {
-            let result = client.teleport_to_hideout(&token).await.map_err(|e| e.to_string());
-            let _ = tx.send(Msg::Teleport(result));
-            ctx.request_repaint();
-        });
-    }
-
-    /// The bulk-exchange currency id for an item, if it's a stackable that
-    /// prices via the exchange rather than the per-item search. Tries the item
-    /// name then the base-type line against the `data/static` catalogue.
-    fn exchange_id_for(&self, item: &Item) -> Option<String> {
-        [item.name.as_deref(), item.base_type.as_deref()]
-            .into_iter()
-            .flatten()
-            .find_map(|name| self.client.currencies().lookup(name).map(|e| e.id.clone()))
-    }
-
-    /// Price the loaded stackable via the bulk exchange on a background task,
-    /// paying in the currently-selected `pay_currency`.
-    fn spawn_exchange_query(&mut self, ctx: &egui::Context) {
-        self.exchange_phase = ExchangePhase::Loading;
-        self.last_query_at = Some(Instant::now());
-        let client = Arc::clone(&self.client);
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        let want = self.exchange_want_id.clone();
-        let pay = self.pay_currency.clone();
-        tracing::info!(want = %want, pay = %pay, "exchange check");
-        self.rt.spawn(async move {
-            let result = client
-                .price_check_exchange(&want, &pay)
-                .await
-                .map_err(|e| e.to_string());
-            if let Err(ref e) = result {
-                tracing::error!(error = %e, "exchange price check failed");
-            }
-            let _ = tx.send(Msg::Exchange(Box::new(result)));
-            ctx.request_repaint();
-        });
-    }
-
-    /// Re-run the price check for the already-loaded item, keeping current
-    /// state (used by the detailed panel, the pay-currency selector, and a
-    /// league switch). Routes to the search or the exchange per the mode.
-    fn rerun_query(&mut self, ctx: &egui::Context) {
-        match self.mode {
-            PriceMode::Item => {
-                if let Some(item) = self.item.clone() {
-                    self.spawn_query(ctx, item);
-                }
-            }
-            PriceMode::Exchange => self.spawn_exchange_query(ctx),
-        }
-    }
-
-    /// Re-seed the stat + equipment filter minimums for the *currently loaded*
-    /// item from the live "min roll %" (and noise/implicit defaults), then
-    /// re-price. Used when those settings change so they take effect on the
-    /// item already on screen — no restart, no re-copying. Discards manual filter
-    /// tweaks (re-seeding is the point), but leaves quality/ilvl/price as set.
-    fn reseed_filters(&mut self, ctx: &egui::Context) {
-        if self.mode != PriceMode::Item {
-            return;
-        }
-        let Some(item) = self.item.clone() else {
-            return;
-        };
-        let exceptional = self.is_exceptional_base(&item);
-        self.filters = self.build_filter_rows(&item);
-        self.equipment = build_equipment_rows(&item, self.config.filter_min_percent, exceptional);
-        self.filter_dirty = false;
-        self.rerun_query(ctx);
-    }
-
-    /// Whether the item's base carries a tier prefix (Exceptional/Advanced/…)
-    /// that the trade `type` omits — i.e. a high-tier base where the extra
-    /// sockets / quality drive the price.
-    fn is_exceptional_base(&self, item: &Item) -> bool {
-        item.base_type.as_deref().is_some_and(|raw| {
-            self.client
-                .items()
-                .resolve_base(raw)
-                .is_some_and(|resolved| resolved != raw)
-        })
-    }
-
-    /// Snapshot the current panel state into the trade-api filter struct.
-    fn detailed_filters(&self) -> DetailedFilters {
-        DetailedFilters {
-            status: parse_status(&self.config.trade_status),
-            stats: self.filters.iter().map(StatFilterRow::selection).collect(),
-            equipment: self.equipment.iter().map(EquipmentRow::selection).collect(),
-            misc: self
-                .misc
-                .iter()
-                .map(|m| MiscSelection {
-                    key: m.key.to_string(),
-                    on: m.on,
-                })
-                .collect(),
-            quality: self.quality_filter.value(),
-            item_level: self.ilvl_filter.value(),
-            price: self.price_filter.to_filter(),
-        }
-    }
-
-    /// Spawn the background search/fetch for `item` using the current filters.
-    fn spawn_query(&mut self, ctx: &egui::Context, item: Item) {
-        tracing::info!(
-            item = item.name.as_deref().or(item.base_type.as_deref()).unwrap_or("?"),
-            "search"
-        );
-        self.phase = Phase::Loading;
-        self.last_query_at = Some(Instant::now());
-        let client = Arc::clone(&self.client);
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        let filters = self.detailed_filters();
-        self.rt.spawn(async move {
-            let result = client
-                .price_check_detailed(&item, &filters, SAMPLE)
-                .await
-                .map_err(|e| e.to_string());
-            if let Err(ref e) = result {
-                // Log so it's easy to copy out of the terminal, not just the popup.
-                tracing::error!(error = %e, "price check failed");
-            }
-            let _ = tx.send(Msg::Result(Box::new(result)));
-            ctx.request_repaint();
-        });
-    }
-
-    /// Enumerate the item's mapped stats into toggleable filter rows, deduped by
-    /// stat id, with the rolled value pre-filled as the min (blank max).
-    fn build_filter_rows(&self, item: &Item) -> Vec<StatFilterRow> {
-        let mut rows = Vec::new();
-        let mut seen = HashSet::new();
-        // Mapped with the item's local/global context (e.g. local evasion on
-        // body armour). Most mods start ticked so the first search matches the
-        // item; implicits and the configured noise mods (life regen, light
-        // radius, …) start unticked (PRD §4.7, config-driven).
-        for mapped in self.client.stats().map_item(item) {
-            if !seen.insert(mapped.id.clone()) {
-                continue;
-            }
-            let rolled = mapped.filter_value();
-            let is_implicit = mapped.stat_type == "implicit";
-            let off = self.config.filter_off_by_default(&mapped.template, is_implicit);
-            let pct = self.config.filter_min_percent;
-            rows.push(StatFilterRow {
-                id: mapped.id,
-                label: mapped.template,
-                enabled: !off,
-                min: rolled
-                    .map(|v| fmt_amount(scaled_min(v, pct)))
-                    .unwrap_or_default(),
-                max: String::new(),
-                rolled,
-                is_implicit,
-            });
-        }
-
-        // Granted skills (e.g. a sceptre's "Grants Skill: Level 19 Discipline"):
-        // the LEVEL is the price driver and varies per copy, so add a filter row
-        // per granted skill with the exact level pre-filled as the min — NOT
-        // scaled, since you want at-least-this-level (equal or better).
-        for prop in &item.properties {
-            if prop.name != "Grants Skill" {
-                continue;
-            }
-            let Some(mapped) = self.client.stats().map_granted_skill(&prop.value) else {
-                continue;
-            };
-            if !seen.insert(mapped.id.clone()) {
-                continue;
-            }
-            let level = mapped.filter_value();
-            rows.push(StatFilterRow {
-                id: mapped.id,
-                label: mapped.template,
-                enabled: true,
-                min: level.map(fmt_amount).unwrap_or_default(),
-                max: String::new(),
-                rolled: level,
-                is_implicit: false,
-            });
-        }
-        rows
-    }
-
     fn read_clipboard(&mut self) {
         match platform_linux::read_clipboard_text() {
             Ok(Some(text)) => {
@@ -980,21 +315,18 @@ impl QuickModeApp {
             Err(e) => self.phase = Phase::Failed(format!("Clipboard read failed: {e}")),
         }
     }
-}
 
-impl QuickModeApp {
     /// Drain the hotkey + price-check channels. Side-effect only (no drawing),
     /// so the overlay can call it every frame — even while hidden — to notice a
     /// fresh Ctrl+C and decide to pop.
     pub fn pump(&mut self, ctx: &egui::Context) {
         // Ctrl+C in game → the watcher pushes the copied item here; price-check
-        // it automatically and flag a pop. A missed copy gets a hint instead of
-        // silently doing nothing.
+        // it and flag a pop. A missed copy gets a hint.
         while let Ok(event) = self.hotkey_rx.try_recv() {
             match event {
                 Hotkey::CopyStarted => {
-                    // Instant feedback: show the popup with a "reading…" spinner
-                    // the moment Ctrl+C is detected (the item/results follow).
+                    // Instant feedback: show a "reading…" spinner the moment
+                    // Ctrl+C is detected (item/results follow).
                     self.hint = None;
                     self.awaiting_copy = true;
                     self.pop_requested = true;
@@ -1002,19 +334,14 @@ impl QuickModeApp {
                 Hotkey::Item { text } => {
                     self.hint = None;
                     self.awaiting_copy = false;
-                    // ALWAYS re-show the popup — even for the same item (the user
-                    // closed it and looked again). This is the fix for "re-view
-                    // does nothing": the API call is what we de-dup, not the pop.
+                    // Always re-show the popup, even for the same item — only the
+                    // API call is de-duped, not the pop.
                     self.pop_requested = true;
                     let hash = item_hash(&text);
                     if self.last_query_hash == Some(hash) {
-                        // Same item as loaded → keep the cached results (and any
-                        // filter state). Only refresh from the API if the cache
-                        // has gone stale (older than CACHE_TTL).
-                        let stale = self
-                            .last_query_at
-                            .map(|t| t.elapsed() >= CACHE_TTL)
-                            .unwrap_or(true);
+                        // Same item as loaded → keep cached results and filter
+                        // state; refresh from the API only if the cache is stale.
+                        let stale = self.last_query_at.is_none_or(|t| t.elapsed() >= CACHE_TTL);
                         if stale {
                             tracing::info!("same item, cache stale → refreshing");
                             self.rerun_query(ctx);
@@ -1044,13 +371,12 @@ impl QuickModeApp {
                     self.alt_held = alt;
                 }
                 Hotkey::Macro => {
-                    // F5 chat macro (e.g. /hideout), injected via uinput into the
-                    // focused window (POE2).
-                    run_chat_macro(self.config.f5_command.clone());
+                    // F5 chat macro (e.g. /hideout), injected via uinput into POE2.
+                    view::run_chat_macro(self.config.f5_command.clone());
                 }
                 Hotkey::Macro2 => {
                     // F2 chat macro (e.g. /exit).
-                    run_chat_macro(self.config.macro2_command.clone());
+                    view::run_chat_macro(self.config.macro2_command.clone());
                 }
                 Hotkey::OpenSettings => {
                     self.settings_requested = true;
@@ -1105,8 +431,8 @@ impl QuickModeApp {
         self.update_tray();
     }
 
-    /// Push the current app state to the tray tooltip (PRD §4.9). Idempotent —
-    /// the handle skips the D-Bus update when the state is unchanged.
+    /// Push the current app state to the tray tooltip. Idempotent — the handle
+    /// skips the D-Bus update when the state is unchanged.
     fn update_tray(&mut self) {
         let Some(tray) = self.tray.as_mut() else {
             return;
@@ -1124,11 +450,10 @@ impl QuickModeApp {
         tray.set_state(state);
     }
 
-    /// Apply the live-reloadable fields of a config reloaded from disk (PRD
-    /// §4.8 hot-reload). League switches the client + re-prices; filter defaults
-    /// and placement take effect on the next item. Hotkey bindings, realm, and
-    /// the POE2-focus gate are read once at startup by the evdev watcher / API
-    /// client, so those need a restart — flagged, not silently dropped.
+    /// Apply the live-reloadable fields of a config reloaded from disk. League
+    /// switches the client + re-prices; filter defaults and placement take
+    /// effect on the next item. Hotkeys, realm, and the POE2-focus gate are read
+    /// once at startup, so those need a restart — flagged, not silently dropped.
     fn apply_reloaded_config(&mut self, new: Config, ctx: &egui::Context) {
         let league_changed = new.league != self.config.league;
         let restart_needed = new.hotkey_quick != self.config.hotkey_quick
@@ -1150,1705 +475,10 @@ impl QuickModeApp {
                 Some("Saved. Hotkeys / realm / focus-gate apply after a restart.".to_string());
         }
         tracing::info!(league_changed, restart_needed, "applied reloaded config");
-        // A league change re-prices the loaded item immediately; other reloaded
-        // fields (filter defaults, placement) take effect on the next item.
+        // A league change re-prices the loaded item immediately.
         if league_changed {
             self.rerun_query(ctx);
         }
-    }
-
-    /// Render the popup body into the given `Ui`. No panels — the overlay
-    /// frames it in an auto-sizing translucent `Area`. Call
-    /// [`pump`](Self::pump) first.
-    pub fn content(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-
-        // Header: title (left) + league selector & close button (right). All
-        // header items use the SAME (default) text size so they share a baseline
-        // and line up — a bigger title sat off from the smaller controls.
-        // Dismissed by the X (or Esc, or clicking outside).
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("poe2ddd").strong());
-            // Build version — so you can confirm a fresh build is running (the
-            // overlay is a persistent process; rebuilding doesn't restart it).
-            ui.label(
-                RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
-                    .weak()
-                    .small(),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button("X")
-                    .on_hover_text("Close (Esc / click outside)")
-                    .clicked()
-                {
-                    self.close_requested = true;
-                }
-                if ui.button(ph::GEAR).on_hover_text("Open settings").clicked() {
-                    self.settings_requested = true;
-                }
-                self.league_selector(ui, &ctx);
-            });
-        });
-        ui.add_space(4.0);
-
-        // View toggle (Item ⇄ Text). Pricing is driven by Ctrl+C / the filters,
-        // so there's no manual "price check" button any more.
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.view, View::Item, format!("{} Item", ph::SHIELD));
-            ui.selectable_value(&mut self.view, View::Text, format!("{} Text", ph::NOTE_PENCIL));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(format!("{} Read clipboard", ph::CLIPBOARD)).clicked() {
-                    self.read_clipboard();
-                    self.start_price_check(&ctx);
-                }
-            });
-        });
-
-        // Instant feedback while the clipboard is being read after a Ctrl+C, so
-        // the popup never sits silent (kept non-destructive: any already-shown
-        // item/results stay visible underneath).
-        if self.awaiting_copy {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(RichText::new("Reading item from POE2…").strong());
-            });
-        }
-
-        if let Some(hint) = &self.hint {
-            ui.add_space(4.0);
-            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), format!("{} {hint}", ph::WARNING));
-        }
-
-        ui.add_space(4.0);
-
-        match self.view {
-            View::Text => {
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.item_text)
-                        .desired_rows(8)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace),
-                );
-            }
-            View::Item => {
-                // Render from the already-parsed item — NOT a re-parse of the
-                // text every frame (that was a per-frame cost that made the
-                // continuously-redrawn overlay lag).
-                if let Some(item) = &self.item {
-                    item_card(ui, item, self.icon_url.as_deref());
-                } else if self.item_text.trim().is_empty() {
-                    ui.label(
-                        RichText::new("Hover an item in POE2 and press Ctrl+C to price it.")
-                            .weak()
-                            .italics(),
-                    );
-                } else {
-                    ui.label(
-                        RichText::new("Not a POE2 item — switch to Text to edit.")
-                            .weak()
-                            .italics(),
-                    );
-                }
-            }
-        }
-
-        ui.add_space(6.0);
-
-        // Rate-limit feedback (PRD §4.4, shared by both modes): don't fire
-        // blindly — tell the user we're waiting on the trade API's bucket.
-        if let Some(wait) = self.client.retry_in() {
-            let secs = (wait.as_millis() as u64).div_ceil(1000);
-            ui.colored_label(
-                Color32::from_rgb(0xff, 0xc8, 0x4b),
-                format!("{} Rate limited — retrying in {secs}s", ph::HOURGLASS),
-            );
-        }
-
-        let mut copied: Option<String> = None;
-        let mut open_trade: Option<String> = None;
-        let mut teleport: Option<String> = None;
-        match self.mode {
-            // Stackables (currency/runes/…) price via the bulk exchange.
-            PriceMode::Exchange => self.exchange_content(ui, &ctx, &mut copied, &mut open_trade),
-            // Normal items: the stat-filter panel + per-item listings.
-            PriceMode::Item => {
-                // The filter panel (PRD §4.7), between the item and the listings.
-                // Edits re-run the search after a debounce; "Apply now" is
-                // immediate.
-                {
-                    ui.add_space(6.0);
-                    let apply_now = self.filter_panel(ui);
-                    let debounced = self.filter_dirty
-                        && self.filter_changed_at.elapsed() >= FILTER_DEBOUNCE
-                        && !matches!(self.phase, Phase::Loading);
-                    if apply_now || debounced {
-                        self.filter_dirty = false;
-                        self.rerun_query(&ctx);
-                    }
-                }
-                ui.add_space(6.0);
-                if matches!(self.phase, Phase::Loading) {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("searching…");
-                    });
-                }
-                // poeprices.info ML estimate badge (rares — PRD §4.7).
-                self.estimate_badge(ui);
-                ui.separator();
-                match &self.phase {
-                    Phase::Idle => {
-                        ui.label(RichText::new("Waiting for an item…").weak().italics());
-                    }
-                    Phase::Loading => {}
-                    Phase::Failed(e) => {
-                        ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
-                    }
-                    Phase::Done(pc) => {
-                        show_results(ui, pc, &mut copied, &mut teleport);
-                        ui.add_space(6.0);
-                        if ui
-                            .button(format!("{} Open on trade site", ph::GLOBE))
-                            .on_hover_text("Opens your browser with this exact search")
-                            .clicked()
-                        {
-                            // Built only on click — the URL encodes the full
-                            // query (disabled filters included) and is too costly
-                            // to rebuild every frame.
-                            open_trade = Some(self.trade_url());
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(label) = copied {
-            self.copy_status = Some(label);
-        }
-        if let Some(url) = open_trade {
-            match platform_linux::open_url(&url) {
-                // Hide the popup so the browser comes forward — we're an
-                // always-on-top overlay that would otherwise cover it.
-                Ok(()) => self.close_requested = true,
-                Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
-            }
-        }
-        if let Some(token) = teleport {
-            self.spawn_teleport(token, &ctx);
-        }
-
-        if let Some(status) = &self.copy_status {
-            ui.add_space(4.0);
-            ui.colored_label(
-                Color32::from_rgb(0x4c, 0xd1, 0x37),
-                format!("{} Sent {status} to POE2", ph::CHECK_CIRCLE),
-            );
-        }
-    }
-
-    /// Render the bulk-exchange results for a stackable (PRD §4.4): a pay-with
-    /// currency selector, the median + cheapest offers with whisper buttons, and
-    /// a link to the exchange page. No stat filters (they don't apply).
-    fn exchange_content(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        copied: &mut Option<String>,
-        open_trade: &mut Option<String>,
-    ) {
-        // Pick what to pay with. Offers are listed in the seller's currency, so
-        // we query one currency at a time (default Exalted) and the list stays
-        // sortable — sidestepping exalted-vs-divine normalisation.
-        ui.horizontal(|ui| {
-            ui.label("Pay with");
-            let before = self.pay_currency.clone();
-            egui::ComboBox::from_id_salt("pay-currency")
-                .selected_text(pay_label(&self.pay_currency))
-                .show_ui(ui, |ui| {
-                    for (id, label) in PAY_CURRENCIES {
-                        ui.selectable_value(&mut self.pay_currency, id.to_string(), *label);
-                    }
-                });
-            if self.pay_currency != before {
-                self.spawn_exchange_query(ctx);
-            }
-        });
-        if matches!(self.exchange_phase, ExchangePhase::Loading) {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("checking exchange…");
-            });
-        }
-        // Player exchange listings are frequently stale/unreliable for currency
-        // — point the user at the in-game Currency Exchange (PRD currency notes).
-        ui.colored_label(
-            Color32::from_rgb(0xff, 0xc8, 0x4b),
-            format!(
-                "{} These player prices are often stale. For currency, the in-game \
-                 Currency Exchange is more reliable.",
-                ph::WARNING
-            ),
-        );
-        ui.separator();
-
-        match &self.exchange_phase {
-            ExchangePhase::Idle => {
-                ui.label(RichText::new("Waiting for the exchange…").weak().italics());
-            }
-            ExchangePhase::Loading => {}
-            ExchangePhase::Failed(e) => {
-                ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
-            }
-            ExchangePhase::Done(ex) => {
-                let pay = pay_label(&ex.pay_currency);
-                match ex.median_unit_price() {
-                    Some(m) => {
-                        ui.label(
-                            RichText::new(format!("Median: {} {} each", fmt_amount(m), pay))
-                                .size(18.0)
-                                .strong()
-                                .color(ACCENT_GOLD),
-                        );
-                    }
-                    None => {
-                        ui.label(
-                            RichText::new(format!(
-                                "No {pay} offers — try a different pay currency."
-                            ))
-                            .italics(),
-                        );
-                    }
-                }
-                ui.label(
-                    RichText::new(format!(
-                        "{} offer(s) · showing cheapest {}",
-                        ex.offers.len(),
-                        SHOWN
-                    ))
-                    .weak(),
-                );
-                ui.add_space(6.0);
-                let rows = exchange_rows(ex.cheapest(SHOWN), pay);
-                // Exchange offers never carry a hideout teleport token.
-                results_table(ui, &rows, copied, &mut None);
-                ui.add_space(6.0);
-                if ui
-                    .button(format!("{} Open exchange page", ph::GLOBE))
-                    .on_hover_text("Opens the in-game-style currency exchange in your browser")
-                    .clicked()
-                {
-                    *open_trade = Some(exchange_url(&self.config.league, &ex.id));
-                }
-            }
-        }
-    }
-
-    /// Render the settings surface body (PRD §4.8). Edits write straight to
-    /// `config` and persist on change. Fields the evdev watcher / API client
-    /// read only at startup (hotkeys, realm, focus gate) are flagged "restart
-    /// to apply" rather than pretending to take effect live. Call
-    /// [`pump`](Self::pump) first (shared with the popup surface).
-    pub fn settings_content(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        // Esc closes the settings panel when it has focus (it gets the key event
-        // via Wayland; the popup's Esc is handled globally by the evdev watcher).
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.settings_close_requested = true;
-        }
-        // What kind of follow-up an edit needs.
-        let mut changed = false; // any field → persist to disk
-        let mut requery = false; // league / status → re-price now
-        let mut reseed = false; // min-roll % / implicit default → re-seed + re-price
-        let mut restart = false; // a startup-only field → show the restart note
-
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Settings").strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("X").on_hover_text("Close (Esc)").clicked() {
-                    self.settings_close_requested = true;
-                }
-            });
-        });
-        ui.label(
-            RichText::new("Changes save automatically — no save button.")
-                .weak()
-                .small(),
-        );
-        ui.separator();
-
-        egui::ScrollArea::vertical()
-            .max_height(560.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                // League (live — the client switches without a rebuild).
-                ui.horizontal(|ui| {
-                    ui.label("League");
-                    if self.leagues.is_empty() {
-                        ui.label(RichText::new(&self.config.league).weak());
-                    } else {
-                        let before = self.config.league.clone();
-                        egui::ComboBox::from_id_salt("settings-league")
-                            .selected_text(&self.config.league)
-                            .show_ui(ui, |ui| {
-                                for lg in &self.leagues {
-                                    ui.selectable_value(
-                                        &mut self.config.league,
-                                        lg.id.clone(),
-                                        &lg.text,
-                                    );
-                                }
-                            });
-                        if self.config.league != before {
-                            // An explicit pick pins the league (stops auto-resolve).
-                            self.config.league_pinned = true;
-                            self.client.set_league(self.config.league.clone());
-                            changed = true;
-                            requery = true;
-                        }
-                    }
-                });
-
-                // Realm (read into the request URL at startup — restart-only).
-                ui.horizontal(|ui| {
-                    ui.label("Realm");
-                    let current = self.config.realm.clone().unwrap_or_else(|| "pc".into());
-                    let mut chosen = current.clone();
-                    egui::ComboBox::from_id_salt("settings-realm")
-                        .selected_text(&current)
-                        .show_ui(ui, |ui| {
-                            for r in ["pc", "sony", "xbox"] {
-                                ui.selectable_value(&mut chosen, r.to_string(), r);
-                            }
-                        });
-                    if chosen != current {
-                        self.config.realm = if chosen == "pc" { None } else { Some(chosen) };
-                        changed = true;
-                        restart = true;
-                    }
-                    ui.label(RichText::new("(restart)").weak().small());
-                });
-
-                // Listing type / trade status (live — read per query).
-                ui.horizontal(|ui| {
-                    ui.label("Listings");
-                    let before = self.config.trade_status.clone();
-                    egui::ComboBox::from_id_salt("settings-status")
-                        .selected_text(trade_status_label(&self.config.trade_status))
-                        .show_ui(ui, |ui| {
-                            for (id, label) in TRADE_STATUSES {
-                                ui.selectable_value(
-                                    &mut self.config.trade_status,
-                                    id.to_string(),
-                                    *label,
-                                );
-                            }
-                        });
-                    if self.config.trade_status != before {
-                        changed = true;
-                        requery = true;
-                    }
-                });
-
-                // POESESSID session cookie (live — unlocks the Instant Buyout
-                // "Teleport to hideout" button, which needs an authenticated
-                // fetch to get each listing's teleport token).
-                ui.horizontal(|ui| {
-                    ui.label("POESESSID");
-                    let mut sid = self.config.poesessid.clone().unwrap_or_default();
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut sid)
-                            .password(true)
-                            .hint_text("trade-site session cookie")
-                            .desired_width(220.0),
-                    );
-                    if resp.changed() {
-                        let trimmed = sid.trim().to_string();
-                        self.config.poesessid =
-                            (!trimmed.is_empty()).then_some(trimmed);
-                        // Push live so the next search authenticates immediately.
-                        self.client.set_poesessid(self.config.poesessid.clone());
-                        changed = true;
-                    }
-                    if self.config.poesessid.is_some() {
-                        ui.colored_label(ONLINE_DOT, ph::CHECK_CIRCLE);
-                    }
-                });
-                ui.label(
-                    RichText::new(
-                        "Optional — only the Instant Buyout Teleport button needs it. \
-                         Browser DevTools → Application → Cookies → pathofexile.com → \
-                         POESESSID. Sent only to pathofexile.com; treat it like a password.",
-                    )
-                    .weak()
-                    .small(),
-                );
-
-                ui.separator();
-
-                // Position mode + fixed coordinates (live — the overlay reads
-                // these every frame to place the popup).
-                ui.horizontal(|ui| {
-                    ui.label("Popup position");
-                    let before = self.config.position_mode.clone();
-                    egui::ComboBox::from_id_salt("settings-position")
-                        .selected_text(position_label(&self.config.position_mode))
-                        .show_ui(ui, |ui| {
-                            for (id, label) in POSITION_MODES {
-                                ui.selectable_value(
-                                    &mut self.config.position_mode,
-                                    id.to_string(),
-                                    *label,
-                                );
-                            }
-                        });
-                    if self.config.position_mode != before {
-                        changed = true;
-                    }
-                });
-                if self.config.position_mode == "fixed" {
-                    ui.horizontal(|ui| {
-                        ui.label("    x / y");
-                        changed |= ui
-                            .add(egui::DragValue::new(&mut self.config.fixed_x).speed(2))
-                            .changed();
-                        changed |= ui
-                            .add(egui::DragValue::new(&mut self.config.fixed_y).speed(2))
-                            .changed();
-                        ui.label(RichText::new("px from top-left").weak().small());
-                    });
-                    ui.label(
-                        RichText::new("    Tip: Alt+drag the popup to set this.")
-                            .weak()
-                            .small(),
-                    );
-                }
-
-                ui.separator();
-
-                // Filter defaults (live — re-seeds the loaded item immediately).
-                ui.horizontal(|ui| {
-                    ui.label("Min roll %").on_hover_text(
-                        "Each mod filter's minimum starts at this share of the item's \
-                         own roll. 100% = exact roll; lower = a looser search that also \
-                         finds slightly worse copies. Applies to the item on screen now.",
-                    );
-                    let resp = ui.add(
-                        egui::Slider::new(&mut self.config.filter_min_percent, 50..=100)
-                            .suffix("%"),
-                    );
-                    // Commit (save + re-seed + re-price) only when the user
-                    // finishes adjusting — on drag release, or a discrete
-                    // click/keyboard step — so a 100→70 drag fires ONE query,
-                    // not one per intermediate value (which would hammer the
-                    // rate-limited trade API).
-                    if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
-                        changed = true;
-                        reseed = true;
-                    }
-                });
-                if ui
-                    .checkbox(
-                        &mut self.config.implicits_off_by_default,
-                        "Implicit mods off by default",
-                    )
-                    .changed()
-                {
-                    changed = true;
-                    reseed = true;
-                }
-
-                // Chat macros (live — pump reads the command on press). Two
-                // slots: F5 (default /hideout) and F2 (default /exit).
-                ui.horizontal(|ui| {
-                    let mut enabled = self.config.f5_command.is_some();
-                    if ui.checkbox(&mut enabled, "Hideout macro").changed() {
-                        self.config.f5_command =
-                            if enabled { Some("/hideout".into()) } else { None };
-                        changed = true;
-                    }
-                    if let Some(cmd) = &mut self.config.f5_command {
-                        changed |= ui.text_edit_singleline(cmd).changed();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    let mut enabled = self.config.macro2_command.is_some();
-                    if ui.checkbox(&mut enabled, "Exit macro").changed() {
-                        self.config.macro2_command =
-                            if enabled { Some("/exit".into()) } else { None };
-                        changed = true;
-                    }
-                    if let Some(cmd) = &mut self.config.macro2_command {
-                        changed |= ui.text_edit_singleline(cmd).changed();
-                    }
-                });
-
-                // POE2-focus gate (read once by the evdev watcher — restart).
-                ui.horizontal(|ui| {
-                    if ui
-                        .checkbox(
-                            &mut self.config.require_poe2_focus,
-                            "Only fire hotkeys while POE2 is focused",
-                        )
-                        .changed()
-                    {
-                        changed = true;
-                        restart = true;
-                    }
-                    ui.label(RichText::new("(restart)").weak().small());
-                });
-
-                ui.separator();
-
-                // Hotkey bindings (parsed by the evdev watcher at startup —
-                // restart-only). Free-text like "Ctrl+Alt+C", "F5", "Escape".
-                ui.label(RichText::new("Hotkeys (restart to apply)").strong());
-                restart |= hotkey_row(ui, "Quick", &mut self.config.hotkey_quick, &mut changed);
-                restart |=
-                    hotkey_row(ui, "Detailed", &mut self.config.hotkey_detailed, &mut changed);
-                restart |= hotkey_row(ui, "Hideout macro", &mut self.config.hotkey_macro, &mut changed);
-                restart |=
-                    hotkey_row(ui, "Exit macro", &mut self.config.hotkey_macro2, &mut changed);
-                restart |= hotkey_row(ui, "Close", &mut self.config.hotkey_close, &mut changed);
-            });
-
-        ui.separator();
-        ui.label(
-            RichText::new(format!("config.json: {}", Config::path().display()))
-                .weak()
-                .small(),
-        );
-        // A note only when there's something to say: a restart-required field
-        // changed, or a save failed. Plain saves are silent (auto-save caption
-        // up top already explains persistence).
-        if let Some(note) = &self.settings_note {
-            ui.colored_label(Color32::from_rgb(0xff, 0xc8, 0x4b), note);
-        }
-
-        if changed {
-            if let Err(e) = self.config.save() {
-                tracing::warn!(error = %e, "could not save config");
-                self.settings_note = Some(format!("Could not save: {e}"));
-            } else if restart {
-                self.settings_note =
-                    Some("Hotkeys / realm / focus-gate apply after a restart.".to_string());
-            } else {
-                self.settings_note = None;
-            }
-        }
-        // Re-seed (min-roll % / implicit default) re-prices on its own; a plain
-        // `requery` (league / status) re-prices with the existing filters.
-        if reseed {
-            self.reseed_filters(&ctx);
-        } else if requery {
-            self.rerun_query(&ctx);
-        }
-    }
-
-    /// The league dropdown. Switching re-prices the loaded item under the new
-    /// league. Falls back to a plain label if the leagues list failed to load.
-    fn league_selector(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if self.leagues.is_empty() {
-            ui.label(RichText::new(&self.config.league).weak());
-            return;
-        }
-        let current = self.config.league.clone();
-        let mut chosen = current.clone();
-        egui::ComboBox::from_id_salt("league-selector")
-            .selected_text(&current)
-            .show_ui(ui, |ui| {
-                for lg in &self.leagues {
-                    ui.selectable_value(&mut chosen, lg.id.clone(), &lg.text);
-                }
-            });
-        if chosen != current {
-            self.config.league = chosen.clone();
-            // An explicit pick pins the league (stops auto-resolve on restart).
-            self.config.league_pinned = true;
-            // Persist the choice so it sticks across restarts (no env var).
-            if let Err(e) = self.config.save() {
-                tracing::warn!(error = %e, "could not save config");
-            }
-            self.client.set_league(chosen);
-            // Re-price the currently loaded item under the new league, keeping
-            // any detailed-mode filters in place.
-            self.rerun_query(ctx);
-        }
-    }
-
-    /// The detailed-mode filter panel: a price range plus a toggleable row per
-    /// mapped stat (PRD §4.7). Returns `true` when the user asked to re-run the
-    /// search (the Apply button).
-    fn filter_panel(&mut self, ui: &mut egui::Ui) -> bool {
-        let mut requery = false;
-        let mut changed = false;
-        egui::CollapsingHeader::new(RichText::new(format!("{} Filters", ph::FUNNEL)).strong())
-            .default_open(true)
-            .show(ui, |ui| {
-                // Price range (PRD §4.7 price-range filter), right-aligned.
-                ui.horizontal(|ui| {
-                    ui.label("Price");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let before = self.price_filter.currency.clone();
-                        egui::ComboBox::from_id_salt("price-currency")
-                            .selected_text(currency_label(&self.price_filter.currency))
-                            .show_ui(ui, |ui| {
-                                for (id, label) in PRICE_CURRENCIES {
-                                    ui.selectable_value(
-                                        &mut self.price_filter.currency,
-                                        id.to_string(),
-                                        *label,
-                                    );
-                                }
-                            });
-                        changed |= self.price_filter.currency != before;
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut self.price_filter.max)
-                                    .hint_text("max")
-                                    .desired_width(FILTER_FIELD_W),
-                            )
-                            .changed();
-                        ui.label("–");
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut self.price_filter.min)
-                                    .hint_text("min")
-                                    .desired_width(FILTER_FIELD_W),
-                            )
-                            .changed();
-                    });
-                });
-
-                // Item level (type_filters.ilvl) — default-on; a major price
-                // driver. And item quality (type_filters.quality).
-                changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
-                changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
-
-                // Defences / equipment properties (armour / evasion / ES / …),
-                // built from the item's stats block, not its affix mods.
-                if !self.equipment.is_empty() {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("Defences").strong());
-                    for row in &mut self.equipment {
-                        ui.horizontal(|ui| {
-                            changed |= ui.checkbox(&mut row.enabled, "").changed();
-                            ui.label(RichText::new(&row.label).strong());
-                            changed |= min_max_fields(ui, &mut row.min, &mut row.max);
-                        });
-                    }
-                }
-
-                ui.add_space(6.0);
-                if !self.equipment.is_empty() {
-                    ui.label(RichText::new("Modifiers").strong());
-                }
-                if self.filters.is_empty() {
-                    ui.label(
-                        RichText::new("No mapped stats to filter on this item.")
-                            .weak()
-                            .italics(),
-                    );
-                } else {
-                    egui::ScrollArea::vertical()
-                        .max_height(240.0)
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            for row in &mut self.filters {
-                                ui.horizontal(|ui| {
-                                    changed |= ui.checkbox(&mut row.enabled, "").changed();
-                                    if row.is_implicit {
-                                        implicit_pill(ui);
-                                    }
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(&row.label).color(AFFIX_BLUE),
-                                        )
-                                        .truncate(),
-                                    );
-                                    changed |= min_max_fields(ui, &mut row.min, &mut row.max);
-                                });
-                            }
-                        });
-                }
-
-                // Miscellaneous: boolean attribute filters, collapsed by default.
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new(RichText::new("Miscellaneous").strong())
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        // Two even columns of four (4 + 4), evenly spaced.
-                        ui.columns(2, |cols| {
-                            for (i, m) in self.misc.iter_mut().enumerate() {
-                                let col = if i < 4 { 0 } else { 1 };
-                                changed |= cols[col].checkbox(&mut m.on, m.label).changed();
-                            }
-                        });
-                    });
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if ui.button(format!("{} Apply now", ph::ARROW_CLOCKWISE)).clicked() {
-                        requery = true;
-                    }
-                    // "Similar item" (PRD §4.7): same base, every mapped mod
-                    // enabled at ~80% of its roll — find comparable items.
-                    if ui
-                        .button(format!("{} Similar item", ph::MAGNIFYING_GLASS))
-                        .on_hover_text("Same base, every mod present at ~80% of its roll")
-                        .clicked()
-                    {
-                        for row in &mut self.filters {
-                            row.enabled = true;
-                            row.min = row
-                                .rolled
-                                .map(|v| fmt_amount(scaled_min(v, 80)))
-                                .unwrap_or_default();
-                            row.max.clear();
-                        }
-                        requery = true;
-                    }
-                });
-            });
-
-        // Any edit (re)starts the debounce timer; the caller fires the re-query
-        // once it elapses.
-        if changed {
-            self.filter_dirty = true;
-            self.filter_changed_at = Instant::now();
-        }
-        requery
-    }
-
-    /// The poeprices.info ML estimate badge: a spinner while it loads, then the
-    /// predicted range + confidence, or nothing if poeprices declined.
-    fn estimate_badge(&self, ui: &mut egui::Ui) {
-        if self.estimate_loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(
-                    RichText::new("poeprices.info ML estimate…")
-                        .weak()
-                        .small(),
-                );
-            });
-            return;
-        }
-        let Some(est) = &self.estimate else {
-            return;
-        };
-        let conf = est
-            .confidence
-            .map(|c| format!("  ·  {c:.0}% confidence"))
-            .unwrap_or_default();
-        let text = format!(
-            "{} poeprices ML: {}-{} {}{}",
-            ph::ROBOT,
-            fmt_amount(est.min),
-            fmt_amount(est.max),
-            est.currency,
-            conf
-        );
-        egui::Frame::none()
-            .fill(Color32::from_rgb(0x23, 0x2a, 0x3a))
-            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(0x3c, 0x55, 0x7a)))
-            .rounding(6.0)
-            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-            .show(ui, |ui| {
-                ui.label(RichText::new(text).color(Color32::from_rgb(0x7e, 0xc8, 0xff)));
-            });
-    }
-
-    /// Deep link to the official trade site for the current item + filters
-    /// (PRD §4.6). Encodes the whole query in `?q=` (not just a saved-search id)
-    /// so every filter — including the disabled ones — shows on the site exactly
-    /// as in the popup (unticked ones greyed, not missing).
-    fn trade_url(&self) -> String {
-        let base = format!(
-            "https://www.pathofexile.com/trade2/search/poe2/{}",
-            percent_encode(&self.config.league)
-        );
-        let Some(item) = &self.item else {
-            return base;
-        };
-        let request = build_detailed_query(item, self.client.items(), &self.detailed_filters());
-        match serde_json::to_string(&request) {
-            Ok(json) => format!("{base}?q={}", percent_encode(&json)),
-            Err(e) => {
-                tracing::warn!(error = %e, "could not encode trade query");
-                base
-            }
-        }
-    }
-}
-
-/// Percent-encode a string for use in a URL (RFC 3986 unreserved pass through).
-fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// Render a parsed item as an in-game-style tooltip card.
-fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) {
-    let color = rarity_color(&item.rarity);
-    egui::Frame::none()
-        .fill(HEADER_BG)
-        .stroke(egui::Stroke::new(1.5, color))
-        .rounding(6.0)
-        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-
-            // Header: icon + name/base, centred-ish.
-            ui.horizontal(|ui| {
-                if let Some(url) = icon_url {
-                    ui.add(
-                        egui::Image::new(url)
-                            .fit_to_exact_size(egui::vec2(44.0, 44.0))
-                            .rounding(4.0),
-                    );
-                    ui.add_space(6.0);
-                }
-                ui.vertical(|ui| {
-                    let title = item
-                        .name
-                        .as_deref()
-                        .or(item.base_type.as_deref())
-                        .unwrap_or("Unknown item");
-                    ui.label(RichText::new(title).color(color).size(18.0).strong());
-                    if item.name.is_some() {
-                        if let Some(base) = &item.base_type {
-                            ui.label(RichText::new(base).color(color).weak());
-                        }
-                    }
-                    ui.label(RichText::new(&item.item_class).weak().small());
-                });
-            });
-
-            // Meta line: ilvl / quality / requirements.
-            let mut meta: Vec<String> = Vec::new();
-            if let Some(ilvl) = item.item_level {
-                meta.push(format!("iLvl {ilvl}"));
-            }
-            if let Some(q) = item.quality {
-                meta.push(format!("Q +{q}%"));
-            }
-            if let Some(lvl) = item.requirements.level {
-                meta.push(format!("Req Lvl {lvl}"));
-            }
-            if !meta.is_empty() {
-                ui.add_space(2.0);
-                ui.label(RichText::new(meta.join("   ")).weak().small());
-            }
-
-            let implicits: Vec<_> = item
-                .modifiers
-                .iter()
-                .filter(|m| m.kind == ModKind::Implicit)
-                .collect();
-            let explicits: Vec<_> = item
-                .modifiers
-                .iter()
-                .filter(|m| m.kind != ModKind::Implicit)
-                .collect();
-
-            if !implicits.is_empty() {
-                thin_separator(ui);
-                for m in implicits {
-                    render_mod(ui, m);
-                }
-            }
-            if !explicits.is_empty() {
-                thin_separator(ui);
-                for m in explicits {
-                    render_mod(ui, m);
-                }
-            }
-            if item.corrupted {
-                thin_separator(ui);
-                ui.label(RichText::new("Corrupted").color(Color32::from_rgb(0xd2, 0x4b, 0x4b)));
-            }
-        });
-}
-
-fn render_mod(ui: &mut egui::Ui, m: &parser::Modifier) {
-    let kind = match &m.kind {
-        ModKind::Implicit => "Implicit".to_string(),
-        ModKind::Prefix => "Prefix".to_string(),
-        ModKind::Suffix => "Suffix".to_string(),
-        ModKind::Unique => "Unique".to_string(),
-        ModKind::Other(s) => s.clone(),
-    };
-    let mut head = kind;
-    if let Some(src) = m.source {
-        head = format!("{src:?} {head}");
-    }
-    if let Some(name) = &m.name {
-        head.push_str(&format!(" · {name}"));
-    }
-    if let Some(tier) = m.tier {
-        head.push_str(&format!(" (T{tier})"));
-    }
-    ui.label(RichText::new(head).weak().small());
-    for stat in &m.stats {
-        ui.label(RichText::new(stat).color(AFFIX_BLUE));
-    }
-}
-
-fn thin_separator(ui: &mut egui::Ui) {
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(2.0);
-}
-
-/// Height of a results-table row.
-const ROW_H: f32 = 26.0;
-const ONLINE_DOT: Color32 = Color32::from_rgb(0x4c, 0xd1, 0x37);
-
-/// One row of the results table (an item listing or an exchange offer).
-struct RowData {
-    price: String,
-    online: bool,
-    seller: String,
-    seller_hover: Option<String>,
-    whisper: Option<String>,
-    character: Option<String>,
-    /// Instant Buyout teleport token (authenticated fetch only). When present the
-    /// Hideout button becomes a one-click teleport into the seller's hideout.
-    hideout_token: Option<String>,
-    /// The actual item for this listing (icon + mods), for the (i) preview.
-    /// `None` for currency-exchange offers.
-    item: Option<ItemPreview>,
-}
-
-/// The bits of a listing's item shown in the (i) hover preview.
-struct ItemPreview {
-    icon: Option<String>,
-    name: Option<String>,
-    base: Option<String>,
-    mods: Vec<String>,
-    /// Trade `frameType` (0 normal, 1 magic, 2 rare, 3 unique, …) → rarity colour.
-    frame_type: u64,
-}
-
-fn show_results(
-    ui: &mut egui::Ui,
-    pc: &PriceCheck,
-    copied: &mut Option<String>,
-    teleport: &mut Option<String>,
-) {
-    match pc.median_price() {
-        Some(p) => {
-            ui.label(
-                RichText::new(format!("Median: {} {}", fmt_amount(p.amount), p.currency))
-                    .size(18.0)
-                    .strong()
-                    .color(ACCENT_GOLD),
-            );
-        }
-        None => {
-            ui.label(RichText::new("No priced listings.").italics());
-        }
-    }
-    ui.label(
-        RichText::new(format!(
-            "{} online listing(s) · showing cheapest {}",
-            pc.total, SHOWN
-        ))
-        .weak(),
-    );
-    ui.add_space(6.0);
-
-    let rows: Vec<RowData> = pc
-        .cheapest(SHOWN)
-        .into_iter()
-        .map(|e| {
-            let l = &e.listing;
-            RowData {
-                price: l
-                    .price
-                    .as_ref()
-                    .map(|p| format!("{} {}", fmt_amount(p.amount), p.currency))
-                    .unwrap_or_else(|| "—".to_string()),
-                online: l.is_online(),
-                seller: l.account.name.clone(),
-                seller_hover: l.indexed.as_ref().map(|i| format!("listed {i}")),
-                whisper: l.whisper.clone(),
-                character: l.account.last_character_name.clone(),
-                hideout_token: l.hideout_token.clone(),
-                item: Some(item_preview(&e.item)),
-            }
-        })
-        .collect();
-    results_table(ui, &rows, copied, teleport);
-}
-
-/// The shared results table (item listings and exchange offers): striped,
-/// full-width, aligned columns — price (auto) · seller (fills, truncates) ·
-/// actions (auto). `vscroll(false)` so it sizes to content in the auto-height
-/// popup instead of scrolling.
-fn results_table(
-    ui: &mut egui::Ui,
-    rows: &[RowData],
-    copied: &mut Option<String>,
-    teleport: &mut Option<String>,
-) {
-    use egui_extras::{Column, TableBuilder};
-    if rows.is_empty() {
-        return;
-    }
-    // Hovering ANYWHERE on a row shows the item preview, anchored just above-left
-    // of the cursor (so it never covers the action buttons under the pointer).
-    let ctx = ui.ctx().clone();
-    TableBuilder::new(ui)
-        .striped(true)
-        .vscroll(false)
-        .sense(egui::Sense::hover())
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::auto().at_least(70.0))
-        .column(Column::remainder().clip(true))
-        .column(Column::auto())
-        .body(|mut body| {
-            for r in rows {
-                body.row(ROW_H, |mut row| {
-                    row.col(|ui| {
-                        ui.label(RichText::new(&r.price).strong());
-                    });
-                    row.col(|ui| {
-                        online_dot(ui, r.online);
-                        let lbl = ui.add(egui::Label::new(&r.seller).truncate());
-                        // Seller hover (listed-date / stock) only when there's no
-                        // item preview to compete with it (i.e. exchange offers).
-                        if r.item.is_none() {
-                            if let Some(h) = &r.seller_hover {
-                                lbl.on_hover_text(h);
-                            }
-                        }
-                    });
-                    row.col(|ui| {
-                        action_buttons(
-                            ui,
-                            r.whisper.as_deref(),
-                            r.character.as_deref(),
-                            r.hideout_token.as_deref(),
-                            &r.seller,
-                            copied,
-                            teleport,
-                        );
-                    });
-                    if let Some(item) = &r.item {
-                        // contains_pointer() is true whenever the cursor is over
-                        // the row rect (hovered() can be false when a child
-                        // widget is the hover target) — so the preview triggers
-                        // anywhere on the row.
-                        if row.response().contains_pointer() {
-                            show_item_preview_at_cursor(&ctx, item);
-                        }
-                    }
-                });
-            }
-        });
-}
-
-/// A painted online-status dot (a glyph rendered as tofu in the default font —
-/// paint it directly so it always shows). Green = online, grey = offline.
-fn online_dot(ui: &mut egui::Ui, online: bool) {
-    let color = if online { ONLINE_DOT } else { Color32::from_gray(0x70) };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, ROW_H), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 4.0, color);
-}
-
-/// Show the item preview anchored so its bottom-right corner sits ~5px up-left of
-/// the cursor — a non-interactive, top-most tooltip that follows the mouse but
-/// leaves the row (and its buttons, under the pointer) free to click.
-/// `constrain(true)` keeps it inside the surface so it's never clipped away when
-/// hovering near an edge (the popup is one layer-shell surface — it can't draw
-/// outside its own bounds).
-fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPreview) {
-    let Some(pos) = ctx.pointer_latest_pos() else {
-        return;
-    };
-    egui::Area::new(egui::Id::new("item-preview"))
-        .order(egui::Order::Tooltip)
-        .interactable(false)
-        .constrain(true)
-        .fixed_pos(pos - egui::vec2(5.0, 5.0))
-        .pivot(egui::Align2::RIGHT_BOTTOM)
-        .show(ctx, |ui| {
-            render_item_preview(ui, item);
-        });
-}
-
-/// The in-game-style item card (rarity-coloured border + name, icon, mods).
-fn render_item_preview(ui: &mut egui::Ui, item: &ItemPreview) {
-    let color = frame_color(item.frame_type);
-    egui::Frame::none()
-        .fill(HEADER_BG)
-        .stroke(egui::Stroke::new(1.5, color))
-        .rounding(6.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-        .show(ui, |ui| {
-            ui.set_max_width(320.0);
-            ui.horizontal(|ui| {
-                if let Some(icon) = &item.icon {
-                    // Paint the icon into a FIXED 48x48 box so a slow/failed
-                    // image load can never steal space from the text (that was
-                    // the "only icon, no text" symptom).
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
-                    egui::Image::new(icon).rounding(4.0).paint_at(ui, rect);
-                    ui.add_space(6.0);
-                }
-                ui.vertical(|ui| {
-                    if let Some(name) = &item.name {
-                        ui.label(RichText::new(name).color(color).strong().size(15.0));
-                    }
-                    if let Some(base) = &item.base {
-                        ui.label(RichText::new(base).color(color).weak());
-                    }
-                });
-            });
-            if !item.mods.is_empty() {
-                thin_separator(ui);
-                for m in &item.mods {
-                    ui.label(RichText::new(clean_mod_markup(m)).color(AFFIX_BLUE));
-                }
-            }
-        });
-}
-
-/// Strip POE2 fetch-text reference markup: `[link|display]` → `display`,
-/// `[text]` → `text` (the API returns e.g. `[Resistances|Fire Resistance]`).
-fn clean_mod_markup(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(open) = rest.find('[') {
-        out.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        if let Some(close) = after.find(']') {
-            let inner = &after[..close];
-            // Display text is the part after the last '|' (or the whole thing).
-            out.push_str(inner.rsplit('|').next().unwrap_or(inner));
-            rest = &after[close + 1..];
-        } else {
-            out.push_str(&rest[open..]);
-            return out;
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// Trade `frameType` → its in-game rarity colour (mirrors [`rarity_color`]).
-fn frame_color(frame_type: u64) -> Color32 {
-    match frame_type {
-        1 => Color32::from_rgb(0x88, 0x88, 0xff), // magic
-        2 => Color32::from_rgb(0xff, 0xff, 0x77), // rare
-        3 => Color32::from_rgb(0xaf, 0x60, 0x25), // unique
-        4 => Color32::from_rgb(0x1b, 0xa2, 0x9b), // gem
-        5 => Color32::from_rgb(0xaa, 0x99, 0x77), // currency
-        _ => Color32::from_rgb(0xc8, 0xc8, 0xc8), // normal / other
-    }
-}
-
-/// Pull the previewable fields out of a fetch result's raw `item` JSON.
-fn item_preview(item: &serde_json::Value) -> ItemPreview {
-    let s = |k: &str| {
-        item.get(k)
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .filter(|t| !t.is_empty())
-    };
-    let mut mods = Vec::new();
-    // Pull from EVERY mod field the trade API uses — a rare's lines can live in
-    // explicitMods, but also fractured/crafted/enchant/rune/desecrated/implicit
-    // depending on how it was made.
-    for key in [
-        "implicitMods",
-        "enchantMods",
-        "runeMods",
-        "fracturedMods",
-        "explicitMods",
-        "craftedMods",
-        "desecratedMods",
-        "scourgeMods",
-    ] {
-        if let Some(arr) = item.get(key).and_then(|v| v.as_array()) {
-            mods.extend(arr.iter().filter_map(|v| v.as_str()).map(str::to_string));
-        }
-    }
-    if mods.is_empty() {
-        // Help diagnose the "no description" case: log what the item actually
-        // carried (run with RUST_LOG=ui=debug to capture).
-        tracing::debug!(
-            name = ?item.get("name").and_then(|v| v.as_str()),
-            keys = ?item.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
-            "item preview has no mods"
-        );
-    }
-    ItemPreview {
-        icon: s("icon"),
-        name: s("name"),
-        base: s("typeLine"),
-        mods,
-        frame_type: item.get("frameType").and_then(|v| v.as_u64()).unwrap_or(0),
-    }
-}
-
-/// The four chat-action buttons (Whisper / Invite / Hideout / Trade) shared by
-/// item listings and exchange offers — Phosphor icons with hover labels.
-fn action_buttons(
-    ui: &mut egui::Ui,
-    whisper: Option<&str>,
-    character: Option<&str>,
-    hideout_token: Option<&str>,
-    seller: &str,
-    copied: &mut Option<String>,
-    teleport: &mut Option<String>,
-) {
-    if let Some(w) = whisper {
-        if ui
-            .button(ph::CHAT_CIRCLE_DOTS)
-            .on_hover_text("Whisper (sends in POE2)")
-            .clicked()
-        {
-            send_chat_to_poe2(w.to_string());
-            *copied = Some(format!("whisper to {seller}"));
-        }
-    } else {
-        ui.add_enabled(false, egui::Button::new(ph::CHAT_CIRCLE_DOTS))
-            .on_hover_text("Whisper (unavailable)");
-    }
-    chat_button(ui, ph::USER_PLUS, "Invite", character.map(|c| format!("/invite {c}")), copied);
-    // Hideout: an Instant Buyout listing carries a teleport token → one-click
-    // travel into the seller's hideout (buy from Ange). Otherwise it's an
-    // in-person listing and we fall back to the `/hideout <char>` chat command.
-    if let Some(token) = hideout_token {
-        if ui
-            .button(ph::HOUSE)
-            .on_hover_text("Teleport to seller's hideout (Instant Buyout)")
-            .clicked()
-        {
-            *teleport = Some(token.to_string());
-            *copied = Some(format!("teleport to {seller}"));
-        }
-    } else {
-        chat_button(ui, ph::HOUSE, "Hideout", character.map(|c| format!("/hideout {c}")), copied);
-    }
-    chat_button(ui, ph::HANDSHAKE, "Trade", character.map(|c| format!("/tradewith {c}")), copied);
-}
-
-/// Currencies offered in the exchange "pay with" selector (id, label).
-const PAY_CURRENCIES: &[(&str, &str)] = &[
-    ("exalted", "Exalted"),
-    ("divine", "Divine"),
-    ("chaos", "Chaos"),
-];
-
-fn pay_label(id: &str) -> &str {
-    PAY_CURRENCIES
-        .iter()
-        .find(|(i, _)| *i == id)
-        .map(|(_, l)| *l)
-        .unwrap_or("Exalted")
-}
-
-/// Deep link to the bulk-exchange page for a result (PRD §4.4).
-fn exchange_url(league: &str, id: &str) -> String {
-    format!(
-        "https://www.pathofexile.com/trade2/exchange/poe2/{}/{}",
-        percent_encode(league),
-        id
-    )
-}
-
-/// One bulk-exchange offer row: unit price, seller (+ online dot / stock), and
-/// Whisper / Invite / Hideout / Trade buttons (the whisper is pre-filled).
-/// Build the results-table rows for bulk-exchange offers (no item preview).
-fn exchange_rows(offers: &[ExchangeOffer], pay: &str) -> Vec<RowData> {
-    offers
-        .iter()
-        .map(|o| RowData {
-            price: format!("{} {}", fmt_amount(o.unit_price), pay),
-            online: o.online,
-            seller: o.account.clone(),
-            seller_hover: o.stock.map(|s| format!("stock: {}", fmt_amount(s))),
-            whisper: o.whisper.clone(),
-            character: o.character.clone(),
-            hideout_token: None,
-            item: None,
-        })
-        .collect()
-}
-
-/// An icon button that sends a chat `command` into POE2. `name` is the hover
-/// label. Disabled (greyed) when we couldn't build a command (e.g. the listing
-/// has no character name).
-fn chat_button(
-    ui: &mut egui::Ui,
-    icon: &str,
-    name: &str,
-    command: Option<String>,
-    copied: &mut Option<String>,
-) {
-    match command {
-        Some(cmd) => {
-            if ui.button(icon).on_hover_text(format!("{name} (sends in POE2)")).clicked() {
-                send_chat_to_poe2(cmd.clone());
-                *copied = Some(cmd);
-            }
-        }
-        None => {
-            ui.add_enabled(false, egui::Button::new(icon))
-                .on_hover_text(format!("{name} (no character name)"));
-        }
-    }
-}
-
-/// Send a chat command straight into POE2 (PRD §4.6 — the buttons *act*, you
-/// don't paste). Refocuses the game (our overlay had click focus), confirms it's
-/// active, then injects via the same uinput paste path as the macros. Falls back
-/// to leaving the command on the clipboard if POE2 can't be focused. Off-thread:
-/// the focus settle + inject block ~½s.
-fn send_chat_to_poe2(command: String) {
-    if command.trim().is_empty() {
-        return;
-    }
-    std::thread::spawn(move || {
-        platform_linux::focus_poe2();
-        // Give the compositor a moment to move keyboard focus to POE2 before we
-        // inject, else the keystrokes land in our overlay (which had focus).
-        std::thread::sleep(Duration::from_millis(120));
-        if platform_linux::is_poe2_active() {
-            if let Err(e) = platform_linux::send_chat_command(&command) {
-                tracing::warn!(error = %format!("{e:#}"), "chat send failed; left on clipboard");
-                let _ = platform_linux::write_clipboard_text(&command);
-            }
-        } else {
-            tracing::info!("POE2 not focusable — left command on clipboard to paste");
-            let _ = platform_linux::write_clipboard_text(&command);
-        }
-    });
-}
-
-/// Run a chat macro (e.g. `/hideout`, `/exit`) off-thread — it injects via
-/// uinput into the focused window (POE2) and blocks ~½s. `None` / empty is a
-/// no-op (the macro is disabled).
-fn run_chat_macro(command: Option<String>) {
-    let Some(cmd) = command else { return };
-    if cmd.trim().is_empty() {
-        return;
-    }
-    tracing::info!(command = %cmd, "running chat macro");
-    std::thread::spawn(move || {
-        if let Err(e) = platform_linux::send_chat_command(&cmd) {
-            tracing::warn!(error = %format!("{e:#}"), "chat macro failed");
-        }
-    });
-}
-
-fn rarity_color(rarity: &Rarity) -> Color32 {
-    match rarity {
-        Rarity::Normal => Color32::from_rgb(0xc8, 0xc8, 0xc8),
-        Rarity::Magic => Color32::from_rgb(0x88, 0x88, 0xff),
-        Rarity::Rare => Color32::from_rgb(0xff, 0xff, 0x77),
-        Rarity::Unique => Color32::from_rgb(0xaf, 0x60, 0x25),
-        Rarity::Gem => Color32::from_rgb(0x1b, 0xa2, 0x9b),
-        Rarity::Currency => Color32::from_rgb(0xaa, 0x99, 0x77),
-        Rarity::Other(_) => Color32::WHITE,
-    }
-}
-
-fn fmt_amount(amount: f64) -> String {
-    if amount.fract() == 0.0 {
-        format!("{}", amount as i64)
-    } else {
-        // Up to 3 decimals, trailing zeros trimmed — so 0.17 stays "0.17", not
-        // "0.2" (the old {:.1} rounded a 0.17 roll up and over-tightened the
-        // search below the item itself), and 2.5 stays "2.5".
-        format!("{amount:.3}")
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string()
-    }
-}
-
-/// Map the configured trade-status string to a [`ListingStatus`] (defaults to
-/// Instant Buyout / securable for anything unrecognised).
-fn parse_status(s: &str) -> ListingStatus {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "online" => ListingStatus::Online,
-        "available" => ListingStatus::Available,
-        "any" => ListingStatus::Any,
-        _ => ListingStatus::Securable,
-    }
-}
-
-/// Scale a rolled value to the configured filter-min percentage (PRD §4.7).
-/// Integer rolls floor (so 90% of 132 → 118, a clean buffer); fractional rolls
-/// keep their precision.
-fn scaled_min(rolled: f64, percent: u32) -> f64 {
-    let scaled = rolled * percent as f64 / 100.0;
-    if rolled.fract() == 0.0 {
-        scaled.floor()
-    } else {
-        scaled
-    }
-}
-
-/// Watch the global price-check hotkeys on a background thread. On each press
-/// we wait for POE2 to write the clipboard, then push the item text to the UI.
-/// If the watcher can't start (e.g. not in the `input` group), we log and carry
-/// on — the window still works manually (PRD §4.1).
-pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
-    use platform_linux::{HotkeyBindings, HotkeyEvent};
-    // Hotkeys and the POE2-focus gate are config-driven (rebindable, PRD §4.8).
-    let config = Config::load();
-    let bindings = HotkeyBindings::from_strings(
-        &config.hotkey_quick,
-        &config.hotkey_detailed,
-        &config.hotkey_macro,
-        &config.hotkey_macro2,
-        &config.hotkey_close,
-    );
-    let require_focus = config.require_poe2_focus;
-
-    std::thread::spawn(move || {
-        let hotkeys = match platform_linux::watch_hotkeys(bindings) {
-            Ok(rx) => rx,
-            Err(e) => {
-                tracing::warn!(error = %e, "hotkey watcher disabled; use the buttons");
-                return;
-            }
-        };
-        tracing::info!(
-            quick = %config.hotkey_quick,
-            detailed = %config.hotkey_detailed,
-            macro_ = %config.hotkey_macro,
-            require_poe2_focus = require_focus,
-            "listening for hotkeys"
-        );
-        // Pre-create the injection device (after the watcher scanned keyboards,
-        // so it isn't picked up) so the first macro press is instant.
-        if config.f5_command.is_some() || config.macro2_command.is_some() {
-            std::thread::spawn(platform_linux::warm_up_injection);
-        }
-        // Shared so the clipboard wait can run OFF this loop (below): the loop
-        // must NOT block, or evdev modifier events (Ctrl/Alt for the overlay's
-        // show + Alt-drag) queue behind a ≤1s clipboard poll and the drag lags.
-        let last_seen = Arc::new(Mutex::new(
-            platform_linux::read_clipboard_text().unwrap_or(None),
-        ));
-        // Debounce the chat macros (index 0 = F5, 1 = F2). A keyboard often
-        // exposes several `event-kbd` nodes, so ONE physical press is read by
-        // several reader threads and arrives here as duplicate events; without
-        // this the macro runs twice — chat re-opens right after sending (the
-        // "presses Enter again" bug). EE2 throttles the same way (its 120ms
-        // clipboard-restore guard). The window only needs to exceed the gap
-        // between duplicate nodes (a few ms); 300ms also blocks accidental
-        // double-taps while never affecting a deliberate re-fire.
-        const MACRO_DEBOUNCE: Duration = Duration::from_millis(300);
-        let mut last_macro: [Option<Instant>; 2] = [None, None];
-        for event in hotkeys {
-            match event {
-                // Escape dismisses — overlay control, not gated to POE2 focus.
-                HotkeyEvent::Close => {
-                    let _ = tx.send(Hotkey::Close);
-                    ctx.request_repaint();
-                }
-                // Ctrl/Alt state — must be forwarded INSTANTLY (overlay drag/show).
-                HotkeyEvent::Modifiers { ctrl, alt } => {
-                    let _ = tx.send(Hotkey::Mods { ctrl, alt });
-                    ctx.request_repaint();
-                }
-                // Chat macros — only into POE2. Off-thread so the focus check
-                // (xdotool) doesn't stall the loop.
-                HotkeyEvent::Macro | HotkeyEvent::Macro2 => {
-                    // Drop a duplicate press echoed by another device node.
-                    let slot = usize::from(event == HotkeyEvent::Macro2);
-                    let now = Instant::now();
-                    if last_macro[slot].is_some_and(|t| now.duration_since(t) < MACRO_DEBOUNCE) {
-                        continue;
-                    }
-                    last_macro[slot] = Some(now);
-
-                    let (tx, ctx) = (tx.clone(), ctx.clone());
-                    let msg = if event == HotkeyEvent::Macro2 {
-                        Hotkey::Macro2
-                    } else {
-                        Hotkey::Macro
-                    };
-                    std::thread::spawn(move || {
-                        if require_focus && !platform_linux::is_poe2_active() {
-                            tracing::info!("macro ignored — POE2 not focused");
-                            return;
-                        }
-                        let _ = tx.send(msg);
-                        ctx.request_repaint();
-                    });
-                }
-                // A copy combo: the focus check + the ≤1s clipboard poll run on
-                // their own thread so this loop keeps forwarding modifier events.
-                HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
-                    let (tx, ctx, last) = (tx.clone(), ctx.clone(), last_seen.clone());
-                    std::thread::spawn(move || {
-                        if require_focus && !platform_linux::is_poe2_active() {
-                            tracing::info!("Ctrl+C ignored — POE2 not focused");
-                            return;
-                        }
-                        // Pop the popup NOW (focus is confirmed), before the
-                        // clipboard poll, so the UI reacts instantly.
-                        let _ = tx.send(Hotkey::CopyStarted);
-                        ctx.request_repaint();
-
-                        let prev = last.lock().expect("last_seen lock").clone();
-                        let start = Instant::now();
-                        let outcome = match wait_for_item(&prev) {
-                            Some(text) => {
-                                tracing::info!(
-                                    elapsed_ms = start.elapsed().as_millis(),
-                                    hash = item_hash(&text),
-                                    "clipboard: item → showing (UI de-dups the query)"
-                                );
-                                *last.lock().expect("last_seen lock") = Some(text.clone());
-                                Hotkey::Item { text }
-                            }
-                            None => {
-                                tracing::info!("clipboard: no item → ignored");
-                                Hotkey::Missed
-                            }
-                        };
-                        let _ = tx.send(outcome);
-                        ctx.request_repaint();
-                    });
-                }
-            }
-        }
-    });
-}
-
-/// Watch `config.json` for external edits and push the reloaded config to the
-/// UI thread (PRD §4.8 hot-reload). Best-effort: if the watcher can't start we
-/// log and carry on (settings still apply on the next launch).
-///
-/// We watch the containing directory (not the file) because editors often save
-/// by replacing the file via rename, which drops a watch on the inode itself.
-/// Reads are write-free ([`Config::load_no_write`]) so our own reload can't
-/// re-trigger the watcher.
-pub fn spawn_config_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
-    use notify::{RecursiveMode, Watcher};
-    let path = Config::path();
-    let Some(dir) = path.parent().map(|d| d.to_path_buf()) else {
-        tracing::warn!("config has no parent dir; hot-reload disabled");
-        return;
-    };
-    let file_name = path.file_name().map(|s| s.to_os_string());
-
-    std::thread::spawn(move || {
-        // Editors fire several events per save; coalesce them.
-        let last = Mutex::new(Instant::now() - Duration::from_secs(1));
-        let handler = move |res: notify::Result<notify::Event>| {
-            let Ok(event) = res else { return };
-            // Only our file, and only content-changing events.
-            let touches_config = event
-                .paths
-                .iter()
-                .any(|p| p.file_name().map(|n| n.to_os_string()) == file_name);
-            if !touches_config || !matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_)) {
-                return;
-            }
-            {
-                let mut l = last.lock().expect("config-watch debounce lock");
-                if l.elapsed() < Duration::from_millis(200) {
-                    return;
-                }
-                *l = Instant::now();
-            }
-            // Let the writer finish flushing before we read.
-            std::thread::sleep(Duration::from_millis(60));
-            let config = Config::load_no_write();
-            tracing::info!("config.json changed → reloading");
-            if tx.send(Hotkey::ConfigReloaded(Box::new(config))).is_ok() {
-                ctx.request_repaint();
-            }
-        };
-        let mut watcher = match notify::recommended_watcher(handler) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::warn!(error = %e, "config watcher disabled");
-                return;
-            }
-        };
-        if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-            tracing::warn!(error = %e, dir = %dir.display(), "config watch failed");
-            return;
-        }
-        tracing::info!(dir = %dir.display(), "watching config.json for changes");
-        // Keep the watcher alive for the process lifetime.
-        loop {
-            std::thread::park();
-        }
-    });
-}
-
-/// Poll the clipboard until it both *changed* and *parses as a POE2 item*, or
-/// the timeout hits (PRD §4.2). Gating on "is an item" — not merely "changed" —
-/// avoids grabbing the transient/stale clipboard value the X11↔Wayland bridge
-/// can briefly expose before POE2 finishes writing (which made the first Ctrl+C
-/// fail while the second worked).
-fn wait_for_item(last_seen: &Option<String>) -> Option<String> {
-    let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
-    let last = last_seen.as_deref().map(normalize_item_text);
-    // If the clipboard only ever holds the SAME item as before, that's a
-    // *re-view* of the loaded item — return it so the popup re-shows (the UI
-    // de-dups the API call via a short cache). We still poll the full window
-    // first: a genuine switch to a different item must win, and POE2's write of
-    // the new item can lag the keypress. Returning `None` only when the
-    // clipboard never holds a parseable item at all (a truly missed copy).
-    let mut same: Option<String> = None;
-    loop {
-        if let Ok(Some(text)) = platform_linux::read_clipboard_text() {
-            match clip_step(&text, last.as_deref()) {
-                ClipStep::Different => return Some(text), // a new item appeared → use it now
-                ClipStep::Same => same = Some(text), // same as loaded; keep watching for a switch
-                ClipStep::NotItem => {}
-            }
-        }
-        if Instant::now() >= deadline {
-            return same;
-        }
-        std::thread::sleep(POLL_INTERVAL);
-    }
-}
-
-/// What a single clipboard read means relative to the last-seen item.
-#[derive(Debug, PartialEq, Eq)]
-enum ClipStep {
-    /// A different parseable item than last seen — show it now.
-    Different,
-    /// The same item as last seen — a re-view (show it; the UI caches the query).
-    Same,
-    /// Not a POE2 item (ignore this read).
-    NotItem,
-}
-
-/// Classify a clipboard read against the whitespace-normalised last-seen item.
-fn clip_step(text: &str, last_normalized: Option<&str>) -> ClipStep {
-    if parser::parse_item(text).is_err() {
-        return ClipStep::NotItem;
-    }
-    if last_normalized == Some(normalize_item_text(text).as_str()) {
-        ClipStep::Same
-    } else {
-        ClipStep::Different
     }
 }
 
@@ -2860,8 +490,7 @@ pub fn install_loaders(ctx: &egui::Context) {
 
 pub fn configure_style(ctx: &egui::Context) {
     // Add the Phosphor icon font so the button glyphs render (the default egui
-    // font has no emoji — that's why they were tofu squares). Keep the default
-    // fonts for text; phosphor is an extra family the `ph::*` constants use.
+    // font has no emoji). Phosphor is an extra family the `ph::*` constants use.
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
@@ -2877,10 +506,6 @@ pub fn configure_style(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
-/// Build a ready-to-render [`QuickModeApp`]: load settings, spin up a tokio
-/// runtime, fetch the live trade definitions + leagues, and construct the API
-/// client for the layer-shell overlay.
-///
 /// Is this league id a Hardcore variant? GGG lists them as `Hardcore` and
 /// `HC <league>` (and, historically, `Hardcore <league>`).
 fn is_hardcore_league(id: &str) -> bool {
@@ -2898,6 +523,10 @@ fn resolve_auto_league(leagues: &[League]) -> Option<String> {
         .map(|l| l.id.clone())
 }
 
+/// Build a ready-to-render [`QuickModeApp`]: load settings, spin up a tokio
+/// runtime, fetch the live trade definitions + leagues, and construct the API
+/// client for the layer-shell overlay.
+///
 /// The league is auto-resolved from the live GGG list (the current non-HC
 /// league, or Standard between leagues) unless the user has pinned one via the
 /// selector. `POE_LEAGUE` / `POE_REALM`, if set, override for that run (handy
@@ -2907,8 +536,8 @@ pub fn build_app(
     tray: Option<platform_linux::TrayHandle>,
 ) -> anyhow::Result<QuickModeApp> {
     let mut config = Config::load();
-    // A pinned league (an explicit selector pick) or a POE_LEAGUE override is
-    // taken as-is; otherwise the league is auto-resolved from GGG below.
+    // A pinned league or a POE_LEAGUE override is taken as-is; otherwise it's
+    // auto-resolved from GGG below.
     let mut league_explicit = config.league_pinned;
     if let Ok(league) = std::env::var("POE_LEAGUE") {
         if !league.is_empty() {
@@ -2926,9 +555,8 @@ pub fn build_app(
     let (stats, items, currencies) = rt
         .block_on(fetch_definitions(&transport, BASE_URL))
         .map_err(|e| anyhow::anyhow!("loading definitions: {e}"))?;
-    // A leagues failure is only fatal when we need the list to auto-resolve the
-    // league (handled below); a pinned league still starts, with the selector
-    // falling back to a static label.
+    // A leagues failure is only fatal when we need the list to auto-resolve
+    // (handled below); a pinned league still starts with a static selector label.
     let leagues = rt
         .block_on(fetch_leagues(&transport, BASE_URL))
         .unwrap_or_else(|e| {
@@ -2936,19 +564,15 @@ pub fn build_app(
             Vec::new()
         });
 
-    // League resolution (no hardcoded league): respect an explicit pick,
-    // otherwise take the latest non-HC league GGG returns — the current
-    // challenge league while one runs, or Standard between leagues (both come
-    // from the live list).
+    // Respect an explicit pick; otherwise take the latest non-HC league GGG
+    // returns (the current challenge league, or Standard between leagues).
     if !league_explicit {
         match resolve_auto_league(&leagues) {
             Some(def) => {
                 config.league = def;
-                // Persist the resolved league so disk matches memory: otherwise a
-                // config hot-reload (which reads the file) would see the stale
-                // on-disk value and wipe the resolved one mid-session. It's still
-                // re-derived on every unpinned startup, so rollovers are followed,
-                // and it doubles as the offline fallback next launch.
+                // Persist so disk matches memory: else a hot-reload would read
+                // the stale on-disk value and wipe the resolved one mid-session.
+                // Re-derived on every unpinned startup; doubles as offline fallback.
                 if let Err(e) = config.save() {
                     tracing::warn!(error = %e, "could not persist resolved league");
                 }
@@ -2969,7 +593,7 @@ pub fn build_app(
     );
 
     let mut client_config = ClientConfig::new(&config.league);
-    client_config.realm = config.realm.clone();
+    client_config.realm.clone_from(&config.realm);
     let client = Arc::new(TradeClient::new(
         transport,
         client_config,
@@ -2983,51 +607,4 @@ pub fn build_app(
     Ok(QuickModeApp::new(
         rt, client, config, leagues, hotkey_rx, tray,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{clip_step, ClipStep};
-
-    const RING: &str = "Item Class: Rings\nRarity: Rare\nHonour Spiral\nTopaz Ring\n--------\n+30% to Lightning Resistance";
-    const RUNE: &str = "Item Class: Augment\nRarity: Currency\nFarrul's Rune of the Chase\n--------\nStack Size: 1/10\nRune";
-
-    #[test]
-    fn reviewing_the_same_item_is_not_ignored() {
-        let last = super::normalize_item_text(RING);
-        // Re-copying the SAME item must classify as Same (so the popup re-shows),
-        // NOT be dropped — this was the "re-view does nothing" bug.
-        assert_eq!(clip_step(RING, Some(&last)), ClipStep::Same);
-    }
-
-    #[test]
-    fn a_different_item_is_new() {
-        let last = super::normalize_item_text(RING);
-        assert_eq!(clip_step(RUNE, Some(&last)), ClipStep::Different);
-        // With nothing seen yet, any item is new.
-        assert_eq!(clip_step(RING, None), ClipStep::Different);
-    }
-
-    #[test]
-    fn non_item_clipboard_is_ignored() {
-        assert_eq!(clip_step("https://example.com/not-an-item", None), ClipStep::NotItem);
-    }
-
-    #[test]
-    fn strips_fetch_text_markup() {
-        use super::clean_mod_markup;
-        assert_eq!(clean_mod_markup("+162 to [Evasion] Rating"), "+162 to Evasion Rating");
-        assert_eq!(
-            clean_mod_markup("36% increased [Evasion|Evasion] Rating"),
-            "36% increased Evasion Rating"
-        );
-        // The display text is the part after '|'.
-        assert_eq!(
-            clean_mod_markup("+33% to [Resistances|Fire Resistance]"),
-            "+33% to Fire Resistance"
-        );
-        assert_eq!(clean_mod_markup("no markup here"), "no markup here");
-        // Unbalanced bracket is left as-is (no panic).
-        assert_eq!(clean_mod_markup("oops [unclosed"), "oops [unclosed");
-    }
 }

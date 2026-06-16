@@ -90,18 +90,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. Build and print the search query body.
     let opts = QueryOptions::default();
     let request = build_search_query(&item, &stats, &items, opts);
-    println!("── search query body ──\n{}\n", serde_json::to_string_pretty(&request)?);
+    println!(
+        "── search query body ──\n{}\n",
+        serde_json::to_string_pretty(&request)?
+    );
 
     // 5. Run the real search + fetch through the client.
     let league = std::env::var("POE_LEAGUE").unwrap_or_else(|_| "Standard".to_string());
     let mut config = ClientConfig::new(&league);
     config.realm = std::env::var("POE_REALM").ok();
-    let client = TradeClient::new(transport, config, stats, items, CurrencyDefinitions::default());
+    let client = TradeClient::new(
+        transport,
+        config,
+        stats,
+        items,
+        CurrencyDefinitions::default(),
+    );
 
     println!("searching league {league:?} …");
     match client.price_check(&item, opts, 10).await {
         Ok(pc) => {
-            println!("  {} total online listings, query id {}\n", pc.total, pc.query_id);
+            println!(
+                "  {} total online listings, query id {}\n",
+                pc.total, pc.query_id
+            );
             match pc.median_price() {
                 Some(p) => println!("  median asking price: {} {}\n", p.amount, p.currency),
                 None => println!("  (no priced listings)\n"),
@@ -109,19 +121,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("── cheapest listings ──");
             for (i, entry) in pc.cheapest(5).iter().enumerate() {
                 let l = &entry.listing;
-                let price = l
-                    .price
-                    .as_ref()
-                    .map(|p| format!("{} {}", p.amount, p.currency))
-                    .unwrap_or_else(|| "—".to_string());
-                let status = if l.is_online() { "online" } else { "afk/offline" };
-                println!(
-                    "  {}. {:<14} {} ({})",
-                    i + 1,
-                    price,
-                    l.account.name,
-                    status
+                let price = l.price.as_ref().map_or_else(
+                    || "—".to_string(),
+                    |p| format!("{} {}", p.amount, p.currency),
                 );
+                let status = if l.is_online() {
+                    "online"
+                } else {
+                    "afk/offline"
+                };
+                println!("  {}. {:<14} {} ({})", i + 1, price, l.account.name, status);
                 if let Some(w) = &l.whisper {
                     println!("     whisper: {w}");
                 }
@@ -142,7 +151,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Minimal GET through the transport, for the public definition endpoints.
-async fn get(transport: &ReqwestTransport, path: &str) -> Result<String, Box<dyn std::error::Error>> {
+async fn get(
+    transport: &ReqwestTransport,
+    path: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let resp = transport
         .execute(HttpRequest {
             method: Method::Get,

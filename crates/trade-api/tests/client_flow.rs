@@ -1,4 +1,4 @@
-//! End-to-end client flow over a mocked HTTP transport (PRD §7 integration):
+//! End-to-end client flow over a mocked HTTP transport:
 //! search → fetch → aggregate, request shapes, fetch batching, and 429 retry.
 //! Nothing here touches the network.
 
@@ -24,10 +24,19 @@ Topaz Ring
 /// Captured real rate-limit headers, attached to every mocked response.
 fn rate_headers() -> Vec<(String, String)> {
     vec![
-        ("X-Rate-Limit-Policy".into(), "trade-search-request-limit".into()),
+        (
+            "X-Rate-Limit-Policy".into(),
+            "trade-search-request-limit".into(),
+        ),
         ("X-Rate-Limit-Rules".into(), "Ip".into()),
-        ("X-Rate-Limit-Ip".into(), "5:10:60,15:60:300,30:300:1800".into()),
-        ("X-Rate-Limit-Ip-State".into(), "1:10:0,1:60:0,1:300:0".into()),
+        (
+            "X-Rate-Limit-Ip".into(),
+            "5:10:60,15:60:300,30:300:1800".into(),
+        ),
+        (
+            "X-Rate-Limit-Ip-State".into(),
+            "1:10:0,1:60:0,1:300:0".into(),
+        ),
     ]
 }
 
@@ -84,7 +93,13 @@ async fn price_check_searches_then_fetches_and_aggregates() {
     let fetch = include_str!("fixtures/api/fetch_response.json");
     let (transport, requests) = MockTransport::new(vec![ok(search), ok(fetch)]);
     let (stats, items) = defs();
-    let client = TradeClient::new(transport, ClientConfig::new("Mirage"), stats, items, CurrencyDefinitions::default());
+    let client = TradeClient::new(
+        transport,
+        ClientConfig::new("Mirage"),
+        stats,
+        items,
+        CurrencyDefinitions::default(),
+    );
 
     let item = parse_item(RARE_RING).unwrap();
     let pc = client
@@ -124,7 +139,13 @@ async fn fetch_batches_ids_in_groups_of_ten() {
     // 23 ids → 3 batches (10 + 10 + 3) → 3 GET requests.
     let (transport, requests) = MockTransport::new(vec![ok(empty), ok(empty), ok(empty)]);
     let (stats, items) = defs();
-    let client = TradeClient::new(transport, ClientConfig::new("Mirage"), stats, items, CurrencyDefinitions::default());
+    let client = TradeClient::new(
+        transport,
+        ClientConfig::new("Mirage"),
+        stats,
+        items,
+        CurrencyDefinitions::default(),
+    );
 
     let ids: Vec<String> = (0..23).map(|i| format!("id{i:02}")).collect();
     let listings = client.fetch(&ids, "QID").await.unwrap();
@@ -140,13 +161,18 @@ async fn fetch_batches_ids_in_groups_of_ten() {
 
 #[tokio::test]
 async fn realm_is_appended_to_search_and_fetch_urls() {
-    let (transport, requests) =
-        MockTransport::new(vec![ok(r#"{"id":"q","result":[],"total":0}"#)]);
+    let (transport, requests) = MockTransport::new(vec![ok(r#"{"id":"q","result":[],"total":0}"#)]);
     let (stats, items) = defs();
     // A real POE2 league id with spaces must be percent-encoded in the URL.
     let mut config = ClientConfig::new("Runes of Aldur");
     config.realm = Some("poe2".to_string());
-    let client = TradeClient::new(transport, config, stats, items, CurrencyDefinitions::default());
+    let client = TradeClient::new(
+        transport,
+        config,
+        stats,
+        items,
+        CurrencyDefinitions::default(),
+    );
 
     let item = parse_item(RARE_RING).unwrap();
     client
@@ -174,11 +200,21 @@ async fn retries_through_a_429_then_succeeds() {
     let good = ok(r#"{"id":"q2","result":[],"total":0}"#);
     let (transport, requests) = MockTransport::new(vec![throttled, good]);
     let (stats, items) = defs();
-    let client = TradeClient::new(transport, ClientConfig::new("Mirage"), stats, items, CurrencyDefinitions::default());
+    let client = TradeClient::new(
+        transport,
+        ClientConfig::new("Mirage"),
+        stats,
+        items,
+        CurrencyDefinitions::default(),
+    );
 
     let item = parse_item(RARE_RING).unwrap();
-    let req =
-        trade_api::build_search_query(&item, client.stats(), client.items(), QueryOptions::default());
+    let req = trade_api::build_search_query(
+        &item,
+        client.stats(),
+        client.items(),
+        QueryOptions::default(),
+    );
     let resp = client.search(&req).await.unwrap();
     assert_eq!(resp.id, "q2");
     assert_eq!(requests.lock().unwrap().len(), 2); // one 429, one success
@@ -192,10 +228,21 @@ async fn api_error_status_surfaces_as_error() {
         body: r#"{"error":{"code":2,"message":"Invalid query"}}"#.to_string(),
     }]);
     let (stats, items) = defs();
-    let client = TradeClient::new(transport, ClientConfig::new("Mirage"), stats, items, CurrencyDefinitions::default());
+    let client = TradeClient::new(
+        transport,
+        ClientConfig::new("Mirage"),
+        stats,
+        items,
+        CurrencyDefinitions::default(),
+    );
 
     let item = parse_item(RARE_RING).unwrap();
-    let req = trade_api::build_search_query(&item, client.stats(), client.items(), QueryOptions::default());
+    let req = trade_api::build_search_query(
+        &item,
+        client.stats(),
+        client.items(),
+        QueryOptions::default(),
+    );
     let err = client.search(&req).await.unwrap_err();
     match err {
         Error::Api { status, .. } => assert_eq!(status, 400),

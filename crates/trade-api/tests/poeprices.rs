@@ -1,4 +1,4 @@
-//! poeprices.info ML estimate over a mocked transport (PRD §4.4, §7): URL
+//! poeprices.info ML estimate over a mocked transport: URL
 //! shape (league + base64 item), a successful prediction, a decline, and an
 //! HTTP error. Offline — nothing here touches the network.
 
@@ -69,7 +69,9 @@ async fn successful_prediction_parses_and_builds_the_url() {
 #[tokio::test]
 async fn league_with_spaces_is_percent_encoded() {
     let (transport, seen) = OneShot::new(ok(include_str!("fixtures/api/poeprices_estimate.json")));
-    let _ = price_estimate(&transport, "Runes of Aldur", "x").await.unwrap();
+    let _ = price_estimate(&transport, "Runes of Aldur", "x")
+        .await
+        .unwrap();
     let url = &seen.lock().unwrap()[0].url;
     assert!(url.contains("l=Runes%20of%20Aldur"), "got {url}");
 }
@@ -77,7 +79,9 @@ async fn league_with_spaces_is_percent_encoded() {
 #[tokio::test]
 async fn a_decline_is_none_not_an_error() {
     let (transport, _) = OneShot::new(ok(include_str!("fixtures/api/poeprices_declined.json")));
-    let est = price_estimate(&transport, "Standard", "Test").await.unwrap();
+    let est = price_estimate(&transport, "Standard", "Test")
+        .await
+        .unwrap();
     assert!(est.is_none());
 }
 

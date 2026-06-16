@@ -1,8 +1,5 @@
 //! Dev tool: read item text from stdin, print the parsed [`Item`].
 //!
-//! Pure stdin in, debug out — keeps the library free of IO. Pipe a real copied
-//! item through it to eyeball the parse against a live game item:
-//!
 //! ```sh
 //! # after copying an item in POE2 (the X11 clipboard holds it):
 //! xclip -selection clipboard -o | cargo run -p parser --example parse_stdin

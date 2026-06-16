@@ -1,19 +1,15 @@
 //! Turning the parser's raw stat lines into GGG stat-template form.
 //!
-//! The parser leaves stat text verbatim, e.g. `+30(20-30)% to Lightning
-//! Resistance`. The trade API keys its stats on templates where the *rolled*
-//! value is replaced by `#`: `#% to Lightning Resistance`. Two wrinkles:
+//! The parser leaves stat text verbatim (`+30(20-30)% to Lightning
+//! Resistance`); the trade API keys stats on templates with the *rolled* value
+//! replaced by `#` (`#% to Lightning Resistance`). Two wrinkles:
 //!
-//! 1. **The sign is part of the placeholder.** GGG writes `#% to Lightning
-//!    Resistance` (no `+`) but `+# to Level of all Skills` (with `+`) —
-//!    inconsistently. We canonicalise *both* sides by dropping a sign that sits
-//!    immediately in front of the placeholder, so the two always meet.
-//! 2. **Only rolled numbers become `#`; constants stay literal.** GGG keeps
-//!    `# to maximum Life per 8 Armour on Equipped Helmet` — the `8` is literal.
-//!    In the advanced item format a *rolled* number is the one followed by a
-//!    `(min-max)` range, so that's what we replace. As a fallback (for single
-//!    valued rolls the game prints without a range) we also offer an
-//!    all-numbers candidate.
+//! 1. **The sign is part of the placeholder.** GGG inconsistently writes
+//!    `#% to …` but `+# to Level of all Skills`. We canonicalise both sides by
+//!    dropping a sign immediately before the placeholder, so they always meet.
+//! 2. **Only rolled numbers become `#`; constants stay literal.** A rolled
+//!    number is the one followed by a `(min-max)` range, so that's what we
+//!    replace; as a fallback we also offer an all-numbers candidate.
 
 use std::sync::OnceLock;
 
@@ -149,7 +145,10 @@ mod tests {
     fn constant_stays_literal_when_ranged_roll_present() {
         // The `8` is a constant (no range); only the ranged roll becomes `#`.
         let n = primary("+5(4-6) to maximum Life per 8 Armour on Equipped Helmet");
-        assert_eq!(n.template, "# to maximum Life per 8 Armour on Equipped Helmet");
+        assert_eq!(
+            n.template,
+            "# to maximum Life per 8 Armour on Equipped Helmet"
+        );
         assert_eq!(n.values, [5.0]);
     }
 
@@ -186,6 +185,9 @@ mod tests {
     #[test]
     fn canonical_ggg_strips_placeholder_sign() {
         assert_eq!(canonical_ggg("+# to maximum Life"), "# to maximum Life");
-        assert_eq!(canonical_ggg("#% to Fire Resistance"), "#% to Fire Resistance");
+        assert_eq!(
+            canonical_ggg("#% to Fire Resistance"),
+            "#% to Fire Resistance"
+        );
     }
 }

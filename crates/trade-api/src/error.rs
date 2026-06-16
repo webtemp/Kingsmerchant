@@ -18,11 +18,6 @@ pub enum Error {
         what: &'static str,
         source: serde_json::Error,
     },
-
-    /// We were rate limited and the caller asked us not to block. Carries the
-    /// suggested wait before retrying.
-    #[error("rate limited; retry in {0:?}")]
-    RateLimited(std::time::Duration),
 }
 
 impl Error {

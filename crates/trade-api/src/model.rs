@@ -36,10 +36,6 @@ pub struct Status {
 }
 
 impl Status {
-    pub fn online() -> Self {
-        Status::new("online")
-    }
-
     pub fn new(option: impl Into<String>) -> Self {
         Status {
             option: option.into(),
@@ -143,8 +139,8 @@ pub struct EquipmentFilters {
     pub filters: BTreeMap<String, StatValue>,
 }
 
-/// The `trade_filters` group: seller/price constraints. We use it for the
-/// detailed-mode price-range filter (PRD §4.7).
+/// The `trade_filters` group: seller/price constraints. Used for the
+/// detailed-mode price-range filter.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TradeFilters {
     pub filters: TradeFilterFields,
@@ -272,11 +268,10 @@ pub struct Listing {
     pub price: Option<Price>,
     #[serde(default)]
     pub whisper: Option<String>,
-    /// Short-lived (≈5 min) JWT that teleports you into this seller's hideout to
-    /// buy an Instant Buyout (securable) item from Ange the Merchant. Only
-    /// returned to an **authenticated** fetch (POESESSID cookie); absent for
-    /// anonymous requests and for in-person (online) listings. POST it to
-    /// `/api/trade2/whisper` to trigger the travel.
+    /// Short-lived (≈5 min) JWT that teleports you into this seller's hideout
+    /// for an Instant Buyout. Only returned to an **authenticated** fetch
+    /// (POESESSID); absent for anonymous requests and online listings. POST to
+    /// `/api/trade2/whisper` to trigger travel.
     #[serde(default)]
     pub hideout_token: Option<String>,
 }
@@ -284,11 +279,7 @@ pub struct Listing {
 impl Listing {
     /// Whether the seller is online (and not merely afk/dnd).
     pub fn is_online(&self) -> bool {
-        self.account
-            .online
-            .as_ref()
-            .map(|o| o.status.is_none())
-            .unwrap_or(false)
+        self.account.is_online()
     }
 }
 
@@ -299,6 +290,13 @@ pub struct Account {
     pub last_character_name: Option<String>,
     #[serde(default)]
     pub online: Option<Online>,
+}
+
+impl Account {
+    /// Whether the account is online (present and not flagged afk/dnd).
+    pub fn is_online(&self) -> bool {
+        self.online.as_ref().is_some_and(|o| o.status.is_none())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

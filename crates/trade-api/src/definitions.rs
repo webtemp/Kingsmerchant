@@ -1,12 +1,11 @@
 //! The `trade2/data/stats` and `trade2/data/items` snapshots, and the lookups
-//! the query builder needs from them (PRD §4.3, §4.4).
-//!
-//! These are refreshed on app start. This module turns the raw JSON into:
+//! the query builder needs from them. Refreshed on app start; turns the raw
+//! JSON into:
 //!   * stat text → GGG stat id (+ rolled values), respecting affix type, and
 //!   * magic-item name → base type (the parser leaves magic bases `None`
 //!     because the base is fused with affixes on one line).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use parser::{Item, ModKind, ModSource, Modifier};
 use serde::Deserialize;
@@ -98,13 +97,11 @@ impl StatDefinitions {
     }
 
     /// Map all of an item's modifiers to GGG stat filters, deciding the
-    /// local-vs-global stat variant per stat from the item's context (PRD §4.4).
+    /// local-vs-global stat variant per stat from the item's context.
     ///
-    /// GGG suffixes the *local* variant's text with ` (Local)` — e.g.
-    /// `#% increased Evasion Rating (Local)` is the armour mod,
-    /// `#% increased Evasion Rating` is the global passive-tree one. They share
-    /// display text but have different stat ids, so building a search from the
-    /// wrong one returns nothing. See [`LocalContext`] for the rule.
+    /// GGG suffixes the *local* variant with ` (Local)` — same display text,
+    /// different stat id — so searching with the wrong one returns nothing.
+    /// See [`LocalContext`] for the rule.
     pub fn map_item(&self, item: &Item) -> Vec<MappedStat> {
         let ctx = LocalContext::for_item(item);
         item.modifiers
@@ -115,9 +112,8 @@ impl StatDefinitions {
 
     /// Resolve one parsed [`Modifier`]'s stat lines to GGG stat filters.
     ///
-    /// A descriptor can grant several stat lines (a hybrid prefix), so this
-    /// returns one [`MappedStat`] per line it could map; unmappable lines are
-    /// silently skipped (mirroring the parser's best-effort stance). The
+    /// A hybrid prefix grants several lines, so this returns one [`MappedStat`]
+    /// per mappable line; unmappable lines are silently skipped. The
     /// local-vs-global choice is made per line from `ctx`.
     pub fn map_modifier(&self, modifier: &Modifier, ctx: LocalContext) -> Vec<MappedStat> {
         modifier
@@ -155,17 +151,18 @@ impl StatDefinitions {
     }
 
     /// Map a `Grants Skill: Level N <Skill>` property to its `skill.*` stat id,
-    /// with the skill LEVEL as the filter value. The level is the price driver
-    /// (a level-20 grant is worth far more than level-18), not which skill it is
-    /// — so this lets the UI filter by a minimum granted-skill level. `value` is
-    /// the property value, e.g. `Level 19 Discipline` / `Level 19 Azmerian Wolf`.
-    /// Returns `None` if the skill isn't a known grantable.
+    /// with the skill LEVEL as the filter value (the level is the price driver,
+    /// so the UI can filter by a minimum granted-skill level). `value` is e.g.
+    /// `Level 19 Discipline`. `None` if the skill isn't a known grantable.
     pub fn map_granted_skill(&self, value: &str) -> Option<MappedStat> {
         let rest = value.trim().strip_prefix("Level ")?;
         let (level, skill) = rest.split_once(' ')?;
         let level: f64 = level.trim().parse().ok()?;
         let template = format!("Grants Skill: Level # {}", skill.trim());
-        let id = self.by_text.get(&stat_text::canonical_ggg(&template))?.clone();
+        let id = self
+            .by_text
+            .get(&stat_text::canonical_ggg(&template))?
+            .clone();
         Some(MappedStat {
             id,
             stat_type: "skill".to_string(),
@@ -178,7 +175,10 @@ impl StatDefinitions {
     /// type-agnostically (e.g. an enchant on a slot we mapped as explicit).
     fn lookup(&self, types: &[&str], template: &str, values: &[f64]) -> Option<MappedStat> {
         for ty in types {
-            if let Some(id) = self.by_type_text.get(&(ty.to_string(), template.to_string())) {
+            if let Some(id) = self
+                .by_type_text
+                .get(&(ty.to_string(), template.to_string()))
+            {
                 return Some(MappedStat {
                     id: id.clone(),
                     stat_type: ty.to_string(),
@@ -200,16 +200,14 @@ impl StatDefinitions {
     }
 }
 
-/// Item context for choosing local-vs-global stat variants (PRD §4.4).
+/// Item context for choosing local-vs-global stat variants.
 ///
 /// A stat is *local* when it modifies a property the item type actually has:
-///   * **defence** stats (armour / evasion / energy shield / block / ward) are
-///     local on armour pieces — but NOT quivers, which carry no defences;
-///   * **weapon** stats (accuracy, attack speed, crit, added/increased damage)
-///     are local on weapons.
+///   * **defence** stats (armour / evasion / ES / block / ward) are local on
+///     armour pieces — but NOT quivers, which carry no defences;
+///   * **weapon** stats (accuracy, attack speed, crit, damage) on weapons.
 ///
-/// Everywhere else the same display text is the *global* passive-tree stat
-/// (e.g. `+# to Accuracy Rating` on a quiver or body armour, evasion on a ring).
+/// Everywhere else the same text is the *global* passive-tree stat.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LocalContext {
     is_weapon: bool,
@@ -230,7 +228,7 @@ impl LocalContext {
     }
 
     /// Whether the `(Local)` variant should be preferred for this stat line.
-    fn prefer_local(&self, line: &str) -> bool {
+    fn prefer_local(self, line: &str) -> bool {
         if is_defence_stat(line) {
             self.is_armour_piece
         } else {
@@ -254,10 +252,9 @@ fn preferred_types(kind: &ModKind, source: Option<&ModSource>) -> Vec<&'static s
     match source {
         Some(ModSource::Fractured) => vec!["fractured", "explicit"],
         Some(ModSource::Crafted) => vec!["crafted", "explicit"],
-        // Desecrated: the `desecrated.*` stat id matches only items whose mod
-        // came from desecration (almost nothing on the market), so a price
-        // check finds no comparables. Prefer the plain explicit variant (same
-        // stat number) — it's the same affix for pricing purposes.
+        // Desecrated: `desecrated.*` matches only desecration-sourced mods
+        // (almost nothing on the market), so prefer the plain explicit variant
+        // (same affix for pricing).
         Some(ModSource::Desecrated) => vec!["explicit", "desecrated"],
         None => match kind {
             ModKind::Implicit => vec!["implicit", "explicit"],
@@ -285,7 +282,7 @@ impl ItemDefinitions {
         let doc: RawDoc<RawItem> =
             serde_json::from_str(json).map_err(|e| Error::decode("data/items", e))?;
         let mut bases: Vec<String> = Vec::new();
-        let mut seen = HashMap::new();
+        let mut seen = HashSet::new();
         let mut unique_base = HashMap::new();
         for group in doc.result {
             for item in group.entries {
@@ -294,7 +291,7 @@ impl ItemDefinitions {
                         unique_base.entry(name).or_insert(item.type_line);
                     }
                     None => {
-                        if seen.insert(item.type_line.clone(), ()).is_none() {
+                        if seen.insert(item.type_line.clone()) {
                             bases.push(item.type_line);
                         }
                     }
@@ -322,12 +319,10 @@ impl ItemDefinitions {
 
     /// Resolve a raw base-type line to a base GGG's trade API recognises.
     ///
-    /// POE2 shows higher-tier weapon/armour bases with a display prefix the
-    /// trade `type` omits — e.g. the clipboard says `Exceptional Crude Bow` but
-    /// GGG only knows `Crude Bow`. An exact known base wins (so `Runeforged
-    /// Crude Bow` stays intact); otherwise we strip the prefix by finding the
-    /// longest known base that appears as a whole-word run. `None` if nothing
-    /// matches (the caller then falls back to the category filter).
+    /// POE2 prefixes higher-tier bases with a display tier the trade `type`
+    /// omits (`Exceptional Crude Bow` → `Crude Bow`). An exact known base wins
+    /// (so `Runeforged Crude Bow` stays intact); otherwise strip the prefix via
+    /// the longest known base appearing as a whole-word run. `None` if none match.
     pub fn resolve_base(&self, raw: &str) -> Option<String> {
         if self.bases.iter().any(|b| b == raw) {
             return Some(raw.to_string());

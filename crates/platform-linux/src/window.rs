@@ -1,7 +1,7 @@
-//! Active-window detection, to gate hotkeys to POE2 (PRD §9.4: POE2 runs under
-//! XWayland, so `xdotool` can see it via the X server's `_NET_ACTIVE_WINDOW`).
+//! Active-window detection, to gate hotkeys to POE2. POE2 runs under XWayland,
+//! so `xdotool` can see it via the X server's `_NET_ACTIVE_WINDOW`.
 //!
-//! When a Wayland-native window is focused there is no active *X* window, so
+//! When a Wayland-native window is focused there is no active X window, so
 //! `xdotool` reports nothing — which correctly reads as "POE2 not focused".
 
 use std::process::Command;
@@ -44,6 +44,5 @@ pub fn focus_poe2() -> bool {
             "windowactivate",
         ])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
