@@ -18,7 +18,10 @@ valid copy.
 
 - Linux with **KDE Plasma 6 on Wayland** (uses `wlr-layer-shell`).
 - The Rust toolchain (1.96+) to build.
-- `xclip` and a running **XWayland** (always present while a Proton game runs).
+- **`xclip`** and **`xdotool`** (and a running **XWayland**, always present while a
+  Proton game runs). `xclip` reads POE2's clipboard; `xdotool` detects the
+  focused POE2 window for the hotkey gate and popup placement. Without
+  `xdotool` the Ctrl+C gate never fires and nothing happens.
 - Membership in the **`input`** group (see below).
 
 ## Running
