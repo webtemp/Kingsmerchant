@@ -310,6 +310,28 @@ fn detailed_query_with_nothing_active_is_a_bare_base_search() {
 }
 
 #[test]
+fn detailed_query_rarity_defaults_to_item_then_honours_override() {
+    let item = parse_item(RARE_RING).unwrap();
+
+    // Unset → falls back to the item's own rarity.
+    let req = build_detailed_query(&item, &items(), &DetailedFilters::default());
+    let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
+    assert_eq!(tf.rarity.as_ref().unwrap().option, "rare");
+
+    // Set → overrides the item's rarity (search the base at another rarity).
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            rarity: Some("magic".to_string()),
+            ..Default::default()
+        },
+    );
+    let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
+    assert_eq!(tf.rarity.as_ref().unwrap().option, "magic");
+}
+
+#[test]
 fn detailed_query_attaches_enabled_equipment_filters() {
     let item = parse_item(RARE_RING).unwrap();
     let req = build_detailed_query(

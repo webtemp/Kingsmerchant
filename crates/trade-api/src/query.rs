@@ -197,6 +197,9 @@ pub struct DetailedFilters {
     pub quality: Option<f64>,
     /// Minimum item level (goes in `type_filters.ilvl`); `None` = no filter.
     pub item_level: Option<f64>,
+    /// Rarity option for `type_filters.rarity` (`normal`/`magic`/`rare`/`unique`);
+    /// `None` = any rarity.
+    pub rarity: Option<String>,
     pub price: PriceFilter,
 }
 
@@ -223,7 +226,13 @@ pub fn build_detailed_query(
     // so emit it if any is present.
     let quality = f.quality.map(StatValue::min);
     let ilvl = f.item_level.map(StatValue::min);
-    let rarity = rarity_option(&item.rarity).map(OptionFilter::new);
+    // User-chosen rarity (defaults to the item's own); falls back to the item's
+    // rarity if unset, so a search still returns the same rarity by default.
+    let rarity = f
+        .rarity
+        .as_deref()
+        .or_else(|| rarity_option(&item.rarity))
+        .map(OptionFilter::new);
     let type_filters =
         if category_opt.is_some() || rarity.is_some() || quality.is_some() || ilvl.is_some() {
             Some(TypeFilters {

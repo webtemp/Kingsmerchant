@@ -60,6 +60,15 @@ impl QuickModeApp {
         // (still prefilled with the item's ilvl for when the user ticks it).
         let ilvl_on = item.rarity == Rarity::Normal && item.item_level.is_some();
         self.ilvl_filter = MinFilter::new(ilvl_on, item.item_level);
+        // Rarity defaults to the item's own (results match by default); editable.
+        self.rarity_filter = match item.rarity {
+            Rarity::Normal => "normal",
+            Rarity::Magic => "magic",
+            Rarity::Rare => "rare",
+            Rarity::Unique => "unique",
+            _ => "",
+        }
+        .to_string();
         self.price_filter = PriceFilterState::default();
         self.filter_dirty = false; // no stale debounce from the previous item
                                    // poeprices ML estimate is rares-only and
@@ -202,6 +211,7 @@ impl QuickModeApp {
                 .collect(),
             quality: self.quality_filter.value(),
             item_level: self.ilvl_filter.value(),
+            rarity: (!self.rarity_filter.is_empty()).then(|| self.rarity_filter.clone()),
             price: self.price_filter.to_filter(),
         }
     }

@@ -110,8 +110,11 @@ pub struct QuickModeApp {
     price_filter: PriceFilterState,
     /// Item-quality filter (default-on for bonus-quality bases).
     quality_filter: MinFilter,
-    /// Item-level filter (default-on for any item with one — a major price driver).
+    /// Item-level filter (default-on only for Normal bases).
     ilvl_filter: MinFilter,
+    /// Selected `type_filters.rarity` option (`normal`/`magic`/`rare`/`unique`);
+    /// empty = item's own rarity. Reset to the item's rarity on each new check.
+    rarity_filter: String,
     /// Boolean Miscellaneous attribute toggles (corrupted, mirrored, …), all
     /// off by default; persist across items.
     misc: Vec<MiscToggle>,
@@ -198,6 +201,7 @@ impl QuickModeApp {
             price_filter: PriceFilterState::default(),
             quality_filter: MinFilter::default(),
             ilvl_filter: MinFilter::default(),
+            rarity_filter: String::new(),
             misc: MISC_OPTIONS
                 .iter()
                 .map(|(key, label)| MiscToggle {

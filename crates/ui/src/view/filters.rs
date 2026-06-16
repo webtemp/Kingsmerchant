@@ -22,6 +22,14 @@ const PRICE_CURRENCIES: &[(&str, &str)] = &[
     ("chaos", "chaos"),
 ];
 
+/// Rarity options for the detailed-filter dropdown (`type_filters.rarity` id).
+const RARITIES: &[(&str, &str)] = &[
+    ("normal", "Normal"),
+    ("magic", "Magic"),
+    ("rare", "Rare"),
+    ("unique", "Unique"),
+];
+
 impl QuickModeApp {
     /// The detailed-mode filter panel: a price range plus a toggleable row per
     /// mapped stat. Returns `true` when the user asked to re-run the search.
@@ -70,6 +78,26 @@ impl QuickModeApp {
                 // only. And item quality (type_filters.quality).
                 changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
                 changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
+
+                // Rarity (type_filters.rarity), defaulting to the item's own.
+                ui.horizontal(|ui| {
+                    ui.label("Rarity");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let before = self.rarity_filter.clone();
+                        egui::ComboBox::from_id_salt("rarity-filter")
+                            .selected_text(rarity_label(&self.rarity_filter))
+                            .show_ui(ui, |ui| {
+                                for (id, label) in RARITIES {
+                                    ui.selectable_value(
+                                        &mut self.rarity_filter,
+                                        (*id).to_string(),
+                                        *label,
+                                    );
+                                }
+                            });
+                        changed |= self.rarity_filter != before;
+                    });
+                });
 
                 // Defences / equipment properties (armour / evasion / ES / …),
                 // built from the item's stats block, not its affix mods.
@@ -270,4 +298,12 @@ fn currency_label(id: &str) -> &str {
         .iter()
         .find(|(cid, _)| *cid == id)
         .map_or("any", |(_, label)| *label)
+}
+
+/// Label for the rarity dropdown's current id (empty id = the item's own rarity).
+fn rarity_label(id: &str) -> &str {
+    RARITIES
+        .iter()
+        .find(|(rid, _)| *rid == id)
+        .map_or("Any", |(_, label)| *label)
 }
