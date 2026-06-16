@@ -223,8 +223,13 @@ fn classify_section(section: &[&str], item: &mut Item) {
                 name: key.to_string(),
                 value: value.to_string(),
             });
+        } else if item.item_class == "Augment" && item.base_type.is_none() {
+            // Augment items (runes / idols / soul cores / ancient augments) put
+            // their base type on a bare line (`Idol`, `Rune`, `Abyssal Eye`);
+            // the parser otherwise leaves currency bases `None`. Adopt the first.
+            item.base_type = Some(t.to_string());
         }
-        // Unrecognized prose (gem/skill descriptions, etc.) is ignored.
+        // Other unrecognized prose (gem/skill descriptions, etc.) is ignored.
     }
 }
 
@@ -576,6 +581,26 @@ mod tests {
         let m = parse_descriptor(r#"{ Prefix Modifier "" }"#).unwrap();
         assert_eq!(m.kind, ModKind::Prefix);
         assert_eq!(m.name, None);
+    }
+
+    #[test]
+    fn augment_items_capture_their_base_type() {
+        // Idols / runes / ancient augments are `Item Class: Augment` with the
+        // base on a bare line; the parser otherwise leaves currency bases None.
+        let idol = parse_item(
+            "Item Class: Augment\nRarity: Currency\nIdol of Ralakesh\n--------\n\
+             Stack Size: 3/10\nIdol\nLimited to: 1\n--------\nRequires: Level 50",
+        )
+        .unwrap();
+        assert_eq!(idol.name.as_deref(), Some("Idol of Ralakesh"));
+        assert_eq!(idol.base_type.as_deref(), Some("Idol"));
+
+        let augment = parse_item(
+            "Item Class: Augment\nRarity: Currency\nAmanamu's Gaze\n--------\n\
+             Abyssal Eye\nLimited to: 1 Ancient Augment\n--------\nRequires: Level 60",
+        )
+        .unwrap();
+        assert_eq!(augment.base_type.as_deref(), Some("Abyssal Eye"));
     }
 
     #[test]

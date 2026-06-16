@@ -10,10 +10,13 @@ use std::fmt::Write as _;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, ModSource, Modifier};
 
-use super::theme::{frame_color, rarity_color, AFFIX_BLUE, HEADER_BG};
+use super::theme::{frame_color, rarity_color, AFFIX_BLUE};
 
 // ---- palette ---------------------------------------------------------------
 
+/// Solid card background. Deliberately *not* near-black: these cards float over
+/// POE2's dark scene, so a too-dark fill reads as transparent/invisible.
+const CARD_FILL: Color32 = Color32::from_rgb(0x2a, 0x2c, 0x34);
 /// Defence / property values (armour, evasion, requirements).
 const PROP_COLOR: Color32 = Color32::from_rgb(0x8f, 0xb8, 0xd6);
 // Mod-text colours, matching the trade site's affix colouring.
@@ -30,7 +33,9 @@ const DESECRATED_PILL: Pill = ("desecrated", rgb(0x6e, 0x24, 0x52), rgb(0xff, 0x
 const FRACTURED_PILL: Pill = ("fractured", rgb(0x5a, 0x4a, 0x22), rgb(0xe8, 0xd8, 0xa0));
 const CRAFTED_PILL: Pill = ("crafted", rgb(0x24, 0x3a, 0x6e), rgb(0xcf, 0xe0, 0xff));
 const ENCHANT_PILL: Pill = ("enchant", rgb(0x3a, 0x2e, 0x6e), rgb(0xd8, 0xcf, 0xff));
-const RUNE_PILL: Pill = ("rune", rgb(0x6e, 0x4a, 0x22), rgb(0xff, 0xd9, 0xa0));
+// POE2 suffixes *every* socket-granted line with `(rune)` regardless of what's
+// actually socketed (runes, soul cores, idols, …), so label it generically.
+const SOCKETED_PILL: Pill = ("socketed", rgb(0x6e, 0x4a, 0x22), rgb(0xff, 0xd9, 0xa0));
 
 const CORRUPTED_PILL: Pill = ("corrupted", rgb(0x6e, 0x1f, 0x1f), rgb(0xff, 0xb3, 0xb3));
 const MIRRORED_PILL: Pill = ("mirrored", rgb(0x24, 0x3a, 0x6e), rgb(0xc9, 0xd6, 0xff));
@@ -191,7 +196,7 @@ fn properties_block(ui: &mut egui::Ui, item: &Item) {
     }
 }
 
-/// Rune sockets and any stats granted by runes socketed into them.
+/// Sockets and any stats granted by what's socketed into them.
 fn sockets_block(ui: &mut egui::Ui, item: &Item) {
     let count = item
         .sockets
@@ -203,12 +208,12 @@ fn sockets_block(ui: &mut egui::Ui, item: &Item) {
     thin_separator(ui);
     if count > 0 {
         let filled = item.rune_mods.len().min(count);
-        ui.label(RichText::new(format!("Rune sockets: {filled}/{count} filled")).color(PROP_COLOR));
+        ui.label(RichText::new(format!("Sockets: {filled}/{count} filled")).color(PROP_COLOR));
     }
     for r in &item.rune_mods {
         let text = r.trim_end_matches("(rune)").trim();
         ui.horizontal(|ui| {
-            badge(ui, RUNE_PILL);
+            badge(ui, SOCKETED_PILL);
             ui.label(RichText::new(text).color(RUNE_TEXT));
         });
     }
@@ -296,12 +301,15 @@ fn framed(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let inner = egui::Frame::none()
-        .fill(HEADER_BG)
+        .fill(CARD_FILL)
         .stroke(egui::Stroke::new(1.5, border))
         .rounding(6.0)
         .inner_margin(margin);
     if let Some(a) = accent {
+        // Solid fill on the outer ring too, so the accent never leaves a
+        // see-through gap around the card.
         egui::Frame::none()
+            .fill(CARD_FILL)
             .stroke(egui::Stroke::new(1.0, a))
             .rounding(9.0)
             .inner_margin(egui::Margin::same(3.0))
@@ -352,7 +360,7 @@ impl ModCat {
         match self {
             ModCat::Implicit => Some(IMPLICIT_PILL),
             ModCat::Enchant => Some(ENCHANT_PILL),
-            ModCat::Rune => Some(RUNE_PILL),
+            ModCat::Rune => Some(SOCKETED_PILL),
             ModCat::Fractured => Some(FRACTURED_PILL),
             ModCat::Crafted => Some(CRAFTED_PILL),
             ModCat::Desecrated => Some(DESECRATED_PILL),

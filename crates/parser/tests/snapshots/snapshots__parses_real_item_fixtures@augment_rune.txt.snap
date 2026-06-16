@@ -9,7 +9,9 @@ Item {
     name: Some(
         "Greater Glacial Rune",
     ),
-    base_type: None,
+    base_type: Some(
+        "Rune",
+    ),
     item_level: None,
     quality: None,
     requirements: Requirements {
