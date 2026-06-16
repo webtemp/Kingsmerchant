@@ -498,6 +498,10 @@ pub(super) fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPrevie
     egui::Area::new(egui::Id::new("item-preview"))
         .order(egui::Order::Tooltip)
         .interactable(false)
+        // Disable the default fade-in: the area follows the cursor and is
+        // re-shown each frame, so its fade age keeps resetting and it never
+        // reaches full opacity — it renders near-invisible. Show it solid.
+        .fade_in(false)
         .constrain(true)
         // Bottom-centre pivot: the area is centred on the cursor's x and grows
         // upward, nudged down 3px so the cursor sits just inside the bottom.
