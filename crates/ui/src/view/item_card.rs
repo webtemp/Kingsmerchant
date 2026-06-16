@@ -81,7 +81,6 @@ pub(super) fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) 
                             ui.label(RichText::new(base).color(color).weak());
                         }
                     }
-                    ui.label(RichText::new(&item.item_class).color(META_COLOR).small());
                 });
                 // Icon on the far right (when the search has supplied one).
                 if let Some(url) = icon_url {
@@ -95,8 +94,8 @@ pub(super) fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) 
                 }
             });
 
-            state_badges(ui, item);
             meta_line(ui, item);
+            state_badges(ui, item);
             properties_block(ui, item);
             sockets_block(ui, item);
 
@@ -154,9 +153,12 @@ fn state_badges(ui: &mut egui::Ui, item: &Item) {
     });
 }
 
-/// iLvl / quality / requirements.
+/// Category · iLvl · quality · requirements, on one dotted line.
 fn meta_line(ui: &mut egui::Ui, item: &Item) {
     let mut meta: Vec<String> = Vec::new();
+    if !item.item_class.is_empty() {
+        meta.push(item.item_class.clone());
+    }
     if let Some(ilvl) = item.item_level {
         meta.push(format!("iLvl {ilvl}"));
     }
@@ -182,7 +184,7 @@ fn meta_line(ui: &mut egui::Ui, item: &Item) {
     }
     if !meta.is_empty() {
         ui.add_space(2.0);
-        ui.label(RichText::new(meta.join("   ")).color(META_COLOR).small());
+        ui.label(RichText::new(meta.join(" · ")).color(META_COLOR).small());
     }
 }
 
