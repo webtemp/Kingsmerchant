@@ -69,14 +69,6 @@ pub(super) fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) 
             ui.set_width(ui.available_width());
 
             ui.horizontal(|ui| {
-                if let Some(url) = icon_url {
-                    ui.add(
-                        egui::Image::new(url)
-                            .fit_to_exact_size(egui::vec2(44.0, 44.0))
-                            .rounding(4.0),
-                    );
-                    ui.add_space(6.0);
-                }
                 ui.vertical(|ui| {
                     let title = item
                         .name
@@ -89,8 +81,18 @@ pub(super) fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) 
                             ui.label(RichText::new(base).color(color).weak());
                         }
                     }
-                    ui.label(RichText::new(&item.item_class).weak().small());
+                    ui.label(RichText::new(&item.item_class).color(META_COLOR).small());
                 });
+                // Icon on the far right (when the search has supplied one).
+                if let Some(url) = icon_url {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Image::new(url)
+                                .fit_to_exact_size(egui::vec2(44.0, 44.0))
+                                .rounding(4.0),
+                        );
+                    });
+                }
             });
 
             state_badges(ui, item);
@@ -180,7 +182,7 @@ fn meta_line(ui: &mut egui::Ui, item: &Item) {
     }
     if !meta.is_empty() {
         ui.add_space(2.0);
-        ui.label(RichText::new(meta.join("   ")).weak().small());
+        ui.label(RichText::new(meta.join("   ")).color(META_COLOR).small());
     }
 }
 
