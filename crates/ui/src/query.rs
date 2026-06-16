@@ -54,8 +54,12 @@ impl QuickModeApp {
         // Quality: on when above the normal 20% cap (bonus quality).
         let quality = item.quality.unwrap_or(0);
         self.quality_filter = MinFilter::new(quality > 20, (quality > 0).then_some(quality as u32));
-        // Item level: on for any item that has one (a major price driver).
-        self.ilvl_filter = MinFilter::new(item.item_level.is_some(), item.item_level);
+        // Item level: filterable on anything with one, but default-ON only for
+        // Normal items, where ilvl is the whole point (crafting bases). On
+        // magic/rare/unique the rolled mods drive the price, so it starts off
+        // (still prefilled with the item's ilvl for when the user ticks it).
+        let ilvl_on = item.rarity == Rarity::Normal && item.item_level.is_some();
+        self.ilvl_filter = MinFilter::new(ilvl_on, item.item_level);
         self.price_filter = PriceFilterState::default();
         self.filter_dirty = false; // no stale debounce from the previous item
                                    // poeprices ML estimate is rares-only and

@@ -66,8 +66,8 @@ impl QuickModeApp {
                     });
                 });
 
-                // Item level (type_filters.ilvl) — default-on; a major price
-                // driver. And item quality (type_filters.quality).
+                // Item level (type_filters.ilvl) — default-on for Normal bases
+                // only. And item quality (type_filters.quality).
                 changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
                 changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
 
