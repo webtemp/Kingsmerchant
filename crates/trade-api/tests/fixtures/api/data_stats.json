@@ -109,6 +109,11 @@
           "id": "explicit.stat_448592698|44",
           "text": "+# to Level of all Tornado Shot Skills",
           "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_3650769924",
+          "text": "Map contains an additional Rare Chest",
+          "type": "explicit"
         }
       ]
     },

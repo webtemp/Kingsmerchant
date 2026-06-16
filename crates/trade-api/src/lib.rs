@@ -29,7 +29,8 @@ pub mod rate_limit;
 pub mod stat_text;
 
 pub use client::{
-    fetch_definitions, fetch_leagues, ClientConfig, League, PriceCheck, TradeClient, FETCH_BATCH,
+    fetch_definitions, fetch_leagues, poesessid_format, ClientConfig, League, PriceCheck,
+    SessionIdFormat, SessionStatus, TradeClient, FETCH_BATCH,
 };
 pub use definitions::{ItemDefinitions, LocalContext, MappedStat, StatDefinitions};
 pub use error::Error;

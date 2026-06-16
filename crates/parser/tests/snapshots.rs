@@ -26,3 +26,22 @@ fn hyphen_and_emdash_descriptors_are_equivalent() {
     let emdash = parse_item(&read("rare_helmet_emdash.txt")).unwrap();
     assert_eq!(hyphen, emdash);
 }
+
+/// Regression: an Abyss Tablet whose first prefix is "Map contains N additional
+/// Rare Chests" must keep that stat line — it was reported missing. The number
+/// sits mid-line (`contains 3(2-3) additional`), which the descriptor/stat
+/// parsing must not drop.
+#[test]
+fn tablet_keeps_map_contains_rare_chests_mod() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/items/");
+    let input = std::fs::read_to_string(format!("{dir}tablet_abyss_rare_chests.txt")).unwrap();
+    let item = parse_item(&input).unwrap();
+    assert!(
+        item.modifiers
+            .iter()
+            .flat_map(|m| &m.stats)
+            .any(|s| s == "Map contains 3(2-3) additional Rare Chests"),
+        "the 'additional Rare Chests' prefix must survive parsing; got {:#?}",
+        item.modifiers
+    );
+}

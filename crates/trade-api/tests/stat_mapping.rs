@@ -83,6 +83,30 @@ fn same_text_resolves_to_different_id_by_affix_type() {
 }
 
 #[test]
+fn plural_count_mod_falls_back_to_singular_presence_filter() {
+    // The tablet mod is plural ("3 additional Rare Chests"), but GGG only
+    // exposes the singular presence stat. It must still map — as a presence
+    // filter, with no value to send (GGG's stat has no `#`).
+    let defs = stats();
+    let m = defs
+        .map_stat_line(
+            &ModKind::Prefix,
+            None,
+            "Map contains 3(2-3) additional Rare Chests",
+            false,
+        )
+        .expect("plural Rare Chests maps to the singular presence stat");
+    assert_eq!(m.id, "explicit.stat_3650769924");
+    assert_eq!(m.template, "Map contains an additional Rare Chest");
+    assert!(
+        m.values.is_empty(),
+        "a presence filter sends no value, got {:?}",
+        m.values
+    );
+    assert_eq!(m.filter_value(), None);
+}
+
+#[test]
 fn fractured_source_prefers_fractured_id() {
     let defs = stats();
     let m = defs

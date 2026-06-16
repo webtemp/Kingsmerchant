@@ -146,6 +146,24 @@ impl QuickModeApp {
                         });
                 }
 
+                // Mods with no GGG trade filter (e.g. a tablet's "Map contains N
+                // additional Rare Chests" — GGG has no searchable variant).
+                // Shown read-only so they don't silently vanish from the panel.
+                if !self.unfilterable_mods.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Not searchable on trade")
+                            .strong()
+                            .color(Color32::from_rgb(0xb0, 0xb0, 0xb0)),
+                    )
+                    .on_hover_text(
+                        "These mods have no trade-site filter, so they can't narrow the search.",
+                    );
+                    for line in &self.unfilterable_mods {
+                        ui.label(RichText::new(format!("• {line}")).weak().italics());
+                    }
+                }
+
                 // Miscellaneous: boolean attribute filters, collapsed by default.
                 ui.add_space(6.0);
                 egui::CollapsingHeader::new(RichText::new("Miscellaneous").strong())

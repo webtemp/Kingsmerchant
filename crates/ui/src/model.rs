@@ -6,7 +6,7 @@
 use parser::Item;
 use trade_api::{
     EquipmentSelection, ExchangeCheck, ListingStatus, PriceCheck, PriceEstimate, PriceFilter,
-    StatSelection,
+    SessionStatus, StatSelection,
 };
 
 /// Result of a background price check, sent back to the UI thread.
@@ -19,6 +19,27 @@ pub(crate) enum Msg {
     Exchange(Box<Result<ExchangeCheck, String>>),
     /// Outcome of an Instant Buyout hideout teleport (`Ok` = GGG accepted it).
     Teleport(Result<(), String>),
+    /// Outcome of a live POESESSID validation (Settings panel).
+    SessionChecked(SessionStatus),
+}
+
+/// What the Settings panel shows beside the POESESSID field, driven by the
+/// instant format check and then the live server validation.
+#[derive(Default, Clone)]
+pub(crate) enum SessionCheck {
+    /// Nothing entered, or a saved session not yet (re)validated this session.
+    #[default]
+    Idle,
+    /// The entered value isn't a 32-hex POESESSID — never sent to the server.
+    Malformed,
+    /// Debounce elapsing / validation request in flight.
+    Checking,
+    /// The server accepted it (with the account name, when exposed).
+    Valid(Option<String>),
+    /// The server rejected it (401/403) — wrong or expired.
+    Invalid,
+    /// Couldn't confirm (offline, or an unexpected status); the cause is logged.
+    Unknown,
 }
 
 /// Which pricing path the loaded item uses: a per-item search, or the bulk

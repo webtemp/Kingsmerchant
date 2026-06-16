@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use parser::parse_item;
 use trade_api::http::{HttpRequest, HttpResponse, HttpTransport, Method};
 use trade_api::{
-    ClientConfig, CurrencyDefinitions, Error, ItemDefinitions, QueryOptions, StatDefinitions,
-    TradeClient,
+    ClientConfig, CurrencyDefinitions, Error, ItemDefinitions, QueryOptions, SessionStatus,
+    StatDefinitions, TradeClient,
 };
 
 const RARE_RING: &str = "Item Class: Rings
@@ -248,4 +248,88 @@ async fn api_error_status_surfaces_as_error() {
         Error::Api { status, .. } => assert_eq!(status, 400),
         other => panic!("expected Api error, got {other:?}"),
     }
+}
+
+fn client_with(transport: MockTransport) -> TradeClient<MockTransport> {
+    let (stats, items) = defs();
+    TradeClient::new(
+        transport,
+        ClientConfig::new("Mirage"),
+        stats,
+        items,
+        CurrencyDefinitions::default(),
+    )
+}
+
+/// A malformed paste (the whole `POESESSID=…` cookie, here) must be dropped, not
+/// stored — otherwise it bricks the Cookie header and every request with it. A
+/// well-formed value sticks and rides along as a `Cookie` on outgoing requests.
+#[tokio::test]
+async fn malformed_poesessid_is_dropped_well_formed_is_sent() {
+    let (transport, requests) = MockTransport::new(vec![ok(r#"{"id":"q","result":[],"total":0}"#)]);
+    let client = client_with(transport);
+
+    client.set_poesessid(Some("POESESSID=deadbeef".to_string()));
+    assert!(
+        !client.has_poesessid(),
+        "a malformed session must not be stored"
+    );
+
+    let good = "0123456789abcdef0123456789abcdef";
+    client.set_poesessid(Some(good.to_string()));
+    assert!(client.has_poesessid());
+
+    let item = parse_item(RARE_RING).unwrap();
+    let req = trade_api::build_search_query(
+        &item,
+        client.stats(),
+        client.items(),
+        QueryOptions::default(),
+    );
+    client.search(&req).await.unwrap();
+
+    let reqs = requests.lock().unwrap();
+    assert!(reqs[0].headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("cookie") && v.contains(&format!("POESESSID={good}"))
+    }));
+}
+
+#[tokio::test]
+async fn validate_session_reports_valid_with_account() {
+    let (transport, requests) =
+        MockTransport::new(vec![ok(r#"{"name":"ExileBro","realm":"poe2"}"#)]);
+    let client = client_with(transport);
+    client.set_poesessid(Some("0123456789abcdef0123456789abcdef".to_string()));
+
+    match client.validate_session().await {
+        SessionStatus::Valid { account } => assert_eq!(account.as_deref(), Some("ExileBro")),
+        other => panic!("expected Valid, got {other:?}"),
+    }
+    let reqs = requests.lock().unwrap();
+    assert!(reqs[0].url.ends_with("/api/profile"));
+    assert!(reqs[0]
+        .headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("cookie") && v.contains("POESESSID=")));
+}
+
+#[tokio::test]
+async fn validate_session_reports_invalid_on_401() {
+    let denied = HttpResponse {
+        status: 401,
+        headers: rate_headers(),
+        body: "Unauthorized".to_string(),
+    };
+    let (transport, _requests) = MockTransport::new(vec![denied]);
+    let client = client_with(transport);
+    client.set_poesessid(Some("0123456789abcdef0123456789abcdef".to_string()));
+    assert_eq!(client.validate_session().await, SessionStatus::Invalid);
+}
+
+#[tokio::test]
+async fn validate_session_without_a_session_does_not_call_the_network() {
+    let (transport, requests) = MockTransport::new(vec![]);
+    let client = client_with(transport);
+    assert_eq!(client.validate_session().await, SessionStatus::Invalid);
+    assert!(requests.lock().unwrap().is_empty());
 }

@@ -146,8 +146,42 @@ impl StatDefinitions {
             if let Some(mapped) = self.lookup(&types, &cand.template, &cand.values) {
                 return Some(mapped);
             }
+            // Count mods like "Map contains # additional Rare Chests" where GGG
+            // only exposes the singular "an additional Rare Chest" presence
+            // filter (it has no plural/`#` variant — unlike Strongboxes). Fall
+            // back to that as a presence filter (no value to send).
+            if let Some(singular) = singular_additional_variant(&cand.template) {
+                if let Some(mapped) = self.lookup(&types, &singular, &[]) {
+                    return Some(mapped);
+                }
+            }
         }
         None
+    }
+
+    /// Explicit (prefix/suffix) stat lines on `item` that matched no trade
+    /// filter, in order — so the UI can show them read-only instead of dropping
+    /// them silently. Implicits are excluded (they're off-by-default noise like
+    /// charge counters). De-duplicates repeated lines.
+    pub fn unmapped_explicit_lines(&self, item: &Item) -> Vec<String> {
+        let ctx = LocalContext::for_item(item);
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for m in item
+            .modifiers
+            .iter()
+            .filter(|m| m.kind != ModKind::Implicit)
+        {
+            for line in &m.stats {
+                let unmapped = self
+                    .map_stat_line(&m.kind, m.source.as_ref(), line, ctx.prefer_local(line))
+                    .is_none();
+                if unmapped && seen.insert(line.clone()) {
+                    out.push(line.clone());
+                }
+            }
+        }
+        out
     }
 
     /// Map a `Grants Skill: Level N <Skill>` property to its `skill.*` stat id,
@@ -265,6 +299,51 @@ fn preferred_types(kind: &ModKind, source: Option<&ModSource>) -> Vec<&'static s
     }
 }
 
+/// Turn a `"… # additional <plural>"` count template into the singular
+/// presence form GGG sometimes exposes instead: `"… an additional <singular>"`
+/// (e.g. `Map contains # additional Rare Chests` → `Map contains an additional
+/// Rare Chest`). `None` if the template isn't of that shape.
+fn singular_additional_variant(template: &str) -> Option<String> {
+    let idx = template.find("# additional ")?;
+    let head = &template[..idx];
+    let plural_noun = &template[idx + "# additional ".len()..];
+    if plural_noun.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{head}an additional {}",
+        singularize_last_word(plural_noun)
+    ))
+}
+
+/// Singularise the last whitespace-separated word of `s` with simple English
+/// rules (enough for trade nouns: Chests→Chest, Strongboxes→Strongbox,
+/// Abysses→Abyss). Leaves the rest untouched.
+fn singularize_last_word(s: &str) -> String {
+    let (head, last) = match s.rsplit_once(' ') {
+        Some((h, l)) => (Some(h), l),
+        None => (None, s),
+    };
+    let singular = if let Some(stem) = last.strip_suffix("ies") {
+        format!("{stem}y")
+    } else if last.ends_with("ses")
+        || last.ends_with("xes")
+        || last.ends_with("zes")
+        || last.ends_with("ches")
+        || last.ends_with("shes")
+    {
+        last[..last.len() - 2].to_string()
+    } else if let Some(stem) = last.strip_suffix('s') {
+        stem.to_string()
+    } else {
+        last.to_string()
+    };
+    match head {
+        Some(h) => format!("{h} {singular}"),
+        None => singular,
+    }
+}
+
 // ---- item definitions ------------------------------------------------------
 
 /// The `trade2/data/items` snapshot: base types and unique → base lookups.
@@ -357,4 +436,39 @@ fn contains_word_run(words: &[&str], base: &str) -> bool {
     words
         .windows(base_words.len())
         .any(|w| w == base_words.as_slice())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{singular_additional_variant, singularize_last_word};
+
+    #[test]
+    fn singularises_trade_count_nouns() {
+        assert_eq!(singularize_last_word("Rare Chests"), "Rare Chest");
+        assert_eq!(singularize_last_word("Strongboxes"), "Strongbox");
+        assert_eq!(singularize_last_word("Abysses"), "Abyss");
+        assert_eq!(
+            singularize_last_word("additional Abysses"),
+            "additional Abyss"
+        );
+        // No trailing plural: unchanged.
+        assert_eq!(singularize_last_word("Shrine"), "Shrine");
+    }
+
+    #[test]
+    fn builds_singular_additional_variant() {
+        assert_eq!(
+            singular_additional_variant("Map contains # additional Rare Chests").as_deref(),
+            Some("Map contains an additional Rare Chest")
+        );
+        assert_eq!(
+            singular_additional_variant("Map contains # additional Strongboxes").as_deref(),
+            Some("Map contains an additional Strongbox")
+        );
+        // Not an "# additional <noun>" template → no variant.
+        assert_eq!(
+            singular_additional_variant("#% increased Magic Monsters"),
+            None
+        );
+    }
 }

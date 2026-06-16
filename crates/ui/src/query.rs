@@ -12,7 +12,7 @@ use trade_api::{DetailedFilters, MiscSelection};
 
 use crate::model::{
     build_equipment_rows, fmt_amount, parse_status, scaled_min, EquipmentRow, ExchangePhase,
-    MinFilter, Msg, Phase, PriceFilterState, PriceMode, StatFilterRow,
+    MinFilter, Msg, Phase, PriceFilterState, PriceMode, SessionCheck, StatFilterRow,
 };
 use crate::{QuickModeApp, SAMPLE};
 
@@ -50,6 +50,9 @@ impl QuickModeApp {
         // the extra sockets/quality are the value, so default those filters on.
         let exceptional = self.is_exceptional_base(&item);
         self.filters = self.build_filter_rows(&item);
+        // Explicit mods GGG offers no trade filter for — surfaced read-only so
+        // they don't silently disappear from the detailed panel.
+        self.unfilterable_mods = self.client.stats().unmapped_explicit_lines(&item);
         self.equipment = build_equipment_rows(&item, self.config.filter_min_percent, exceptional);
         // Quality: on when above the normal 20% cap (bonus quality).
         let quality = item.quality.unwrap_or(0);
@@ -113,6 +116,21 @@ impl QuickModeApp {
                 .await
                 .map_err(|e| e.to_string());
             let _ = tx.send(Msg::Teleport(result));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Validate the configured POESESSID against the server on a background
+    /// task, pushing the verdict back to the Settings panel. Fired (debounced)
+    /// when the field changes to a well-formed value.
+    pub(crate) fn spawn_session_check(&mut self, ctx: &egui::Context) {
+        self.session_status = SessionCheck::Checking;
+        let client = Arc::clone(&self.client);
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn(async move {
+            let status = client.validate_session().await;
+            let _ = tx.send(Msg::SessionChecked(status));
             ctx.request_repaint();
         });
     }

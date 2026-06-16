@@ -2,11 +2,14 @@
 //! change; startup-only fields (hotkeys, realm, focus gate) are flagged
 //! "restart to apply" rather than pretending to take effect live.
 
+use std::time::Instant;
+
 use egui::{Color32, RichText};
 use egui_phosphor::regular as ph;
 
 use crate::config::Config;
-use crate::QuickModeApp;
+use crate::model::SessionCheck;
+use crate::{QuickModeApp, POESESSID_DEBOUNCE};
 
 use super::theme::ONLINE_DOT;
 
@@ -139,14 +142,30 @@ impl QuickModeApp {
                     );
                     if resp.changed() {
                         let trimmed = sid.trim().to_string();
-                        self.config.poesessid = (!trimmed.is_empty()).then_some(trimmed);
+                        self.config.poesessid = (!trimmed.is_empty()).then(|| trimmed.clone());
                         // Push live so the next search authenticates immediately.
+                        // `set_poesessid` drops a malformed value, so this can't
+                        // brick requests even mid-edit.
                         self.client.set_poesessid(self.config.poesessid.clone());
                         changed = true;
+                        // Instant format feedback; a well-formed value also
+                        // schedules a debounced live validation.
+                        match trade_api::poesessid_format(&trimmed) {
+                            trade_api::SessionIdFormat::Empty => {
+                                self.session_status = SessionCheck::Idle;
+                                self.session_check_at = None;
+                            }
+                            trade_api::SessionIdFormat::Malformed => {
+                                self.session_status = SessionCheck::Malformed;
+                                self.session_check_at = None;
+                            }
+                            trade_api::SessionIdFormat::WellFormed => {
+                                self.session_status = SessionCheck::Checking;
+                                self.session_check_at = Some(Instant::now());
+                            }
+                        }
                     }
-                    if self.config.poesessid.is_some() {
-                        ui.colored_label(ONLINE_DOT, ph::CHECK_CIRCLE);
-                    }
+                    session_status_label(ui, &self.session_status, self.config.poesessid.is_some());
                 });
                 ui.label(
                     RichText::new(
@@ -330,6 +349,61 @@ impl QuickModeApp {
             self.reseed_filters(&ctx);
         } else if requery {
             self.rerun_query(&ctx);
+        }
+
+        // Fire the debounced POESESSID live check once edits settle. Requesting
+        // a repaint at the deadline guarantees a frame even if the panel is idle.
+        if let Some(at) = self.session_check_at {
+            let waited = at.elapsed();
+            if waited >= POESESSID_DEBOUNCE {
+                self.session_check_at = None;
+                self.spawn_session_check(&ctx);
+            } else {
+                ctx.request_repaint_after(POESESSID_DEBOUNCE.saturating_sub(waited));
+            }
+        }
+    }
+}
+
+/// Render the POESESSID validation indicator. `has_session` is whether a
+/// (well-formed) session is currently stored, so a saved-but-unchecked session
+/// still shows as set.
+fn session_status_label(ui: &mut egui::Ui, status: &SessionCheck, has_session: bool) {
+    let warn = Color32::from_rgb(0xff, 0xc8, 0x4b);
+    let bad = Color32::from_rgb(0xff, 0x6b, 0x6b);
+    match status {
+        SessionCheck::Idle => {
+            if has_session {
+                ui.colored_label(ONLINE_DOT, ph::CHECK_CIRCLE)
+                    .on_hover_text("Session set");
+            }
+        }
+        SessionCheck::Checking => {
+            ui.spinner();
+            ui.label(RichText::new("checking…").weak().small());
+        }
+        SessionCheck::Valid(account) => {
+            let text = match account {
+                Some(name) => format!("{} valid: {name}", ph::CHECK_CIRCLE),
+                None => format!("{} valid", ph::CHECK_CIRCLE),
+            };
+            ui.colored_label(ONLINE_DOT, text);
+        }
+        SessionCheck::Invalid => {
+            ui.colored_label(bad, format!("{} invalid or expired", ph::X_CIRCLE));
+        }
+        SessionCheck::Malformed => {
+            ui.colored_label(
+                bad,
+                format!("{} not a POESESSID (32 hex chars)", ph::X_CIRCLE),
+            )
+            .on_hover_text(
+                "Paste only the cookie value — no \"POESESSID=\" prefix, quotes, or spaces.",
+            );
+        }
+        SessionCheck::Unknown => {
+            ui.colored_label(warn, format!("{} couldn't verify", ph::WARNING))
+                .on_hover_text("Network error — the session may still be fine.");
         }
     }
 }

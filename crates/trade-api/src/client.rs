@@ -61,6 +61,47 @@ impl PriceCheck {
     }
 }
 
+/// How a pasted `POESESSID` looks, judged with no network round-trip — drives
+/// the instant Settings feedback before the live check can confirm it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionIdFormat {
+    /// Blank — no session set (anonymous pricing, which is all most users need).
+    Empty,
+    /// 32 hexadecimal characters — the shape POE's `POESESSID` cookie takes.
+    WellFormed,
+    /// Non-empty but not 32 hex chars: a bad paste (the whole `POESESSID=…`
+    /// cookie, surrounding quotes, extra characters, …). Never sent.
+    Malformed,
+}
+
+/// Classify a raw `POESESSID` for instant UI feedback. Pure; no network. The
+/// 32-hex shape POE uses doubles as a header-safety guard — hex is printable
+/// ASCII, so a well-formed value can never break the `Cookie` header.
+#[must_use]
+pub fn poesessid_format(raw: &str) -> SessionIdFormat {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        SessionIdFormat::Empty
+    } else if trimmed.len() == 32 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        SessionIdFormat::WellFormed
+    } else {
+        SessionIdFormat::Malformed
+    }
+}
+
+/// Outcome of a live `POESESSID` validation against pathofexile.com.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionStatus {
+    /// The server accepted the session; `account` is the logged-in name when the
+    /// profile response exposed it.
+    Valid { account: Option<String> },
+    /// The server rejected the session (401/403) — wrong, expired, or logged out.
+    Invalid,
+    /// Couldn't determine validity (offline, or an unexpected status). The
+    /// session may still be fine; we just couldn't confirm it.
+    Unknown(String),
+}
+
 pub struct TradeClient<T: HttpTransport> {
     transport: T,
     config: ClientConfig,
@@ -121,12 +162,16 @@ impl<T: HttpTransport> TradeClient<T> {
         *self.league.write().expect("league lock") = league.into();
     }
 
-    /// Set (or clear, with `None`) the `POESESSID` session cookie. An empty or
-    /// whitespace-only string clears it. Cheap; takes effect on the next request.
+    /// Set (or clear, with `None`) the `POESESSID` session cookie. Only a
+    /// well-formed value (32 hex chars — see [`poesessid_format`]) is stored;
+    /// anything else (empty, or a bad paste) clears it. This is the guard that
+    /// keeps a malformed value out of the `Cookie` header, where it would
+    /// otherwise brick *every* request — anonymous search included — with a
+    /// reqwest "Builder error". Cheap; takes effect on the next request.
     pub fn set_poesessid(&self, sessid: Option<String>) {
         let normalized = sessid
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+            .filter(|s| poesessid_format(s) == SessionIdFormat::WellFormed)
+            .map(|s| s.trim().to_string());
         *self.poesessid.write().expect("poesessid lock") = normalized;
     }
 
@@ -143,6 +188,39 @@ impl<T: HttpTransport> TradeClient<T> {
             .expect("poesessid lock")
             .as_ref()
             .map(|s| format!("POESESSID={s}"))
+    }
+
+    /// Validate the configured `POESESSID` against pathofexile.com by fetching
+    /// the account profile (auth-gated, side-effect-free): 2xx ⇒ valid, 401/403
+    /// ⇒ rejected (wrong/expired), anything else ⇒ couldn't confirm. Goes
+    /// straight through the transport (not the trade rate-limiter — different
+    /// endpoint, different budget); the transport still attaches the user-agent.
+    /// Returns [`SessionStatus::Invalid`] when no session is set to validate.
+    pub async fn validate_session(&self) -> SessionStatus {
+        let Some(cookie) = self.cookie_header() else {
+            return SessionStatus::Invalid;
+        };
+        let request = HttpRequest {
+            method: Method::Get,
+            url: format!("{}/api/profile", self.config.base_url),
+            headers: vec![("Cookie".to_string(), cookie)],
+            body: None,
+        };
+        match self.transport.execute(request).await {
+            Ok(resp) if resp.is_success() => {
+                let account = serde_json::from_str::<serde_json::Value>(&resp.body)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("name")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string)
+                    });
+                SessionStatus::Valid { account }
+            }
+            Ok(resp) if resp.status == 401 || resp.status == 403 => SessionStatus::Invalid,
+            Ok(resp) => SessionStatus::Unknown(format!("unexpected HTTP {}", resp.status)),
+            Err(e) => SessionStatus::Unknown(e.to_string()),
+        }
     }
 
     pub fn stats(&self) -> &StatDefinitions {
@@ -439,5 +517,46 @@ fn ok_or_api_error(resp: HttpResponse) -> Result<HttpResponse, Error> {
             status: resp.status,
             body: resp.body,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{poesessid_format, SessionIdFormat};
+
+    #[test]
+    fn well_formed_poesessid_is_32_hex() {
+        let sid = "0123456789abcdef0123456789ABCDEF"; // 32 hex, mixed case
+        assert_eq!(poesessid_format(sid), SessionIdFormat::WellFormed);
+        // Surrounding whitespace is tolerated (trimmed).
+        assert_eq!(
+            poesessid_format("  0123456789abcdef0123456789abcdef \n"),
+            SessionIdFormat::WellFormed
+        );
+    }
+
+    #[test]
+    fn blank_poesessid_is_empty() {
+        assert_eq!(poesessid_format(""), SessionIdFormat::Empty);
+        assert_eq!(poesessid_format("   \t\n"), SessionIdFormat::Empty);
+    }
+
+    #[test]
+    fn bad_paste_is_malformed() {
+        // Common bad pastes: the whole cookie, wrong length, non-hex chars, an
+        // embedded newline — none should ever reach the Cookie header.
+        assert_eq!(
+            poesessid_format("POESESSID=0123456789abcdef0123456789abcdef"),
+            SessionIdFormat::Malformed
+        );
+        assert_eq!(poesessid_format("deadbeef"), SessionIdFormat::Malformed); // too short
+        assert_eq!(
+            poesessid_format("0123456789abcdef0123456789abcdeg"), // 'g' isn't hex
+            SessionIdFormat::Malformed
+        );
+        assert_eq!(
+            poesessid_format("0123456789abcdef\n0123456789abcde"), // embedded newline
+            SessionIdFormat::Malformed
+        );
     }
 }

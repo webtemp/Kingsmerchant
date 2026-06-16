@@ -32,7 +32,7 @@ use trade_api::{
 
 use model::{
     item_hash, EquipmentRow, ExchangePhase, MinFilter, MiscToggle, Msg, Phase, PriceFilterState,
-    PriceMode, StatFilterRow, View, MISC_OPTIONS,
+    PriceMode, SessionCheck, StatFilterRow, View, MISC_OPTIONS,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -51,6 +51,11 @@ pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(8);
 /// so toggling several filters fires one request, not a burst. "Apply now"
 /// bypasses it.
 pub(crate) const FILTER_DEBOUNCE: Duration = Duration::from_secs(4);
+
+/// Quiet period after the last POESESSID edit before the live validation fires,
+/// so a paste (which arrives as one change) is checked once typing settles
+/// without firing a request mid-keystroke.
+pub(crate) const POESESSID_DEBOUNCE: Duration = Duration::from_millis(700);
 
 /// Popup width — wide enough for the filter panel.
 pub const POPUP_WIDTH: u32 = 600;
@@ -104,6 +109,10 @@ pub struct QuickModeApp {
     icon_url: Option<String>,
     /// Per-stat affix filter rows (rebuilt on a fresh check).
     filters: Vec<StatFilterRow>,
+    /// Explicit mods with no GGG trade filter (e.g. "Map contains N additional
+    /// Rare Chests" — GGG has no searchable plural variant). Shown read-only so
+    /// they don't silently vanish from the detailed panel.
+    unfilterable_mods: Vec<String>,
     /// Equipment-property filter rows (armour/evasion/ES/… defences).
     equipment: Vec<EquipmentRow>,
     /// Price-range filter.
@@ -166,6 +175,11 @@ pub struct QuickModeApp {
     /// A note shown in the settings panel after an action (saved / restart
     /// needed for hotkeys, …).
     settings_note: Option<String>,
+    /// Live POESESSID validation state shown beside the field in Settings.
+    session_status: SessionCheck,
+    /// When the POESESSID field last changed, for debouncing the live check.
+    /// Cleared once the check fires; `None` when nothing is pending.
+    session_check_at: Option<Instant>,
     /// Whether the loaded item prices via the per-item search or the bulk
     /// currency exchange.
     mode: PriceMode,
@@ -197,6 +211,7 @@ impl QuickModeApp {
             item: None,
             icon_url: None,
             filters: Vec::new(),
+            unfilterable_mods: Vec::new(),
             equipment: Vec::new(),
             price_filter: PriceFilterState::default(),
             quality_filter: MinFilter::default(),
@@ -232,6 +247,8 @@ impl QuickModeApp {
             settings_close_requested: false,
             quit_requested: false,
             settings_note: None,
+            session_status: SessionCheck::Idle,
+            session_check_at: None,
             mode: PriceMode::Item,
             exchange_phase: ExchangePhase::Idle,
             exchange_want_id: String::new(),
@@ -428,6 +445,16 @@ impl QuickModeApp {
                         tracing::warn!(error = %e, "hideout teleport failed");
                         self.copy_status = Some(format!("teleport failed: {e}"));
                     }
+                }
+                Msg::SessionChecked(status) => {
+                    self.session_status = match status {
+                        trade_api::SessionStatus::Valid { account } => SessionCheck::Valid(account),
+                        trade_api::SessionStatus::Invalid => SessionCheck::Invalid,
+                        trade_api::SessionStatus::Unknown(e) => {
+                            tracing::debug!(error = %e, "could not verify POESESSID");
+                            SessionCheck::Unknown
+                        }
+                    };
                 }
             }
         }
