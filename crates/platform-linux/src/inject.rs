@@ -30,6 +30,15 @@ static DEVICE: OnceLock<Mutex<VirtualDevice>> = OnceLock::new();
 /// existing text with Ctrl+A first (mirrors EE2's `AUTO_CLEAR`).
 const AUTO_CLEAR_PREFIXES: &[char] = &['#', '%', '@', '$', '&', '/'];
 
+/// Whether `command` opens a fresh chat line (so we needn't Ctrl+A to clear
+/// existing text first) — true when it starts with a chat prefix.
+fn auto_clears(command: &str) -> bool {
+    command
+        .chars()
+        .next()
+        .is_some_and(|c| AUTO_CLEAR_PREFIXES.contains(&c))
+}
+
 /// Brief settle so the xclip selection helper is serving before the first
 /// keystroke. A safety margin (write already blocks until xclip owns the
 /// selection); invisible since it's before chat opens.
@@ -44,10 +53,7 @@ pub fn send_chat_command(command: &str) -> Result<()> {
     let saved = read_clipboard_text().ok().flatten();
     write_clipboard_text(command).context("set clipboard for chat paste")?;
 
-    let auto_clear = command
-        .chars()
-        .next()
-        .is_some_and(|c| AUTO_CLEAR_PREFIXES.contains(&c));
+    let auto_clear = auto_clears(command);
     {
         // Recover from a poisoned lock: a prior panic mid-emit doesn't corrupt
         // the VirtualDevice, and we'd rather keep injecting than panic forever.
@@ -129,4 +135,31 @@ fn ctrl_tap(device: &mut VirtualDevice, key: Key) -> Result<()> {
     // virtual modifier logically stuck down in POE2.
     let released = emit(device, Key::KEY_LEFTCTRL, 0);
     tapped.and(released)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_clears;
+
+    #[test]
+    fn auto_clears_recognizes_chat_prefixes() {
+        for cmd in [
+            "/hideout",
+            "@friend hi",
+            "#global hi",
+            "%party",
+            "$trade",
+            "&guild",
+        ] {
+            assert!(auto_clears(cmd), "{cmd:?} should auto-clear");
+        }
+    }
+
+    #[test]
+    fn auto_clears_false_for_plain_text_or_empty() {
+        assert!(!auto_clears("hello world"));
+        assert!(!auto_clears(""));
+        // A leading space means the first char isn't a prefix.
+        assert!(!auto_clears(" /hideout"));
+    }
 }

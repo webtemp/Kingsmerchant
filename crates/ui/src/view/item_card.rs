@@ -177,10 +177,10 @@ pub(super) fn item_preview(item: &serde_json::Value) -> ItemPreview {
     }
 }
 
-/// Show the item preview with its bottom-right corner ~5px up-left of the cursor
-/// — a non-interactive, top-most tooltip that leaves the row's buttons clickable.
-/// `constrain(true)` keeps it inside the surface (the popup can't draw outside
-/// its own bounds).
+/// Show the item preview horizontally centred on the cursor and floating just
+/// above it (the cursor sits ~3px inside the bottom edge) — a non-interactive,
+/// top-most tooltip. `constrain(true)` keeps it inside the surface (the popup
+/// can't draw outside its own bounds).
 pub(super) fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPreview) {
     let Some(pos) = ctx.pointer_latest_pos() else {
         return;
@@ -189,8 +189,10 @@ pub(super) fn show_item_preview_at_cursor(ctx: &egui::Context, item: &ItemPrevie
         .order(egui::Order::Tooltip)
         .interactable(false)
         .constrain(true)
-        .fixed_pos(pos - egui::vec2(5.0, 5.0))
-        .pivot(egui::Align2::RIGHT_BOTTOM)
+        // Bottom-centre pivot: the area is centred on the cursor's x and grows
+        // upward, nudged down 3px so the cursor sits just inside the bottom.
+        .fixed_pos(pos + egui::vec2(0.0, 3.0))
+        .pivot(egui::Align2::CENTER_BOTTOM)
         .show(ctx, |ui| {
             render_item_preview(ui, item);
         });

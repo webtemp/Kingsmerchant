@@ -385,6 +385,58 @@ mod tests {
     }
 
     #[test]
+    fn parse_is_case_insensitive_and_trims_whitespace() {
+        let spaced = Binding::parse("CONTROL + alt + c").unwrap();
+        let tight = Binding::parse("ctrl+ALT+C").unwrap();
+        assert_eq!(spaced, tight);
+        assert!(spaced.ctrl && spaced.alt && !spaced.shift && spaced.key == Key::KEY_C);
+    }
+
+    #[test]
+    fn parse_handles_shift_and_control_alias() {
+        let b = Binding::parse("Shift+Control+A").unwrap();
+        assert!(b.ctrl && b.shift && !b.alt && b.key == Key::KEY_A);
+    }
+
+    #[test]
+    fn parse_rejects_missing_key_or_empty() {
+        assert!(Binding::parse("Ctrl+Alt").is_err()); // modifiers only
+        assert!(Binding::parse("").is_err());
+        assert!(Binding::parse("+").is_err());
+        assert!(Binding::parse("Ctrl+").is_err()); // trailing + → no key
+    }
+
+    #[test]
+    fn parse_last_key_segment_wins() {
+        // Each non-modifier segment sets the key; the last one wins.
+        assert_eq!(Binding::parse("a+b").unwrap().key, Key::KEY_B);
+    }
+
+    #[test]
+    fn key_from_name_covers_letters_digits_and_named_keys() {
+        assert_eq!(key_from_name("c"), Some(Key::KEY_C));
+        assert_eq!(key_from_name("Z"), Some(Key::KEY_Z));
+        assert_eq!(key_from_name("0"), Some(Key::KEY_0));
+        assert_eq!(key_from_name("9"), Some(Key::KEY_9));
+        assert_eq!(key_from_name("esc"), Some(Key::KEY_ESC));
+        assert_eq!(key_from_name("Escape"), Some(Key::KEY_ESC));
+        assert_eq!(key_from_name("return"), Some(Key::KEY_ENTER));
+        assert_eq!(key_from_name("enter"), Some(Key::KEY_ENTER));
+        assert_eq!(key_from_name("space"), Some(Key::KEY_SPACE));
+        assert_eq!(key_from_name("tab"), Some(Key::KEY_TAB));
+        assert_eq!(key_from_name("f1"), Some(Key::KEY_F1));
+        assert_eq!(key_from_name("F12"), Some(Key::KEY_F12));
+    }
+
+    #[test]
+    fn key_from_name_rejects_unknown() {
+        assert_eq!(key_from_name("f13"), None);
+        assert_eq!(key_from_name("nonsense"), None);
+        assert_eq!(key_from_name("!"), None);
+        assert_eq!(key_from_name(""), None);
+    }
+
+    #[test]
     fn exact_match_disambiguates_quick_and_detailed() {
         let b = HotkeyBindings::default();
         // Ctrl+C → quick; Ctrl+Alt+C → detailed; neither bare nor wrong-mods.
@@ -407,6 +459,51 @@ mod tests {
         );
         assert_eq!(
             b.event_for(Key::KEY_ESC, false, false, false),
+            Some(HotkeyEvent::Close)
+        );
+    }
+
+    #[test]
+    fn event_for_requires_exact_modifiers() {
+        let b = HotkeyBindings::default();
+        // An extra Shift means Ctrl+C no longer matches the quick binding.
+        assert_eq!(b.event_for(Key::KEY_C, true, false, true), None);
+        // F5 with any modifier held isn't the macro.
+        assert_eq!(b.event_for(Key::KEY_F5, true, false, false), None);
+        // An unmapped key is never an event.
+        assert_eq!(b.event_for(Key::KEY_X, false, false, false), None);
+    }
+
+    #[test]
+    fn from_strings_falls_back_on_invalid_binding() {
+        // A garbage `quick` binding falls back to the default Ctrl+C; the rest
+        // parse from the given strings.
+        let b = HotkeyBindings::from_strings("not-a-key", "Ctrl+Alt+C", "F5", "F2", "Escape");
+        assert_eq!(b.quick, HotkeyBindings::default().quick);
+        assert_eq!(
+            b.event_for(Key::KEY_C, true, false, false),
+            Some(HotkeyEvent::QuickCopy)
+        );
+    }
+
+    #[test]
+    fn from_strings_rebinds_to_custom_keys() {
+        // Args: quick, detailed, macro, macro2, close.
+        let b = HotkeyBindings::from_strings("Ctrl+D", "Ctrl+Shift+D", "F8", "F9", "Q");
+        assert_eq!(
+            b.event_for(Key::KEY_D, true, false, false),
+            Some(HotkeyEvent::QuickCopy)
+        );
+        assert_eq!(
+            b.event_for(Key::KEY_D, true, false, true),
+            Some(HotkeyEvent::DetailedCopy)
+        );
+        assert_eq!(
+            b.event_for(Key::KEY_F8, false, false, false),
+            Some(HotkeyEvent::Macro)
+        );
+        assert_eq!(
+            b.event_for(Key::KEY_Q, false, false, false),
             Some(HotkeyEvent::Close)
         );
     }
