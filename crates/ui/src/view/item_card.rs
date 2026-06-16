@@ -16,6 +16,8 @@ use super::theme::{frame_color, rarity_color, AFFIX_BLUE, HEADER_BG};
 
 /// Defence / property values (armour, evasion, requirements).
 const PROP_COLOR: Color32 = Color32::from_rgb(0x8f, 0xb8, 0xd6);
+/// Affix slot / name / tier metadata — muted but clearly readable on the card.
+const META_COLOR: Color32 = Color32::from_rgb(0xa6, 0xa8, 0xb4);
 // Mod-text colours, matching the trade site's affix colouring.
 const FRACTURED_TEXT: Color32 = Color32::from_rgb(0xa2, 0x91, 0x62);
 const CRAFTED_TEXT: Color32 = Color32::from_rgb(0xb4, 0xb4, 0xff);
@@ -217,23 +219,28 @@ fn sockets_block(ui: &mut egui::Ui, item: &Item) {
 }
 
 fn render_mod(ui: &mut egui::Ui, m: &Modifier) {
-    let pill_for = m
-        .source
-        .map(source_pill)
-        .or_else(|| (m.kind == ModKind::Implicit).then_some(IMPLICIT_PILL));
-    ui.horizontal(|ui| {
-        if let Some(p) = pill_for {
-            badge(ui, p);
-        }
-        ui.label(RichText::new(mod_header(m)).weak().small());
-    });
     let color = source_text_color(m.source);
-    for stat in &m.stats {
-        ui.label(RichText::new(stat).color(color));
+    let meta = mod_header(m);
+    let pill = m.source.map(source_pill);
+    for (i, stat) in m.stats.iter().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(stat).color(color));
+            // Slot / name / tier right-aligned on the mod's first line, so the
+            // values stay in a clean left column instead of each mod costing a
+            // full extra header row. A source pill (desecrated/…) sits with it.
+            if i == 0 {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(&meta).color(META_COLOR).small());
+                    if let Some(p) = pill {
+                        badge(ui, p);
+                    }
+                });
+            }
+        });
     }
 }
 
-/// The slot / name / tier line above a mod's stats (the pill shows its source).
+/// The slot / name / tier shown to the right of a mod's stats.
 fn mod_header(m: &Modifier) -> String {
     let kind = match &m.kind {
         ModKind::Implicit => "Implicit",
