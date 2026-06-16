@@ -94,10 +94,7 @@ impl HttpTransport for ReqwestTransport {
                 .body(body);
         }
 
-        let response = builder
-            .send()
-            .await
-            .map_err(|e| Error::Transport(e.to_string()))?;
+        let response = builder.send().await.map_err(|e| transport_error(&e))?;
         let status = response.status().as_u16();
         let headers = response
             .headers()
@@ -109,15 +106,51 @@ impl HttpTransport for ReqwestTransport {
                 )
             })
             .collect();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| Error::Transport(e.to_string()))?;
+        let body = response.text().await.map_err(|e| transport_error(&e))?;
         Ok(HttpResponse {
             status,
             headers,
             body,
         })
+    }
+}
+
+/// Turn a `reqwest::Error` into an [`Error::Transport`] whose message both names
+/// the failure mode and includes the underlying cause. reqwest's own `Display`
+/// is often unhelpfully terse — a malformed header surfaces only as "builder
+/// error" — because the real reason sits in the error's `source()` chain, which
+/// `to_string()` drops. We name the kind and walk that chain.
+fn transport_error(e: &reqwest::Error) -> Error {
+    let kind = if e.is_builder() {
+        "could not build the request (a header or URL was invalid)"
+    } else if e.is_connect() {
+        "could not connect to the trade site"
+    } else if e.is_timeout() {
+        "the request timed out"
+    } else if e.is_redirect() {
+        "too many redirects"
+    } else if e.is_body() || e.is_decode() {
+        "could not read the response body"
+    } else {
+        "the request failed"
+    };
+
+    // Walk the cause chain so a wrapped reason (e.g. "failed to parse header
+    // value" behind a builder error) actually reaches the message.
+    let mut detail = String::new();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        if !detail.is_empty() {
+            detail.push_str(": ");
+        }
+        detail.push_str(&cause.to_string());
+        source = cause.source();
+    }
+
+    if detail.is_empty() {
+        Error::Transport(kind.to_string())
+    } else {
+        Error::Transport(format!("{kind} — {detail}"))
     }
 }
 
@@ -139,4 +172,37 @@ pub(crate) fn percent_encode(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{transport_error, Error};
+
+    #[test]
+    fn builder_error_message_names_the_cause() {
+        // A header value with a newline is what a malformed POESESSID paste used
+        // to produce — reqwest reports it as a terse "builder error". Build one
+        // for real and check our message says more than that.
+        let err = reqwest::Client::new()
+            .get("http://example.invalid/")
+            .header("cookie", "POESESSID=bad\nvalue")
+            .build()
+            .expect_err("an invalid header value must fail to build");
+        assert!(err.is_builder());
+
+        let Error::Transport(msg) = transport_error(&err) else {
+            panic!("expected a Transport error");
+        };
+        // Names the failure mode...
+        assert!(
+            msg.contains("could not build the request"),
+            "message should name the failure mode, got: {msg}"
+        );
+        // ...and surfaces the underlying cause rather than just "builder error".
+        assert!(
+            msg.to_lowercase().contains("header"),
+            "message should include the underlying cause, got: {msg}"
+        );
+        assert_ne!(msg.to_lowercase(), "builder error");
+    }
 }
