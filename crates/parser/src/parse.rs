@@ -25,7 +25,17 @@ const STANDALONE_FLAGS: &[&str] = &[
     "Unmodifiable",
 ];
 
-/// Parse a POE2 clipboard item string.
+/// Parse a POE2 "Copy Item" clipboard string into an [`Item`].
+///
+/// Best-effort: once the `Rarity:` header is found, unrecognized lines and
+/// missing sections are skipped rather than rejected, and parsing never panics
+/// on malformed, truncated, or non-UTF-8-boundary input.
+///
+/// # Errors
+///
+/// Returns [`ParseError::Empty`] if `input` is blank, or
+/// [`ParseError::NotAnItem`] if it lacks the `Rarity:` header that identifies a
+/// Path of Exile item.
 pub fn parse_item(input: &str) -> Result<Item, ParseError> {
     if input.trim().is_empty() {
         return Err(ParseError::Empty);
@@ -342,10 +352,12 @@ fn parse_modifiers(lines: &[&str], item: &mut Item) {
 fn descriptor_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
+        // The pattern is a fixed string literal validated by the tests, so
+        // compilation cannot fail at runtime; `expect` documents that invariant.
         Regex::new(
             r#"^\{\s*(.*?)\s*(?:"([^"]*)")?\s*(?:\(Tier:\s*(\d+)\))?\s*(?:[-—]\s*([^}]+?))?\s*\}$"#,
         )
-        .expect("descriptor regex is valid")
+        .expect("descriptor regex literal is a valid pattern")
     })
 }
 

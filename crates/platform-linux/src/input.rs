@@ -184,9 +184,8 @@ impl HotkeyBindings {
 fn key_from_name(name: &str) -> Option<Key> {
     let n = name.to_ascii_lowercase();
     // Single letters a-z and digits 0-9.
-    if n.len() == 1 {
-        let c = n.chars().next().unwrap();
-        if c.is_ascii_alphanumeric() {
+    if let Some(c) = n.chars().next() {
+        if n.len() == 1 && c.is_ascii_alphanumeric() {
             return ascii_key(c);
         }
     }

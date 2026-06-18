@@ -9,9 +9,10 @@ use std::io::Read;
 
 fn main() {
     let mut input = String::new();
-    std::io::stdin()
-        .read_to_string(&mut input)
-        .expect("read stdin");
+    if let Err(err) = std::io::stdin().read_to_string(&mut input) {
+        eprintln!("failed to read stdin: {err}");
+        std::process::exit(2);
+    }
 
     match parser::parse_item(&input) {
         Ok(item) => println!("{item:#?}"),

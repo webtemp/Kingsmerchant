@@ -170,7 +170,11 @@ impl Config {
         // Per-pid temp name so two instances don't clobber each other's temp.
         let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
         std::fs::write(&tmp, json)?;
-        std::fs::rename(&tmp, &path)?;
+        // On a failed rename, don't leave the temp file behind to accumulate.
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
         Ok(())
     }
 }

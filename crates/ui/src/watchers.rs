@@ -154,8 +154,15 @@ pub fn spawn_config_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
     let file_name = path.file_name().map(std::ffi::OsStr::to_os_string);
 
     std::thread::spawn(move || {
-        // Editors fire several events per save; coalesce them.
-        let last = Mutex::new(Instant::now().checked_sub(Duration::from_secs(1)).unwrap());
+        // Editors fire several events per save; coalesce them. Seed the timer a
+        // debounce-window in the past so the first save isn't swallowed; on a
+        // just-booted machine where `Instant` can't go back that far, fall back
+        // to "now" (at worst a config edit in the first 200ms isn't hot-reloaded).
+        let last = Mutex::new(
+            Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(Instant::now),
+        );
         let handler = move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
             // Only our file, and only content-changing events.

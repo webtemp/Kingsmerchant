@@ -14,6 +14,8 @@ pub enum Rarity {
 }
 
 impl Rarity {
+    /// Map a `Rarity:` header value to a [`Rarity`], preserving any unmodeled
+    /// string verbatim in [`Other`](Rarity::Other).
     pub fn parse(s: &str) -> Rarity {
         match s {
             "Normal" => Rarity::Normal,
