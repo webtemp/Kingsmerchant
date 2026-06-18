@@ -32,11 +32,12 @@ use trade_api::{
 
 use model::{
     item_hash, EquipmentRow, ExchangePhase, MinFilter, MiscToggle, Msg, Phase, PriceFilterState,
-    PriceMode, SessionCheck, StatFilterRow, View, MISC_OPTIONS,
+    PriceMode, ScoutPhase, SessionCheck, StatFilterRow, View, MISC_OPTIONS,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
-const USER_AGENT: &str = "poe2ddd/0.1 (+phase3 ui)";
+/// Identifies the app to pathofexile.com and the poe2scout API.
+const USER_AGENT: &str = concat!("poe2ddd/", env!("CARGO_PKG_VERSION"));
 /// Fetch a sample of this many so the median is meaningful; show the cheapest N.
 pub(crate) const SAMPLE: usize = 10;
 pub(crate) const SHOWN: usize = 10;
@@ -127,6 +128,9 @@ pub struct QuickModeApp {
     /// Boolean Miscellaneous attribute toggles (corrupted, mirrored, …), all
     /// off by default; persist across items.
     misc: Vec<MiscToggle>,
+    /// How Fire/Cold/Lightning resistances become trade filters. Reset to the
+    /// fungible default on each fresh check (Total/Specific are per-item picks).
+    resistance_mode: trade_api::ResistanceMode,
     /// A filter edit is pending a debounced live re-query.
     filter_dirty: bool,
     /// When the last filter edit happened (debounce timer base).
@@ -183,15 +187,23 @@ pub struct QuickModeApp {
     /// Whether the loaded item prices via the per-item search or the bulk
     /// currency exchange.
     mode: PriceMode,
-    /// Background state of the bulk-exchange check (used in [`PriceMode::Exchange`]).
+    /// Background state of the poe2scout economy lookup — the primary currency
+    /// source (used in [`PriceMode::Exchange`]).
+    scout_phase: ScoutPhase,
+    /// Background state of the bulk-exchange check — the fallback when poe2scout
+    /// has no data (used in [`PriceMode::Exchange`]).
     exchange_phase: ExchangePhase,
-    /// The `data/static` exchange id of the loaded stackable (the `want`).
+    /// The `data/static` exchange id of the loaded stackable (the `want`), for
+    /// the official-exchange fallback + deep link.
     exchange_want_id: String,
     /// Currency the exchange prices are shown in (the `have`); default Exalted.
     pay_currency: String,
 }
 
 impl QuickModeApp {
+    /// Assemble the app from its already-built dependencies (runtime, API
+    /// client, settings, league list, hotkey channel, optional tray). Most
+    /// callers want [`build_app`], which constructs these first.
     pub fn new(
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
@@ -225,6 +237,7 @@ impl QuickModeApp {
                     on: false,
                 })
                 .collect(),
+            resistance_mode: trade_api::ResistanceMode::default(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),
             estimate: None,
@@ -250,6 +263,7 @@ impl QuickModeApp {
             session_status: SessionCheck::Idle,
             session_check_at: None,
             mode: PriceMode::Item,
+            scout_phase: ScoutPhase::Idle,
             exchange_phase: ExchangePhase::Idle,
             exchange_want_id: String::new(),
             pay_currency: "exalted".to_string(),
@@ -434,6 +448,28 @@ impl QuickModeApp {
                         Err(e) => tracing::debug!(error = %e, "poeprices estimate failed"),
                     }
                 }
+                Msg::Scout(result) => {
+                    self.scout_phase = match *result {
+                        Ok(Some(price)) => {
+                            // Show the currency's own icon in the item card.
+                            if price.icon_url.is_some() {
+                                self.icon_url.clone_from(&price.icon_url);
+                            }
+                            ScoutPhase::Done(price)
+                        }
+                        // No poe2scout data → fall back to the official exchange.
+                        Ok(None) => {
+                            tracing::info!("poe2scout had no data; falling back to exchange");
+                            self.spawn_exchange_query(ctx);
+                            ScoutPhase::NotFound
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "poe2scout price failed; falling back to exchange");
+                            self.spawn_exchange_query(ctx);
+                            ScoutPhase::Failed(e)
+                        }
+                    };
+                }
                 Msg::Exchange(result) => {
                     self.exchange_phase = match *result {
                         Ok(ex) => ExchangePhase::Done(ex),
@@ -519,6 +555,9 @@ pub fn install_loaders(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
 }
 
+/// Apply the app's egui style: the Phosphor icon font (so the `ph::*` button
+/// glyphs render) plus the shared spacing/rounding. Call once per
+/// `egui::Context`, alongside [`install_loaders`].
 pub fn configure_style(ctx: &egui::Context) {
     // Add the Phosphor icon font so the button glyphs render (the default egui
     // font has no emoji). Phosphor is an extra family the `ph::*` constants use.

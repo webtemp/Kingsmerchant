@@ -173,6 +173,11 @@ impl StatDefinitions {
             .filter(|m| m.kind != ModKind::Implicit)
         {
             for line in &m.stats {
+                // Unrevealed-desecrated placeholders are handled as a hidden-mod
+                // count filter, not shown as unsearchable noise.
+                if is_unrevealed_placeholder(line) {
+                    continue;
+                }
                 let unmapped = self
                     .map_stat_line(&m.kind, m.source.as_ref(), line, ctx.prefer_local(line))
                     .is_none();
@@ -279,6 +284,36 @@ fn is_defence_stat(line: &str) -> bool {
         || line.contains("Energy Shield")
         || line.contains("Block")
         || line.contains("Ward")
+}
+
+/// Placeholder stat lines POE2 prints for an *unrevealed* desecrated affix —
+/// the slot is filled by a desecrated mod whose identity isn't revealed yet, so
+/// it shows this fixed text instead of a real stat.
+const UNREVEALED_PREFIX_LINE: &str = "Desecrated Prefix";
+const UNREVEALED_SUFFIX_LINE: &str = "Desecrated Suffix";
+
+/// Whether a stat line is an unrevealed-desecrated placeholder. Such lines map
+/// to no real stat (their roll is hidden), so they're searched via the
+/// "# Unrevealed Prefix/Suffix Modifiers" pseudo count, not as affix filters.
+pub fn is_unrevealed_placeholder(line: &str) -> bool {
+    line == UNREVEALED_PREFIX_LINE || line == UNREVEALED_SUFFIX_LINE
+}
+
+/// Count an item's unrevealed desecrated modifiers as `(prefixes, suffixes)`,
+/// from the placeholder lines above. Used to search by hidden-mod count so a
+/// desecrated-but-unrevealed item matches others in the same hidden state,
+/// rather than items whose desecrated mods are already revealed.
+pub fn unrevealed_affix_counts(item: &Item) -> (usize, usize) {
+    let mut prefixes = 0;
+    let mut suffixes = 0;
+    for m in &item.modifiers {
+        if m.stats.iter().any(|s| s == UNREVEALED_PREFIX_LINE) {
+            prefixes += 1;
+        } else if m.stats.iter().any(|s| s == UNREVEALED_SUFFIX_LINE) {
+            suffixes += 1;
+        }
+    }
+    (prefixes, suffixes)
 }
 
 /// The GGG stat-id prefixes to try for a parsed affix, most-specific first.
@@ -440,7 +475,27 @@ fn contains_word_run(words: &[&str], base: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{singular_additional_variant, singularize_last_word};
+    use super::{
+        is_unrevealed_placeholder, singular_additional_variant, singularize_last_word,
+        unrevealed_affix_counts,
+    };
+
+    #[test]
+    fn counts_unrevealed_desecrated_affixes() {
+        // A unique jewel with two hidden desecrated prefixes and two suffixes:
+        // each shows the placeholder line, not a real roll.
+        let text = "Item Class: Jewels\nRarity: Unique\nHeart of the Well\nDiamond\n--------\n\
+             Item Level: 82\n--------\n\
+             { Prefix Modifier \"\" }\nDesecrated Prefix\n\
+             { Prefix Modifier \"\" }\nDesecrated Prefix\n\
+             { Suffix Modifier \"\" }\nDesecrated Suffix\n\
+             { Suffix Modifier \"\" }\nDesecrated Suffix\n";
+        let item = parser::parse_item(text).expect("fixture parses");
+        assert_eq!(unrevealed_affix_counts(&item), (2, 2));
+        assert!(is_unrevealed_placeholder("Desecrated Prefix"));
+        assert!(is_unrevealed_placeholder("Desecrated Suffix"));
+        assert!(!is_unrevealed_placeholder("#% to Fire Resistance"));
+    }
 
     #[test]
     fn singularises_trade_count_nouns() {

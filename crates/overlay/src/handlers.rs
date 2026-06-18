@@ -106,10 +106,12 @@ impl LayerShellHandler for App {
                 surf.height = configure.new_size.1;
             }
             if let Some(gl) = surf.gl.as_ref() {
+                // `width`/`height` are seeded non-zero in `WinSurface::new` and a
+                // zero `new_size` is ignored above, so both stay non-zero.
                 gl.gl_surface.resize(
                     &gl.context,
-                    NonZeroU32::new(surf.width).unwrap(),
-                    NonZeroU32::new(surf.height).unwrap(),
+                    NonZeroU32::new(surf.width).expect("surface width is non-zero"),
+                    NonZeroU32::new(surf.height).expect("surface height is non-zero"),
                 );
             }
         }
@@ -328,11 +330,14 @@ impl KeyboardHandler for App {
         };
         // Ctrl+V: egui never reads the system clipboard itself — we must turn
         // the shortcut into an `Event::Paste` so text fields can be pasted into.
+        // Use the Wayland-first paste read (not the X11 POE2-item read), so
+        // pasting e.g. a POESESSID copied from a browser doesn't yield the last
+        // item left in POE2's X11 clipboard.
         if modifiers.ctrl
             && !modifiers.alt
             && (event.keysym == Keysym::v || event.keysym == Keysym::V)
         {
-            match platform_linux::read_clipboard_text() {
+            match platform_linux::read_paste_text() {
                 Ok(Some(text)) if !text.is_empty() => {
                     self.surf_mut(which).events.push(egui::Event::Paste(text));
                 }

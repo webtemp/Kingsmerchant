@@ -43,6 +43,68 @@ impl ListingStatus {
     }
 }
 
+/// How to translate the item's Fire / Cold / Lightning resistance rolls into
+/// trade stat filters. Only those three single-element rolls are affected —
+/// Chaos and "all Elemental" resistances are never folded in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResistanceMode {
+    /// Each element searched as its own literal stat. No grouping (the classic
+    /// behaviour: a Fire roll only matches Fire).
+    Specific,
+    /// Fungible: elements are interchangeable, so any of Fire/Cold/Lightning can
+    /// satisfy each value threshold. Emits cumulative `count` groups (the
+    /// default — the best pool of comparable items for price discovery).
+    #[default]
+    Fungible,
+    /// Collapse all three into a single "+#% total Elemental Resistance" pseudo
+    /// filter on their summed value.
+    Total,
+}
+
+/// One of the three fungible single-element resistances. The discriminant
+/// doubles as an index into a per-element accumulator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResElement {
+    Fire = 0,
+    Cold = 1,
+    Lightning = 2,
+}
+
+/// Trade stat-id suffixes for the three plain single-element resistances, shared
+/// by the explicit and implicit variants (`explicit.stat_3372524247` /
+/// `implicit.stat_3372524247`). Hybrids, max-res, penetration and "all
+/// elemental" carry different ids and are deliberately excluded.
+const RES_FIRE_SUFFIX: &str = "stat_3372524247";
+const RES_COLD_SUFFIX: &str = "stat_4220027924";
+const RES_LIGHTNING_SUFFIX: &str = "stat_1671376347";
+
+/// The `pseudo` per-element resistance-total stat ids — the members of the
+/// fungible `count` groups. Pseudo totals fold in every source of an element
+/// (explicit, implicit, hybrid, all-res), so they match the widest set of
+/// comparable items.
+const PSEUDO_FIRE: &str = "pseudo.pseudo_total_fire_resistance";
+const PSEUDO_COLD: &str = "pseudo.pseudo_total_cold_resistance";
+const PSEUDO_LIGHTNING: &str = "pseudo.pseudo_total_lightning_resistance";
+/// The summed "+#% total Elemental Resistance" pseudo ([`ResistanceMode::Total`]).
+const PSEUDO_TOTAL_ELE: &str = "pseudo.pseudo_total_elemental_resistance";
+
+/// The element of a plain single-element resistance stat id, if it is one.
+fn res_element(id: &str) -> Option<ResElement> {
+    match id.rsplit('.').next().unwrap_or(id) {
+        RES_FIRE_SUFFIX => Some(ResElement::Fire),
+        RES_COLD_SUFFIX => Some(ResElement::Cold),
+        RES_LIGHTNING_SUFFIX => Some(ResElement::Lightning),
+        _ => None,
+    }
+}
+
+/// Whether `id` is a plain Fire/Cold/Lightning resistance — the stats the
+/// fungible/total resistance modes act on. Lets the UI decide when to offer the
+/// resistance-mode control.
+pub fn is_elemental_resistance(id: &str) -> bool {
+    res_element(id).is_some()
+}
+
 /// Knobs for query construction.
 #[derive(Debug, Clone, Copy)]
 pub struct QueryOptions {
@@ -201,6 +263,8 @@ pub struct DetailedFilters {
     /// `None` = any rarity.
     pub rarity: Option<String>,
     pub price: PriceFilter,
+    /// How elemental-resistance rolls become stat filters (default: fungible).
+    pub resistance_mode: ResistanceMode,
 }
 
 /// Build the detailed-mode search request: same name / type / category as the
@@ -253,12 +317,7 @@ pub fn build_detailed_query(
         trade_filters,
     };
 
-    let stat_filters: Vec<StatFilter> = f.stats.iter().map(StatSelection::to_filter).collect();
-    let stat_groups = if stat_filters.is_empty() {
-        Vec::new()
-    } else {
-        vec![StatGroup::and(stat_filters)]
-    };
+    let stat_groups = build_stat_groups(&f.stats, f.resistance_mode);
 
     SearchRequest {
         query: Query {
@@ -270,6 +329,83 @@ pub fn build_detailed_query(
         },
         sort: Some(Sort::price_asc()),
     }
+}
+
+/// Turn the per-stat selections into trade stat groups, applying the resistance
+/// mode. Non-resistance stats (and, in [`ResistanceMode::Specific`], the
+/// resistances too) go into one `and` group; fungible resistances become
+/// cumulative `count` groups; total mode folds them into one pseudo filter.
+fn build_stat_groups(selections: &[StatSelection], mode: ResistanceMode) -> Vec<StatGroup> {
+    // Accumulate the fungible elemental resistances by element (Fire/Cold/
+    // Lightning), summing an element that appears more than once (e.g. an
+    // implicit + an explicit Fire). Only when not in Specific mode, enabled, and
+    // carrying a min to threshold on; everything else stays a plain `and` filter
+    // keeping its min/max range.
+    let mut res = [0f64; 3];
+    let mut others: Vec<StatFilter> = Vec::new();
+    for s in selections {
+        if mode != ResistanceMode::Specific && s.enabled {
+            if let (Some(el), Some(min)) = (res_element(&s.id), s.min) {
+                res[el as usize] += min;
+                continue;
+            }
+        }
+        others.push(s.to_filter());
+    }
+
+    let mut groups = Vec::new();
+    match mode {
+        ResistanceMode::Specific => {} // `res` stays empty; nothing to fold.
+        ResistanceMode::Fungible => groups.extend(fungible_resistance_groups(res)),
+        ResistanceMode::Total => {
+            if let Some(filter) = total_resistance_filter(res) {
+                others.push(filter);
+            }
+        }
+    }
+    if !others.is_empty() {
+        groups.push(StatGroup::and(others));
+    }
+    groups
+}
+
+/// Build the cumulative `count` groups from the per-element resistance totals:
+/// one group per distinct value `v`, requiring at least `k` of the three
+/// elements to reach `v`, where `k` is how many of the item's own resistances
+/// are ≥ `v`. So `42 Fire / 22 Cold` yields `{≥42, count 1}` + `{≥22, count 2}` —
+/// the cumulative count stops a single big roll posing as two.
+fn fungible_resistance_groups(res: [f64; 3]) -> Vec<StatGroup> {
+    let mut thresholds: Vec<f64> = res.iter().copied().filter(|&v| v > 0.0).collect();
+    thresholds.sort_by(|a, b| b.total_cmp(a));
+    thresholds.dedup();
+
+    thresholds
+        .into_iter()
+        .map(|v| {
+            let count = res.iter().filter(|&&t| t >= v).count() as u32;
+            let filters = [PSEUDO_FIRE, PSEUDO_COLD, PSEUDO_LIGHTNING]
+                .into_iter()
+                .map(|id| StatFilter {
+                    id: id.to_string(),
+                    value: Some(StatValue::min(v)),
+                    disabled: false,
+                })
+                .collect();
+            StatGroup::count(filters, count)
+        })
+        .collect()
+}
+
+/// The single summed "+#% total Elemental Resistance" pseudo filter
+/// ([`ResistanceMode::Total`]), or `None` if the item has no elemental
+/// resistances.
+fn total_resistance_filter(res: [f64; 3]) -> Option<StatFilter> {
+    let sum: f64 = res.iter().sum();
+    (sum > 0.0).then(|| StatFilter {
+        id: PSEUDO_TOTAL_ELE.to_string(),
+        value: Some(StatValue::min(sum)),
+        disabled: false,
+    })
 }
 
 /// Collect the checked boolean attributes into the `misc_filters` group (each

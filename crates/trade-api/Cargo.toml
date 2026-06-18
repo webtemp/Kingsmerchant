@@ -1,6 +1,6 @@
 [package]
 name = "trade-api"
-version = "0.8.0"
+version = "0.9.0"
 description = "POE2 official trade-API client: search/fetch, bulk exchange, rate limiting, poeprices estimates."
 edition.workspace = true
 license.workspace = true

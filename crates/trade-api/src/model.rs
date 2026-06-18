@@ -49,13 +49,31 @@ pub struct StatGroup {
     #[serde(rename = "type")]
     pub type_: String,
     pub filters: Vec<StatFilter>,
+    /// Group-level value. For a `count` group this is the count threshold
+    /// (`{ "min": 2 }` = at least two member filters must match); omitted for
+    /// `and` groups.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<StatValue>,
 }
 
 impl StatGroup {
+    /// An `and` group: every member filter must match.
     pub fn and(filters: Vec<StatFilter>) -> Self {
         StatGroup {
             type_: "and".to_string(),
             filters,
+            value: None,
+        }
+    }
+
+    /// A `count` group: at least `min` of the member filters must match. Used
+    /// for fungible elemental-resistance searches, where any of Fire/Cold/
+    /// Lightning can satisfy a given value threshold.
+    pub fn count(filters: Vec<StatFilter>, min: u32) -> Self {
+        StatGroup {
+            type_: "count".to_string(),
+            filters,
+            value: Some(StatValue::min(f64::from(min))),
         }
     }
 }

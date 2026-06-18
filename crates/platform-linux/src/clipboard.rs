@@ -39,6 +39,41 @@ pub fn read_clipboard_text() -> anyhow::Result<Option<String>> {
     Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
 }
 
+/// Read clipboard text for pasting *into our own* text fields (e.g. the
+/// POESESSID setting).
+///
+/// This is the opposite situation from [`read_clipboard_text`]: there we read
+/// POE2's X11 CLIPBOARD on purpose; here the user is pasting something they
+/// copied from an ordinary desktop app — typically a Wayland-native browser —
+/// which lands on the *Wayland* clipboard. Reading only X11 would hand back the
+/// last POE2 item still sitting in that selection instead of what they copied.
+///
+/// So try the Wayland clipboard first via `wl-paste` (part of `wl-clipboard`),
+/// then fall back to the X11 clipboard so in-app copies and X11 browsers still
+/// work even without `wl-clipboard` installed.
+pub fn read_paste_text() -> anyhow::Result<Option<String>> {
+    if let Some(text) = wl_paste_text() {
+        if !text.is_empty() {
+            return Ok(Some(text));
+        }
+    }
+    read_clipboard_text()
+}
+
+/// Read the Wayland clipboard via `wl-paste`. `None` if `wl-clipboard` isn't
+/// installed, the clipboard is empty, or it holds no text — all fall-through
+/// cases that defer to the X11 read.
+fn wl_paste_text() -> Option<String> {
+    let output = Command::new("wl-paste")
+        .args(["--no-newline", "--type", "text/plain"])
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// Open a URL in the user's default browser via `xdg-open`. Fire-and-forget:
 /// `xdg-open` detaches the browser and returns immediately.
 pub fn open_url(url: &str) -> anyhow::Result<()> {

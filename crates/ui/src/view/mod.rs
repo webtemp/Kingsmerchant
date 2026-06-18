@@ -188,16 +188,6 @@ impl QuickModeApp {
                     }
                     Phase::Done(pc) => {
                         show_results(ui, pc, &mut copied, &mut teleport);
-                        ui.add_space(6.0);
-                        if ui
-                            .button(format!("{} Open on trade site", ph::GLOBE))
-                            .on_hover_text("Opens your browser with this exact search")
-                            .clicked()
-                        {
-                            // Built only on click — encoding the full query is
-                            // too costly to rebuild every frame.
-                            open_trade = Some(self.trade_url());
-                        }
                     }
                 }
             }

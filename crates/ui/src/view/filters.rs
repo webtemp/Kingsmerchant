@@ -6,10 +6,32 @@ use std::time::Instant;
 use egui::{Color32, RichText};
 use egui_phosphor::regular as ph;
 
-use crate::model::{fmt_amount, scaled_min, MinFilter};
+use trade_api::{is_elemental_resistance, ResistanceMode};
+
+use crate::model::{fmt_amount, MinFilter};
 use crate::QuickModeApp;
 
 use super::theme::AFFIX_BLUE;
+
+/// Resistance-mode options for the detailed-filter dropdown, with hover help.
+const RESISTANCE_MODES: &[(ResistanceMode, &str, &str)] = &[
+    (
+        ResistanceMode::Fungible,
+        "Fungible",
+        "Any element counts: searches Fire/Cold/Lightning as interchangeable, \
+         matched by value so you see the widest pool of comparable items.",
+    ),
+    (
+        ResistanceMode::Specific,
+        "Specific",
+        "Each element must match exactly — a Fire roll only finds Fire.",
+    ),
+    (
+        ResistanceMode::Total,
+        "Total",
+        "Search by the summed +#% total Elemental Resistance only.",
+    ),
+];
 
 /// Width of each min/max filter field.
 const FILTER_FIELD_W: f32 = 60.0;
@@ -117,6 +139,31 @@ impl QuickModeApp {
                 if !self.equipment.is_empty() {
                     ui.label(RichText::new("Modifiers").strong());
                 }
+
+                // Resistance-search mode — only meaningful when the item carries
+                // a Fire/Cold/Lightning roll, so hide it otherwise.
+                if self.filters.iter().any(|r| is_elemental_resistance(&r.id)) {
+                    ui.horizontal(|ui| {
+                        ui.label("Resistances");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let before = self.resistance_mode;
+                            egui::ComboBox::from_id_salt("resistance-mode")
+                                .selected_text(resistance_label(self.resistance_mode))
+                                .show_ui(ui, |ui| {
+                                    for (mode, label, help) in RESISTANCE_MODES {
+                                        ui.selectable_value(
+                                            &mut self.resistance_mode,
+                                            *mode,
+                                            *label,
+                                        )
+                                        .on_hover_text(*help);
+                                    }
+                                });
+                            changed |= self.resistance_mode != before;
+                        });
+                    });
+                }
+
                 if self.filters.is_empty() {
                     ui.label(
                         RichText::new("No mapped stats to filter on this item.")
@@ -186,23 +233,25 @@ impl QuickModeApp {
                     {
                         requery = true;
                     }
-                    // "Similar item": same base, every mapped mod enabled at
-                    // ~80% of its roll — find comparable items.
-                    if ui
-                        .button(format!("{} Similar item", ph::MAGNIFYING_GLASS))
-                        .on_hover_text("Same base, every mod present at ~80% of its roll")
-                        .clicked()
-                    {
-                        for row in &mut self.filters {
-                            row.enabled = true;
-                            row.min = row
-                                .rolled
-                                .map(|v| fmt_amount(scaled_min(v, 80)))
-                                .unwrap_or_default();
-                            row.max.clear();
+                    // Open the official trade site with this exact search — pinned
+                    // to the right edge of the window.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(format!("{} Open on trade site", ph::MAGNIFYING_GLASS))
+                            .on_hover_text("Opens your browser with this exact search")
+                            .clicked()
+                        {
+                            // Built only on click — encoding the full query is too
+                            // costly to rebuild every frame.
+                            let url = self.trade_url();
+                            match platform_linux::open_url(&url) {
+                                // Hide the popup so the browser comes forward — we're
+                                // an always-on-top overlay that would cover it.
+                                Ok(()) => self.close_requested = true,
+                                Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
+                            }
                         }
-                        requery = true;
-                    }
+                    });
                 });
             });
 
@@ -316,6 +365,14 @@ fn currency_label(id: &str) -> &str {
         .iter()
         .find(|(cid, _)| *cid == id)
         .map_or("any", |(_, label)| *label)
+}
+
+/// Display label for a resistance-search mode.
+fn resistance_label(mode: ResistanceMode) -> &'static str {
+    RESISTANCE_MODES
+        .iter()
+        .find(|(m, _, _)| *m == mode)
+        .map_or("Fungible", |(_, label, _)| *label)
 }
 
 /// Label for the rarity dropdown's current id (empty id = the item's own rarity).

@@ -134,13 +134,68 @@ impl QuickModeApp {
                 ui.horizontal(|ui| {
                     ui.label("POESESSID");
                     let mut sid = self.config.poesessid.clone().unwrap_or_default();
+                    // Masked by default (account access); the eye toggle reveals it.
+                    let show_id = egui::Id::new("show-poesessid");
+                    let mut show = ui.data_mut(|d| d.get_temp::<bool>(show_id).unwrap_or(false));
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut sid)
-                            .password(true)
+                            .password(!show)
                             .hint_text("trade-site session cookie")
                             .desired_width(220.0),
                     );
-                    if resp.changed() {
+                    let mut edited = resp.changed();
+                    let eye = if show { ph::EYE_SLASH } else { ph::EYE };
+                    if ui
+                        .button(eye)
+                        .on_hover_text(if show { "Hide" } else { "Show" })
+                        .clicked()
+                    {
+                        show = !show;
+                        ui.data_mut(|d| d.insert_temp(show_id, show));
+                    }
+                    // One-click Copy / Paste on the whole value — no select-then-
+                    // right-click needed (opening a menu defocuses the field and
+                    // clears the visible selection anyway).
+                    if ui
+                        .button(ph::COPY)
+                        .on_hover_text("Copy to clipboard")
+                        .clicked()
+                    {
+                        let _ = platform_linux::write_clipboard_text(&sid);
+                    }
+                    if ui
+                        .button(ph::CLIPBOARD)
+                        .on_hover_text("Paste from clipboard")
+                        .clicked()
+                    {
+                        if let Ok(Some(text)) = platform_linux::read_paste_text() {
+                            sid = text.trim().to_string();
+                            edited = true;
+                        }
+                    }
+                    // egui 0.29 has no built-in TextEdit context menu, so also
+                    // provide one. The actions operate on the whole value — it's a
+                    // single short cookie — and read/write the real OS clipboard.
+                    resp.context_menu(|ui| {
+                        if ui.button("Copy").clicked() {
+                            let _ = platform_linux::write_clipboard_text(&sid);
+                            ui.close_menu();
+                        }
+                        if ui.button("Cut").clicked() {
+                            let _ = platform_linux::write_clipboard_text(&sid);
+                            sid.clear();
+                            edited = true;
+                            ui.close_menu();
+                        }
+                        if ui.button("Paste").clicked() {
+                            if let Ok(Some(text)) = platform_linux::read_paste_text() {
+                                sid = text.trim().to_string();
+                                edited = true;
+                            }
+                            ui.close_menu();
+                        }
+                    });
+                    if edited {
                         let trimmed = sid.trim().to_string();
                         self.config.poesessid = (!trimmed.is_empty()).then(|| trimmed.clone());
                         // Push live so the next search authenticates immediately.

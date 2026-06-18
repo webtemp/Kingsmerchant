@@ -1,6 +1,6 @@
 [package]
 name = "overlay"
-version = "0.4.3"
+version = "0.4.4"
 description = "wlr-layer-shell overlay that drives the poe2ddd price-check UI."
 edition.workspace = true
 license.workspace = true

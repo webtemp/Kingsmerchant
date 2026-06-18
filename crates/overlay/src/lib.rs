@@ -250,6 +250,16 @@ impl App {
         }
         if self.quick.take_close_request() {
             self.popup.shown = false;
+            // Hiding the layer surface drops its keyboard grab, but the
+            // compositor won't hand focus back to POE2 on its own — it would
+            // leave focus on the now-invisible overlay, so the game stays
+            // unselected (X / Escape / "Open on trade site" all hit this).
+            // Re-activate the game (best-effort, via xdotool). Off-thread so the
+            // process spawn never stalls the frame. For the trade-site case the
+            // browser still raises itself over the game once it finishes opening.
+            std::thread::spawn(|| {
+                platform_linux::focus_poe2();
+            });
         }
         if self.quick.take_settings_request() {
             // Open settings and hide the popup so the two don't overlap.

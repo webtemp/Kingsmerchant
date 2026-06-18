@@ -11,10 +11,21 @@ use parser::{Item, Rarity};
 use trade_api::{DetailedFilters, MiscSelection};
 
 use crate::model::{
-    build_equipment_rows, fmt_amount, parse_status, scaled_min, EquipmentRow, ExchangePhase,
-    MinFilter, Msg, Phase, PriceFilterState, PriceMode, SessionCheck, StatFilterRow,
+    build_equipment_rows, fmt_amount, open_affix_slots, parse_status, scaled_min, EquipmentRow,
+    ExchangePhase, MinFilter, Msg, Phase, PriceFilterState, PriceMode, ScoutPhase, SessionCheck,
+    StatFilterRow,
 };
 use crate::{QuickModeApp, SAMPLE};
+
+/// Pseudo stat ids for open prefix / suffix slots, offered as optional
+/// "# Empty … Modifiers" filter rows (min 1) on craftable rares.
+const EMPTY_PREFIX_STAT: &str = "pseudo.pseudo_number_of_empty_prefix_mods";
+const EMPTY_SUFFIX_STAT: &str = "pseudo.pseudo_number_of_empty_suffix_mods";
+
+/// Pseudo stat ids for unrevealed (hidden) desecrated prefix / suffix counts,
+/// so a desecrated-but-unrevealed item searches by how many slots are hidden.
+const UNREVEALED_PREFIX_STAT: &str = "pseudo.pseudo_number_of_unrevealed_prefix_mods";
+const UNREVEALED_SUFFIX_STAT: &str = "pseudo.pseudo_number_of_unrevealed_suffix_mods";
 
 impl QuickModeApp {
     /// Start a *fresh* price check from `item_text` (a new Ctrl+C, manual button,
@@ -34,14 +45,18 @@ impl QuickModeApp {
         self.estimate = None;
         self.estimate_loading = false;
         self.exchange_phase = ExchangePhase::Idle;
+        self.scout_phase = ScoutPhase::Idle;
 
         // Stackables (currency, runes, fragments, …) aren't sold as individual
-        // listings — they trade via the bulk exchange. Route them there.
+        // listings. We still use the bulk-exchange catalogue to *detect* them
+        // (and keep its id for the trade-site link / fallback), but price them
+        // from poe2scout's economy index, which tracks the in-game exchange far
+        // better than the cheapest bulk listing.
         if let Some(want_id) = self.exchange_id_for(&item) {
             self.mode = PriceMode::Exchange;
             self.exchange_want_id = want_id;
             self.item = Some(item);
-            self.spawn_exchange_query(ctx);
+            self.spawn_scout_query(ctx);
             return;
         }
         self.mode = PriceMode::Item;
@@ -73,6 +88,9 @@ impl QuickModeApp {
         }
         .to_string();
         self.price_filter = PriceFilterState::default();
+        // Each fresh item starts in the smart fungible default; Total/Specific
+        // are deliberate per-item picks the user re-selects if wanted.
+        self.resistance_mode = trade_api::ResistanceMode::default();
         self.filter_dirty = false; // no stale debounce from the previous item
                                    // poeprices ML estimate is rares-only and
                                    // filter-independent, so fetch it once per check.
@@ -139,14 +157,60 @@ impl QuickModeApp {
     /// prices via the exchange rather than the per-item search. Tries the item
     /// name then the base-type line against the `data/static` catalogue.
     fn exchange_id_for(&self, item: &Item) -> Option<String> {
+        // Only fungible commodities trade on the bulk exchange. A rolled
+        // Magic/Rare/Unique item is priced per-item even when its base type
+        // collides with a catalogue entry — e.g. a rare "Waystone (Tier 15)"
+        // (a map) or a rare tablet, whose normal-pool affixes the exchange
+        // can't match, so it would otherwise be routed to the wrong exchange
+        // and return nothing.
+        if !exchange_eligible_rarity(&item.rarity) {
+            return None;
+        }
         [item.name.as_deref(), item.base_type.as_deref()]
             .into_iter()
             .flatten()
             .find_map(|name| self.client.currencies().lookup(name).map(|e| e.id.clone()))
     }
 
+    /// Price the loaded stackable from poe2scout's economy index on a background
+    /// task — the primary currency source. On no-data / failure the message
+    /// handler falls back to [`spawn_exchange_query`](Self::spawn_exchange_query).
+    pub(crate) fn spawn_scout_query(&mut self, ctx: &egui::Context) {
+        self.scout_phase = ScoutPhase::Loading;
+        self.exchange_phase = ExchangePhase::Idle;
+        self.last_query_at = Some(Instant::now());
+        // poe2scout keys on the official exchange id (the `want` we already
+        // resolved); the display name is just the search-fallback hint.
+        let exchange_id = self.exchange_want_id.clone();
+        let name = self
+            .item
+            .as_ref()
+            .and_then(|i| i.name.clone().or_else(|| i.base_type.clone()))
+            .unwrap_or_default();
+        if exchange_id.is_empty() && name.is_empty() {
+            self.scout_phase = ScoutPhase::Failed("item has no id to price".to_string());
+            return;
+        }
+        let client = Arc::clone(&self.client);
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        tracing::info!(id = %exchange_id, currency = %name, "poe2scout price check");
+        self.rt.spawn(async move {
+            let result = client
+                .scout_price(&exchange_id, &name)
+                .await
+                .map_err(|e| e.to_string());
+            if let Err(ref e) = result {
+                tracing::error!(error = %e, "poe2scout price check failed");
+            }
+            let _ = tx.send(Msg::Scout(Box::new(result)));
+            ctx.request_repaint();
+        });
+    }
+
     /// Price the loaded stackable via the bulk exchange on a background task,
-    /// paying in the currently-selected `pay_currency`.
+    /// paying in the currently-selected `pay_currency`. The fallback source when
+    /// poe2scout has no data for the currency.
     pub(crate) fn spawn_exchange_query(&mut self, ctx: &egui::Context) {
         self.exchange_phase = ExchangePhase::Loading;
         self.last_query_at = Some(Instant::now());
@@ -179,7 +243,9 @@ impl QuickModeApp {
                     self.spawn_query(ctx, item);
                 }
             }
-            PriceMode::Exchange => self.spawn_exchange_query(ctx),
+            // Re-price currency from poe2scout (the primary source); it falls
+            // back to the exchange itself if there's no data.
+            PriceMode::Exchange => self.spawn_scout_query(ctx),
         }
     }
 
@@ -231,6 +297,7 @@ impl QuickModeApp {
             item_level: self.ilvl_filter.value(),
             rarity: (!self.rarity_filter.is_empty()).then(|| self.rarity_filter.clone()),
             price: self.price_filter.to_filter(),
+            resistance_mode: self.resistance_mode,
         }
     }
 
@@ -290,7 +357,6 @@ impl QuickModeApp {
                     .map(|v| fmt_amount(scaled_min(v, pct)))
                     .unwrap_or_default(),
                 max: String::new(),
-                rolled,
                 is_implicit,
             });
         }
@@ -315,10 +381,89 @@ impl QuickModeApp {
                 enabled: true,
                 min: level.map(fmt_amount).unwrap_or_default(),
                 max: String::new(),
-                rolled: level,
                 is_implicit: false,
             });
         }
+
+        // Synthetic pseudo-count row (no item stat line maps to it).
+        let count_row = |id: &str, label: &str, min: String, enabled: bool| StatFilterRow {
+            id: id.to_string(),
+            label: label.to_string(),
+            enabled,
+            min,
+            max: String::new(),
+            is_implicit: false,
+        };
+
+        // Unrevealed desecrated mods: searchable only by how many prefix/suffix
+        // slots are still hidden, not by their (unknown) rolls. Enabled with the
+        // exact count so the search matches items in the same unrevealed state,
+        // not ones whose desecrated mods are already revealed.
+        let (unrev_prefix, unrev_suffix) = trade_api::unrevealed_affix_counts(item);
+        if unrev_prefix > 0 {
+            rows.push(count_row(
+                UNREVEALED_PREFIX_STAT,
+                "# Unrevealed Prefix Modifiers",
+                unrev_prefix.to_string(),
+                true,
+            ));
+        }
+        if unrev_suffix > 0 {
+            rows.push(count_row(
+                UNREVEALED_SUFFIX_STAT,
+                "# Unrevealed Suffix Modifiers",
+                unrev_suffix.to_string(),
+                true,
+            ));
+        }
+
+        // Open affix slots on a craftable rare: a separate prefix and/or suffix
+        // row (min 1, off by default), each shown only when that group has a
+        // free slot. Min 1 = at least one empty of that kind, regardless of how
+        // many are free.
+        let (prefix_open, suffix_open) = open_affix_slots(item);
+        if prefix_open {
+            rows.push(count_row(
+                EMPTY_PREFIX_STAT,
+                "# Empty Prefix Modifiers",
+                "1".to_string(),
+                false,
+            ));
+        }
+        if suffix_open {
+            rows.push(count_row(
+                EMPTY_SUFFIX_STAT,
+                "# Empty Suffix Modifiers",
+                "1".to_string(),
+                false,
+            ));
+        }
         rows
+    }
+}
+
+/// Whether an item's rarity makes it a fungible bulk-exchange commodity.
+/// Currency, runes, fragments and plain (Normal) waystones/tablets qualify;
+/// Magic/Rare/Unique items carry rolled affixes and are priced per-item.
+fn exchange_eligible_rarity(rarity: &Rarity) -> bool {
+    !matches!(rarity, Rarity::Magic | Rarity::Rare | Rarity::Unique)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rolled_items_are_not_bulk_exchangeable() {
+        // Regression: a rare waystone (a map) or rare tablet collides with the
+        // data/static catalogue by base type but must be searched per-item, not
+        // routed to the bulk exchange where it returns nothing.
+        assert!(!exchange_eligible_rarity(&Rarity::Magic));
+        assert!(!exchange_eligible_rarity(&Rarity::Rare));
+        assert!(!exchange_eligible_rarity(&Rarity::Unique));
+        // Fungible commodities still route to the exchange.
+        assert!(exchange_eligible_rarity(&Rarity::Currency));
+        assert!(exchange_eligible_rarity(&Rarity::Normal));
+        assert!(exchange_eligible_rarity(&Rarity::Gem));
     }
 }

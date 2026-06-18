@@ -333,3 +333,82 @@ async fn validate_session_without_a_session_does_not_call_the_network() {
     assert_eq!(client.validate_session().await, SessionStatus::Invalid);
     assert!(requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn scout_price_resolves_divine_rate_then_prices_currency() {
+    // poe2scout flow: GET /poe2/Leagues (for the Divine rate), then
+    // GET .../Currencies/{slug}. The mock client's league is "Mirage", which
+    // isn't in the fixture, so the rate comes from the IsCurrent league (327).
+    let leagues = include_str!("fixtures/api/scout_leagues.json");
+    let currency = include_str!("fixtures/api/scout_currency.json");
+    let (transport, requests) = MockTransport::new(vec![ok(leagues), ok(currency)]);
+    let client = client_with(transport);
+
+    let price = client
+        .scout_price("preserved-cranium", "Preserved Cranium")
+        .await
+        .unwrap()
+        .expect("a known currency is priced");
+
+    assert_eq!(price.api_id, "preserved-cranium");
+    assert_eq!(price.exalted, 654.0);
+    // 654 ex / 327 (ex per div) = 2 div.
+    assert_eq!(price.divine, Some(2.0));
+    assert_eq!(price.divine_price, Some(327.0));
+    // Recent low/high span the price logs (nulls skipped).
+    assert_eq!(price.low, Some(640.0));
+    assert_eq!(price.high, Some(668.0));
+
+    let reqs = requests.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert!(reqs[0].url.ends_with("/poe2/Leagues"));
+    assert!(reqs[1].url.contains("/Currencies/preserved-cranium"));
+    assert!(reqs[1].url.contains("ReferenceCurrency=exalted"));
+}
+
+#[tokio::test]
+async fn scout_price_caches_within_ttl() {
+    // Two lookups of the same currency must hit the network once: the leagues +
+    // currency pair on the first call, nothing on the second (served from cache).
+    let leagues = include_str!("fixtures/api/scout_leagues.json");
+    let currency = include_str!("fixtures/api/scout_currency.json");
+    let (transport, requests) = MockTransport::new(vec![ok(leagues), ok(currency)]);
+    let client = client_with(transport);
+
+    let first = client
+        .scout_price("preserved-cranium", "Preserved Cranium")
+        .await
+        .unwrap();
+    let second = client
+        .scout_price("preserved-cranium", "Preserved Cranium")
+        .await
+        .unwrap();
+    assert_eq!(first, second);
+    // No further requests beyond the initial leagues + currency fetch.
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn scout_price_returns_none_when_not_indexed() {
+    // poe2scout doesn't index everything (runes, verisium, reliquary keys, …):
+    // the id lookup 400/404s → Ok(None), so the UI falls back to the official
+    // exchange. (A 400 is what an unknown ApiId actually returns.)
+    let unknown = HttpResponse {
+        status: 400,
+        headers: rate_headers(),
+        body: r#"{"detail":"unknown currency"}"#.to_string(),
+    };
+    let (transport, requests) = MockTransport::new(vec![
+        ok(include_str!("fixtures/api/scout_leagues.json")),
+        unknown,
+    ]);
+    let client = client_with(transport);
+
+    let result = client
+        .scout_price("totally-made-up-orb", "Totally Made Up Orb")
+        .await
+        .unwrap();
+    assert!(result.is_none());
+    // Exactly the leagues fetch + one id lookup — no wasteful category sweep.
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}

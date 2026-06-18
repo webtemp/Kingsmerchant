@@ -6,9 +6,32 @@
 use parser::parse_item;
 use trade_api::{
     build_detailed_query, build_search_query, category_for, DetailedFilters, EquipmentSelection,
-    ItemDefinitions, ListingStatus, MiscSelection, PriceFilter, QueryOptions, StatDefinitions,
-    StatSelection,
+    ItemDefinitions, ListingStatus, MiscSelection, PriceFilter, QueryOptions, ResistanceMode,
+    StatDefinitions, StatSelection, StatValue,
 };
+
+/// The three plain single-element resistance stat ids (explicit variant).
+const FIRE_RES: &str = "explicit.stat_3372524247";
+const COLD_RES: &str = "explicit.stat_4220027924";
+const LIGHTNING_RES: &str = "explicit.stat_1671376347";
+/// The summed "+#% total Elemental Resistance" pseudo id.
+const PSEUDO_TOTAL_ELE: &str = "pseudo.pseudo_total_elemental_resistance";
+
+/// An enabled, min-only stat selection (the common shape in these tests).
+fn sel(id: &str, min: f64) -> StatSelection {
+    StatSelection {
+        id: id.to_string(),
+        enabled: true,
+        min: Some(min),
+        max: None,
+    }
+}
+
+/// The integer `min` of a stat/group value (the count threshold, or a filter's
+/// minimum), unwrapping the nested options these assertions otherwise repeat.
+fn min_i64(value: Option<&StatValue>) -> Option<i64> {
+    value?.min.as_ref()?.as_i64()
+}
 
 fn stats() -> StatDefinitions {
     StatDefinitions::from_json(include_str!("fixtures/api/data_stats.json")).unwrap()
@@ -209,6 +232,8 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
         &items(),
         &DetailedFilters {
             stats: selections,
+            // This test is about the disabled flag, not resistance grouping.
+            resistance_mode: ResistanceMode::Specific,
             ..Default::default()
         },
     );
@@ -459,10 +484,112 @@ fn detailed_query_snapshot() {
                 max: None,
             }],
             price,
+            // Pin the general-shape snapshot to plain per-stat filters; the
+            // fungible/total grouping has its own focused tests below.
+            resistance_mode: ResistanceMode::Specific,
             ..Default::default()
         },
     );
     insta::assert_json_snapshot!(req);
+}
+
+fn fungible_query(stats: Vec<StatSelection>) -> trade_api::SearchRequest {
+    let item = parse_item(RARE_RING).unwrap();
+    build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            stats,
+            ..Default::default() // Fungible is the default mode.
+        },
+    )
+}
+
+#[test]
+fn fungible_single_resistance_becomes_one_count_group() {
+    // One Fire roll → a single count group requiring ≥1 of the three elements at
+    // that value (any element satisfies it — resistances are interchangeable).
+    let req = fungible_query(vec![sel(FIRE_RES, 30.0)]);
+
+    assert_eq!(req.query.stats.len(), 1);
+    let group = &req.query.stats[0];
+    assert_eq!(group.type_, "count");
+    assert_eq!(min_i64(group.value.as_ref()), Some(1));
+    // All three element pseudo-totals, each thresholded at the rolled value.
+    let ids: Vec<&str> = group.filters.iter().map(|f| f.id.as_str()).collect();
+    assert!(ids.contains(&"pseudo.pseudo_total_fire_resistance"));
+    assert!(ids.contains(&"pseudo.pseudo_total_cold_resistance"));
+    assert!(ids.contains(&"pseudo.pseudo_total_lightning_resistance"));
+    for f in &group.filters {
+        assert_eq!(min_i64(f.value.as_ref()), Some(30));
+        assert!(!f.disabled);
+    }
+}
+
+#[test]
+fn fungible_two_resistances_use_cumulative_counts() {
+    // 42 Fire / 22 Cold → two count groups: {≥42, count 1} and {≥22, count 2}.
+    // The cumulative count stops a single big roll from posing as two.
+    let req = fungible_query(vec![sel(FIRE_RES, 42.0), sel(COLD_RES, 22.0)]);
+
+    assert_eq!(req.query.stats.len(), 2);
+    let group_at = |threshold| {
+        req.query
+            .stats
+            .iter()
+            .find(|g| min_i64(g.filters[0].value.as_ref()) == Some(threshold))
+            .unwrap()
+    };
+    assert_eq!(group_at(42).type_, "count");
+    assert_eq!(min_i64(group_at(42).value.as_ref()), Some(1));
+    assert_eq!(min_i64(group_at(22).value.as_ref()), Some(2));
+}
+
+#[test]
+fn fungible_same_value_resistances_collapse_to_one_group() {
+    // 30 Fire / 30 Lightning (same value) → a single {≥30, count 2} group.
+    let req = fungible_query(vec![sel(FIRE_RES, 30.0), sel(LIGHTNING_RES, 30.0)]);
+
+    assert_eq!(req.query.stats.len(), 1);
+    assert_eq!(min_i64(req.query.stats[0].value.as_ref()), Some(2));
+}
+
+#[test]
+fn total_mode_sums_resistances_into_one_pseudo_filter() {
+    // 42 Fire / 22 Cold under Total → one pseudo total-elemental filter at 64.
+    let item = parse_item(RARE_RING).unwrap();
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            stats: vec![sel(FIRE_RES, 42.0), sel(COLD_RES, 22.0)],
+            resistance_mode: ResistanceMode::Total,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(req.query.stats.len(), 1);
+    let group = &req.query.stats[0];
+    assert_eq!(group.type_, "and");
+    assert_eq!(group.filters.len(), 1);
+    assert_eq!(group.filters[0].id, PSEUDO_TOTAL_ELE);
+    assert_eq!(min_i64(group.filters[0].value.as_ref()), Some(64));
+}
+
+#[test]
+fn fungible_keeps_non_resistance_stats_in_an_and_group() {
+    // A resistance + a non-resistance stat → a count group AND a plain `and`
+    // group holding the non-resistance filter.
+    let req = fungible_query(vec![
+        sel(FIRE_RES, 30.0),
+        sel("explicit.stat_2144192055", 200.0),
+    ]);
+
+    assert_eq!(req.query.stats.len(), 2);
+    let and = req.query.stats.iter().find(|g| g.type_ == "and").unwrap();
+    assert_eq!(and.filters.len(), 1);
+    assert_eq!(and.filters[0].id, "explicit.stat_2144192055");
+    assert!(req.query.stats.iter().any(|g| g.type_ == "count"));
 }
 
 #[test]

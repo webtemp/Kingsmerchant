@@ -3,11 +3,28 @@
 //! and their selection mappings, and the item-hashing / number-formatting /
 //! status-parsing helpers. No rendering lives here.
 
-use parser::Item;
+use parser::{Item, ModKind, Rarity};
 use trade_api::{
     EquipmentSelection, ExchangeCheck, ListingStatus, PriceCheck, PriceEstimate, PriceFilter,
-    SessionStatus, StatSelection,
+    ScoutPrice, SessionStatus, StatSelection,
 };
+
+/// Standard rare-item affix cap: up to three prefixes and three suffixes.
+const MAX_AFFIXES_PER_GROUP: usize = 3;
+
+/// Open (empty) prefix and suffix slots on a rare item, as `(prefix, suffix)`.
+/// Only rares can be crafted into, so non-rares always report `(false, false)`.
+/// Counts each `{ Prefix }` / `{ Suffix }` descriptor as one filled slot.
+pub(crate) fn open_affix_slots(item: &Item) -> (bool, bool) {
+    if item.rarity != Rarity::Rare {
+        return (false, false);
+    }
+    let count = |kind: &ModKind| item.modifiers.iter().filter(|m| &m.kind == kind).count();
+    (
+        count(&ModKind::Prefix) < MAX_AFFIXES_PER_GROUP,
+        count(&ModKind::Suffix) < MAX_AFFIXES_PER_GROUP,
+    )
+}
 
 /// Result of a background price check, sent back to the UI thread.
 pub(crate) enum Msg {
@@ -15,8 +32,12 @@ pub(crate) enum Msg {
     /// poeprices.info ML estimate (rares). `None` = poeprices declined to price
     /// it; `Err` = it failed.
     Estimate(Box<Result<Option<PriceEstimate>, String>>),
-    /// Bulk-exchange result for a stackable (currency/rune/fragment/…).
+    /// Bulk-exchange result for a stackable (currency/rune/fragment/…), used as
+    /// the fallback when poe2scout has no economy data.
     Exchange(Box<Result<ExchangeCheck, String>>),
+    /// poe2scout economy price for a stackable (the primary currency source).
+    /// `Ok(None)` = poe2scout doesn't know it → fall back to the exchange.
+    Scout(Box<Result<Option<ScoutPrice>, String>>),
     /// Outcome of an Instant Buyout hideout teleport (`Ok` = GGG accepted it).
     Teleport(Result<(), String>),
     /// Outcome of a live POESESSID validation (Settings panel).
@@ -51,13 +72,30 @@ pub(crate) enum PriceMode {
 }
 
 /// Background state of a bulk-exchange price check (parallel to [`Phase`], which
-/// covers the per-item search).
+/// covers the per-item search). Used only as the fallback path now that
+/// poe2scout (see [`ScoutPhase`]) is the primary currency source.
 #[derive(Default)]
 pub(crate) enum ExchangePhase {
     #[default]
     Idle,
     Loading,
     Done(ExchangeCheck),
+    Failed(String),
+}
+
+/// Background state of the poe2scout economy lookup — the primary price source
+/// for stackables. On [`Failed`](ScoutPhase::Failed) or
+/// [`NotFound`](ScoutPhase::NotFound) the UI falls back to the official
+/// bulk exchange (see [`ExchangePhase`]).
+#[derive(Default)]
+pub(crate) enum ScoutPhase {
+    #[default]
+    Idle,
+    Loading,
+    Done(ScoutPrice),
+    /// poe2scout was reachable but had no entry for this currency.
+    NotFound,
+    /// poe2scout failed (down / decode / HTTP) — cause carried for logging.
     Failed(String),
 }
 
@@ -86,9 +124,6 @@ pub(crate) struct StatFilterRow {
     pub(crate) enabled: bool,
     pub(crate) min: String,
     pub(crate) max: String,
-    /// The item's own rolled value, used to seed the min and to relax it for
-    /// the "Similar item" preset.
-    pub(crate) rolled: Option<f64>,
     /// This filter is an implicit mod — flagged with a pill and off by default.
     pub(crate) is_implicit: bool,
 }
@@ -337,5 +372,47 @@ pub(crate) fn scaled_min(rolled: f64, percent: u32) -> f64 {
         scaled.floor()
     } else {
         scaled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a parsed item with `prefixes` prefix and `suffixes` suffix mods.
+    fn item_with(rarity: &str, prefixes: usize, suffixes: usize) -> Item {
+        use std::fmt::Write as _;
+        let mut text = format!(
+            "Item Class: Rings\nRarity: {rarity}\nTest Name\nSapphire Ring\n--------\n\
+             Item Level: 80\n--------\n"
+        );
+        for i in 0..prefixes {
+            let _ = write!(
+                text,
+                "{{ Prefix Modifier \"P{i}\" }}\n+50 to maximum Life\n"
+            );
+        }
+        for i in 0..suffixes {
+            let _ = write!(
+                text,
+                "{{ Suffix Modifier \"S{i}\" }}\n+30% to Cold Resistance\n"
+            );
+        }
+        parser::parse_item(&text).expect("fixture parses")
+    }
+
+    #[test]
+    fn open_affix_slots_reports_prefix_and_suffix_separately() {
+        // Rare with room in both groups.
+        assert_eq!(open_affix_slots(&item_with("Rare", 1, 1)), (true, true));
+        assert_eq!(open_affix_slots(&item_with("Rare", 0, 0)), (true, true));
+        // One group full, the other free — reported independently.
+        assert_eq!(open_affix_slots(&item_with("Rare", 3, 1)), (false, true));
+        assert_eq!(open_affix_slots(&item_with("Rare", 1, 3)), (true, false));
+        // All six slots filled → nothing to craft.
+        assert_eq!(open_affix_slots(&item_with("Rare", 3, 3)), (false, false));
+        // Non-rares never qualify, even with free slots.
+        assert_eq!(open_affix_slots(&item_with("Magic", 1, 0)), (false, false));
+        assert_eq!(open_affix_slots(&item_with("Normal", 0, 0)), (false, false));
     }
 }

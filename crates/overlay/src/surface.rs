@@ -5,7 +5,8 @@
 
 use std::num::NonZeroU32;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use anyhow::{anyhow, Context as _, Result};
 use glutin::config::{ConfigTemplateBuilder, GlConfig};
@@ -50,6 +51,14 @@ const CORNER_RADIUS: f32 = 14.0;
 const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2c, 0x2e, 0x36);
 const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x50, 0x52, 0x5e);
 
+/// Seconds since the process started — fed to egui as `RawInput::time` so its
+/// click-interval timing (double/triple-click) is measured against a real
+/// monotonic clock rather than an assumed per-frame delta.
+fn elapsed_seconds() -> f64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
 /// How many of a surface's first visible frames pre-warm the font atlas.
 const WARMUP_FRAMES: u8 = 3;
 /// Characters laid out invisibly during warm-up to bake them into the font atlas
@@ -76,6 +85,19 @@ pub(crate) struct Gl {
     pub(crate) context: PossiblyCurrentContext,
     pub(crate) gl_surface: Surface<WindowSurface>,
     painter: egui_glow::Painter,
+}
+
+impl Drop for Gl {
+    /// Free the painter's GL objects on teardown. `egui_glow::Painter` issues GL
+    /// calls in `destroy`, so the context must be current first; without this it
+    /// leaks every texture/buffer/program it allocated (and logs a warning). The
+    /// make-current is best-effort — if it fails the process is exiting anyway,
+    /// and the EGL display/context are torn down by their own `Drop`s after this.
+    fn drop(&mut self) {
+        if self.context.make_current(&self.gl_surface).is_ok() {
+            self.painter.destroy();
+        }
+    }
 }
 
 /// Shared, per-frame resources a surface needs to draw, borrowed from [`App`]
@@ -128,6 +150,10 @@ pub(crate) struct WinSurface {
     /// uploaded after the initial atlas rendered as tofu boxes; warming the
     /// accented-Latin range up front avoids that.
     warm_frames: u8,
+    /// Last frame's measured target height. We only commit a `set_size` once the
+    /// height has *settled* (two frames agree), so animation/reflow wobble can't
+    /// drive a configure↔set_size storm.
+    last_want_h: u32,
 }
 
 impl WinSurface {
@@ -173,6 +199,7 @@ impl WinSurface {
             applied_input: None,
             applied_kbd: None,
             warm_frames: WARMUP_FRAMES,
+            last_want_h: INITIAL_HEIGHT,
         }
     }
 
@@ -199,11 +226,17 @@ impl WinSurface {
             let raw_display = RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
                 NonNull::new(display_ptr).context("null wl_display ptr")?,
             ));
+            // SAFETY: `raw_display` wraps the live `wl_display` pointer taken from
+            // the Wayland `Connection` owned by `App`, which outlives every GL
+            // object derived from it; EGL is the correct API for a Wayland display.
             let display = unsafe { Display::new(raw_display, DisplayApiPreference::Egl) }
                 .context("create EGL display")?;
             *shared.display = Some(display);
         }
-        let display = shared.display.as_ref().unwrap();
+        let display = shared
+            .display
+            .as_ref()
+            .expect("EGL display populated above");
 
         let template = ConfigTemplateBuilder::new()
             .compatible_with_native_window(raw_window)
@@ -211,6 +244,9 @@ impl WinSurface {
             .build();
         // Prefer a plain 8-bit RGBA config (over deep/float ones) for a normal
         // translucent overlay.
+        // SAFETY: `display` is the valid EGL display created/reused just above,
+        // and `template` only carries `raw_window`, the live `wl_surface` handle
+        // for this surface.
         let config = unsafe { display.find_configs(template) }
             .context("find_configs")?
             .filter(|c| c.alpha_size() == 8)
@@ -218,14 +254,18 @@ impl WinSurface {
             .context("no RGBA8 EGL config")?;
 
         let context_attrs = ContextAttributesBuilder::new().build(Some(raw_window));
+        // SAFETY: `config` was produced by this `display`'s `find_configs`, and
+        // `raw_window` is the live `wl_surface` for this surface.
         let not_current = unsafe { display.create_context(&config, &context_attrs) }
             .context("create GL context")?;
 
         let surf_attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
             raw_window,
-            NonZeroU32::new(self.width).unwrap(),
-            NonZeroU32::new(self.height).unwrap(),
+            NonZeroU32::new(self.width).expect("surface width is non-zero"),
+            NonZeroU32::new(self.height).expect("surface height is non-zero"),
         );
+        // SAFETY: `config` belongs to `display`, and `surf_attrs` carries the live
+        // `raw_window` handle plus the non-zero width/height above.
         let gl_surface = unsafe { display.create_window_surface(&config, &surf_attrs) }
             .context("create window surface")?;
 
@@ -233,6 +273,9 @@ impl WinSurface {
             .make_current(&gl_surface)
             .context("make_current")?;
 
+        // SAFETY: the context is current (`make_current` above), so
+        // `get_proc_address` resolves valid GL function pointers for it; glow only
+        // invokes the loader during this construction call.
         let glow = unsafe {
             glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s).cast())
         };
@@ -280,6 +323,10 @@ impl WinSurface {
             events: std::mem::take(&mut self.events),
             focused: self.kbd_focus,
             modifiers: shared.kbd_modifiers,
+            // Real wall-clock time: egui measures click intervals against this,
+            // so without it double/triple-click (word/select-all in text fields)
+            // never registers.
+            time: Some(elapsed_seconds()),
             ..Default::default()
         };
 
@@ -334,15 +381,33 @@ impl WinSurface {
             measured = resp.response.rect.height();
         });
 
+        // Bridge egui's copy/cut (Copy/Cut on text fields write `copied_text`)
+        // out to the system clipboard — egui never touches the OS clipboard
+        // itself in this custom backend.
+        if !full.platform_output.copied_text.is_empty() {
+            if let Err(e) = platform_linux::write_clipboard_text(&full.platform_output.copied_text)
+            {
+                tracing::warn!(error = %e, "clipboard write (copy/cut) failed");
+            }
+        }
+
         // Auto-height: resize the surface to the measured content — not while
         // dragging, with a deadband on shrink. Every `set_size` triggers a
         // configure → draw → maybe set_size again, so a 1px jitter must not fire
         // it (pegs a core and lags the drag).
         if shown && measured > 0.0 && !self.dragging {
             let want_h = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
-            let grow = want_h > self.desired_height; // grow at once (no clipping)
-            let shrink = self.desired_height.saturating_sub(want_h) > HEIGHT_DEADBAND;
-            if want_width != self.desired_width || grow || shrink {
+            // Only commit a resize once the measured height has *settled* — i.e.
+            // this frame's target equals last frame's. egui animations (the Misc
+            // collapser, etc.) and width-fill reflow make the height wobble for a
+            // few frames; calling set_size on each wobble triggers a configure →
+            // redraw → set_size feedback loop that pegs a core and makes every
+            // interaction lag. Waiting for a stable value costs ~16ms and absorbs
+            // the oscillation; the deadband then ignores sub-pixel jitter.
+            let settled = want_h == self.last_want_h;
+            self.last_want_h = want_h;
+            let height_changed = want_h.abs_diff(self.desired_height) > HEIGHT_DEADBAND;
+            if want_width != self.desired_width || (settled && height_changed) {
                 self.desired_height = want_h;
                 self.desired_width = want_width;
                 self.layer.set_size(want_width, want_h);
@@ -374,7 +439,7 @@ impl WinSurface {
         let primitives = ctx.tessellate(full.shapes, ppp);
         let size = [self.width, self.height];
 
-        let gl = self.gl.as_mut().unwrap();
+        let gl = self.gl.as_mut().expect("gl initialised at the top of draw");
         gl.context
             .make_current(&gl.gl_surface)
             .context("make_current in draw")?;

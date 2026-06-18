@@ -1,6 +1,7 @@
 //! The trade client: ties query building, the HTTP seam, rate-limit gating and
 //! response parsing into search + fetch + price-check operations.
 
+use std::collections::HashMap;
 use std::sync::{Mutex as StdMutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -15,9 +16,15 @@ use crate::model::{FetchResponse, Price, ResultEntry, SearchRequest, SearchRespo
 use crate::price;
 use crate::query::{build_detailed_query, build_search_query, DetailedFilters, QueryOptions};
 use crate::rate_limit::RateLimiter;
+use crate::scout::{self, ScoutPrice};
 
 /// The trade API only ever hands back ≤ 10 listings per fetch.
 pub const FETCH_BATCH: usize = 10;
+
+/// How long a poe2scout lookup stays fresh. poe2scout is an unofficial,
+/// community-funded API and its economy numbers move slowly (the in-game
+/// exchange itself updates on the order of minutes), so we cache hard.
+const SCOUT_TTL: Duration = Duration::from_mins(10);
 
 /// Where and how to talk to the trade API.
 #[derive(Debug, Clone)]
@@ -28,6 +35,9 @@ pub struct ClientConfig {
     pub league: String,
     /// Realm (`pc` / `sony` / `xbox`); anonymous queries are realm-aware.
     pub realm: Option<String>,
+    /// poe2scout API host (scheme + host, no trailing slash) — the currency
+    /// economy source. Defaults to [`scout::DEFAULT_BASE_URL`].
+    pub scout_base_url: String,
 }
 
 impl ClientConfig {
@@ -36,6 +46,7 @@ impl ClientConfig {
             base_url: "https://www.pathofexile.com".to_string(),
             league: league.into(),
             realm: None,
+            scout_base_url: crate::scout::DEFAULT_BASE_URL.to_string(),
         }
     }
 }
@@ -102,6 +113,19 @@ pub enum SessionStatus {
     Unknown(String),
 }
 
+/// Cached poe2scout lookups, refreshed lazily on a [`SCOUT_TTL`] timer. Guarded
+/// by a plain `std` mutex: only ever locked to read/clone or to store, never
+/// across an await.
+#[derive(Default)]
+struct ScoutCache {
+    /// The Divine rate (Exalted per Divine) and when it was fetched, tagged with
+    /// the league it belongs to (so a league switch re-resolves it).
+    divine_price: Option<(f64, Instant)>,
+    divine_league: String,
+    /// Per-slug currency lookups, each with its fetch time.
+    currencies: HashMap<String, (ScoutPrice, Instant)>,
+}
+
 pub struct TradeClient<T: HttpTransport> {
     transport: T,
     config: ClientConfig,
@@ -116,6 +140,8 @@ pub struct TradeClient<T: HttpTransport> {
     items: ItemDefinitions,
     /// Bulk-exchange currency catalogue (`data/static`), for pricing stackables.
     currencies: CurrencyDefinitions,
+    /// Cached poe2scout currency economy lookups (the value source for stackables).
+    scout_cache: StdMutex<ScoutCache>,
     limiter: Mutex<RateLimiter>,
     /// When the next request may fire, if rate-limit-delayed; polled by
     /// [`retry_in`](Self::retry_in) for the "retrying in Ns" note. Plain `std`
@@ -139,6 +165,7 @@ impl<T: HttpTransport> TradeClient<T> {
             stats,
             items,
             currencies,
+            scout_cache: StdMutex::new(ScoutCache::default()),
             limiter: Mutex::new(RateLimiter::new()),
             retry_at: StdMutex::new(None),
         }
@@ -344,6 +371,112 @@ impl<T: HttpTransport> TradeClient<T> {
             .await?;
         let resp = ok_or_api_error(resp)?;
         crate::exchange::parse_exchange(&resp.body, want_id, pay)
+    }
+
+    /// Price a stackable currency from **poe2scout** — the value source for
+    /// currency, far closer to the in-game Currency Exchange than the official
+    /// bulk listings (which read off the cheapest, often-bait, offer).
+    ///
+    /// poe2scout's `ApiId` is the official `data/static` exchange id — confirmed
+    /// to match for every currency poe2scout indexes — so we key on
+    /// `exchange_id`, with the slugified `name` as a cheap secondary in case a
+    /// future item ever diverges. Prices come back in Exalted; we derive Divine
+    /// ourselves from the league's Divine rate, so one fetch covers both display
+    /// currencies. Both the rate and the per-currency lookup are cached (keyed
+    /// by `exchange_id`) for `SCOUT_TTL`.
+    ///
+    /// `Ok(None)` when poe2scout doesn't index the currency (runes, verisium,
+    /// reliquary keys, …), so the caller falls back to the official exchange;
+    /// `Err` only on transport/HTTP/decode failures. The scout requests go
+    /// straight through the transport (no GGG rate-limiter — a different host
+    /// with its own budget).
+    pub async fn scout_price(
+        &self,
+        exchange_id: &str,
+        name: &str,
+    ) -> Result<Option<ScoutPrice>, Error> {
+        if let Some(price) = self.cached_scout(exchange_id) {
+            return Ok(Some(price));
+        }
+
+        let league = self.league();
+        // The Divine rate for the current league (cached; a failure here is
+        // non-fatal — we just can't show the Divine figure).
+        let divine_price = self.scout_divine_price(&league).await;
+        let base = &self.config.scout_base_url;
+
+        // Candidate ApiIds, most-likely first: the official exchange id, then the
+        // slugified display name (only tried if it actually differs).
+        let slug = scout::slugify(name);
+        let mut candidates = vec![exchange_id.to_string()];
+        if !slug.is_empty() && slug != exchange_id {
+            candidates.push(slug);
+        }
+
+        let mut raw = None;
+        for api_id in &candidates {
+            if let Some(c) =
+                scout::fetch_currency(&self.transport, base, &league, api_id, "exalted").await?
+            {
+                raw = Some(c);
+                break;
+            }
+        }
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+
+        let price = scout::price_from_currency(&raw, divine_price);
+        // Cache under the caller's stable key so the next lookup short-circuits
+        // regardless of which candidate resolved it.
+        self.scout_cache
+            .lock()
+            .expect("scout cache lock")
+            .currencies
+            .insert(exchange_id.to_string(), (price.clone(), Instant::now()));
+        Ok(Some(price))
+    }
+
+    /// A fresh cached scout price for `api_id`, if one is within [`SCOUT_TTL`].
+    fn cached_scout(&self, api_id: &str) -> Option<ScoutPrice> {
+        let cache = self.scout_cache.lock().expect("scout cache lock");
+        cache
+            .currencies
+            .get(api_id)
+            .filter(|(_, at)| at.elapsed() < SCOUT_TTL)
+            .map(|(price, _)| price.clone())
+    }
+
+    /// The cached Divine rate (Exalted per Divine) for `league`, refreshing it
+    /// from poe2scout when missing, stale, or fetched for a different league.
+    /// `None` when poe2scout is unreachable or reports no rate — the caller then
+    /// shows Exalted only.
+    async fn scout_divine_price(&self, league: &str) -> Option<f64> {
+        {
+            let cache = self.scout_cache.lock().expect("scout cache lock");
+            if cache.divine_league == league {
+                if let Some((rate, at)) = cache.divine_price {
+                    if at.elapsed() < SCOUT_TTL {
+                        return Some(rate);
+                    }
+                }
+            }
+        }
+        let leagues = match scout::fetch_leagues(&self.transport, &self.config.scout_base_url).await
+        {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::debug!(error = %e, "poe2scout leagues fetch failed");
+                return None;
+            }
+        };
+        let rate = scout::resolve_divine_price(&leagues, league);
+        if let Some(rate) = rate {
+            let mut cache = self.scout_cache.lock().expect("scout cache lock");
+            cache.divine_price = Some((rate, Instant::now()));
+            cache.divine_league = league.to_string();
+        }
+        rate
     }
 
     /// Teleport into an Instant Buyout seller's hideout, as the trade site's

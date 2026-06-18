@@ -1,6 +1,6 @@
 [package]
 name = "ui"
-version = "0.13.0"
+version = "0.14.0"
 description = "egui price-check UI for poe2ddd, windowing-agnostic."
 edition.workspace = true
 license.workspace = true
