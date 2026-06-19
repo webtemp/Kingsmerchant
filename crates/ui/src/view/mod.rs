@@ -44,7 +44,7 @@ impl QuickModeApp {
         // Header: title (left) + league selector & close button (right). Same
         // text size so they share a baseline. Dismissed by X / Esc / click-out.
         ui.horizontal(|ui| {
-            ui.label(RichText::new("kingsmerchant").strong());
+            ui.label(RichText::new("Kingsmerchant").strong());
             // Build version — confirms a fresh build runs (the overlay is a
             // persistent process; rebuilding doesn't restart it).
             ui.label(

@@ -336,21 +336,17 @@ fn stat_filter_label(ui: &mut egui::Ui, text: &str) {
 /// columns line up and the row fills the width). Returns whether either changed.
 fn min_max_fields(ui: &mut egui::Ui, min: &mut String, max: &mut String) -> bool {
     let mut changed = false;
+    // Fixed size (not just `desired_width`, which egui shrinks under pressure):
+    // on rows with long, truncated labels the leftmost field used to get
+    // squeezed narrower than the right one. `add_sized` pins both to one width.
+    let size = egui::vec2(FILTER_FIELD_W, ui.spacing().interact_size.y);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // In a right-to-left layout the first item is rightmost, so max first.
         changed |= ui
-            .add(
-                egui::TextEdit::singleline(max)
-                    .hint_text("max")
-                    .desired_width(FILTER_FIELD_W),
-            )
+            .add_sized(size, egui::TextEdit::singleline(max).hint_text("max"))
             .changed();
         changed |= ui
-            .add(
-                egui::TextEdit::singleline(min)
-                    .hint_text("min")
-                    .desired_width(FILTER_FIELD_W),
-            )
+            .add_sized(size, egui::TextEdit::singleline(min).hint_text("min"))
             .changed();
     });
     changed
