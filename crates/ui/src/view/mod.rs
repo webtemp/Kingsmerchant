@@ -17,7 +17,7 @@ mod filters;
 mod item_card;
 mod listings;
 mod settings;
-mod theme;
+pub(crate) mod theme;
 
 pub(crate) use actions::run_chat_macro;
 
@@ -37,6 +37,9 @@ impl QuickModeApp {
     /// [`pump`](Self::pump) first.
     pub fn content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        // Install the user's palette for this frame so the accent helpers
+        // (`theme::accent_gold()`, …) read it across the whole view tree.
+        theme::set_active(self.theme);
 
         // Header: title (left) + league selector & close button (right). Same
         // text size so they share a baseline. Dismissed by X / Esc / click-out.
@@ -245,6 +248,17 @@ impl QuickModeApp {
             // any detailed-mode filters in place.
             self.rerun_query(ctx);
         }
+    }
+
+    /// Deep link to Craft of Exile's crafting simulator, pre-loaded with the
+    /// opened item. CoE's `eimport` parameter takes the raw in-game clipboard
+    /// text (the same text we copied with Ctrl+C), URL-encoded; `game=poe2`
+    /// pins the POE2 dataset so it doesn't open in whatever mode CoE last used.
+    fn craft_of_exile_url(&self) -> String {
+        format!(
+            "https://www.craftofexile.com/?game=poe2&eimport={}",
+            percent_encode(&self.item_text)
+        )
     }
 
     /// Deep link to the official trade site for the current item + filters.

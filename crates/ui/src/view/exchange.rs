@@ -18,7 +18,7 @@ use crate::{QuickModeApp, SHOWN};
 
 use super::listings::{results_table, RowData};
 use super::percent_encode;
-use super::theme::ACCENT_GOLD;
+use super::theme::accent_gold;
 
 /// In-game-style warning gold, for the fallback/provenance notes.
 const WARN_GOLD: Color32 = Color32::from_rgb(0xff, 0xc8, 0x4b);
@@ -94,7 +94,7 @@ impl QuickModeApp {
                 RichText::new(format!("{} ex", fmt_amount(price.exalted)))
                     .size(20.0)
                     .strong()
-                    .color(ACCENT_GOLD),
+                    .color(accent_gold()),
             );
             if let Some(div) = price.divine {
                 ui.label(
@@ -211,7 +211,7 @@ impl QuickModeApp {
                             RichText::new(format!("Median: {} {} each", fmt_amount(m), pay))
                                 .size(18.0)
                                 .strong()
-                                .color(ACCENT_GOLD),
+                                .color(accent_gold()),
                         );
                     }
                     None => {

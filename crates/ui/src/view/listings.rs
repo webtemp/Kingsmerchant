@@ -10,7 +10,7 @@ use crate::SHOWN;
 
 use super::actions::send_chat_to_poe2;
 use super::item_card::{item_preview, show_item_preview_at_cursor, ItemPreview};
-use super::theme::{ACCENT_GOLD, ONLINE_DOT};
+use super::theme::{accent_gold, online_dot as online_dot_color};
 
 /// Height of a results-table row.
 const ROW_H: f32 = 26.0;
@@ -43,7 +43,7 @@ pub(super) fn show_results(
                 RichText::new(format!("Median: {} {}", fmt_amount(p.amount), p.currency))
                     .size(18.0)
                     .strong()
-                    .color(ACCENT_GOLD),
+                    .color(accent_gold()),
             );
         }
         None => {
@@ -151,7 +151,7 @@ pub(super) fn results_table(
 /// directly). Green = online, grey = offline.
 fn online_dot(ui: &mut egui::Ui, online: bool) {
     let color = if online {
-        ONLINE_DOT
+        online_dot_color()
     } else {
         Color32::from_gray(0x70)
     };

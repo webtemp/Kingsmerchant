@@ -11,7 +11,7 @@ use trade_api::{is_elemental_resistance, ResistanceMode};
 use crate::model::{fmt_amount, MinFilter};
 use crate::QuickModeApp;
 
-use super::theme::AFFIX_BLUE;
+use super::theme::affix_blue;
 
 /// Resistance-mode options for the detailed-filter dropdown, with hover help.
 const RESISTANCE_MODES: &[(ResistanceMode, &str, &str)] = &[
@@ -45,7 +45,9 @@ const PRICE_CURRENCIES: &[(&str, &str)] = &[
 ];
 
 /// Rarity options for the detailed-filter dropdown (`type_filters.rarity` id).
+/// `any` emits no rarity filter (search every rarity), matching the trade site.
 const RARITIES: &[(&str, &str)] = &[
+    ("any", "Any"),
     ("normal", "Normal"),
     ("magic", "Magic"),
     ("rare", "Rare"),
@@ -181,12 +183,7 @@ impl QuickModeApp {
                                     if row.is_implicit {
                                         implicit_pill(ui);
                                     }
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(&row.label).color(AFFIX_BLUE),
-                                        )
-                                        .truncate(),
-                                    );
+                                    stat_filter_label(ui, &row.label);
                                     changed |= min_max_fields(ui, &mut row.min, &mut row.max);
                                 });
                             }
@@ -233,8 +230,9 @@ impl QuickModeApp {
                     {
                         requery = true;
                     }
-                    // Open the official trade site with this exact search — pinned
-                    // to the right edge of the window.
+                    // External links, pinned to the right edge of the window. In
+                    // this right-to-left layout the first added sits rightmost, so
+                    // the trade-site link leads and Craft of Exile follows to its left.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .button(format!("{} Open on trade site", ph::MAGNIFYING_GLASS))
@@ -247,6 +245,22 @@ impl QuickModeApp {
                             match platform_linux::open_url(&url) {
                                 // Hide the popup so the browser comes forward — we're
                                 // an always-on-top overlay that would cover it.
+                                Ok(()) => self.close_requested = true,
+                                Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
+                            }
+                        }
+                        // Craft of Exile crafting simulator, pre-loaded with the
+                        // opened item (only meaningful when one is parsed).
+                        if self.item.is_some()
+                            && ui
+                                .button(format!("{} Craft of Exile", ph::HAMMER))
+                                .on_hover_text(
+                                    "Open this item in Craft of Exile's crafting simulator",
+                                )
+                                .clicked()
+                        {
+                            let url = self.craft_of_exile_url();
+                            match platform_linux::open_url(&url) {
                                 Ok(()) => self.close_requested = true,
                                 Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
                             }
@@ -298,6 +312,24 @@ impl QuickModeApp {
                 ui.label(RichText::new(text).color(Color32::from_rgb(0x7e, 0xc8, 0xff)));
             });
     }
+}
+
+/// A modifier-row label, width-capped so it truncates with an ellipsis instead
+/// of eating the row and shoving the right-pinned min/max fields out of their
+/// column (long unique mods overflowed and overlapped the fields). The cap
+/// reserves room for the two fields; the full text is available on hover.
+fn stat_filter_label(ui: &mut egui::Ui, text: &str) {
+    // Two fields plus the gaps around them — keep in sync with `min_max_fields`.
+    let reserved = 2.0 * FILTER_FIELD_W + 3.0 * ui.spacing().item_spacing.x;
+    let label_w = (ui.available_width() - reserved).max(40.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(label_w, ui.spacing().interact_size.y),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add(egui::Label::new(RichText::new(text).color(affix_blue())).truncate())
+                .on_hover_text(text);
+        },
+    );
 }
 
 /// Right-aligned min + max fields (they hug the right edge of the row so the

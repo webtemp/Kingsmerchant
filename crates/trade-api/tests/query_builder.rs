@@ -354,6 +354,19 @@ fn detailed_query_rarity_defaults_to_item_then_honours_override() {
     );
     let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
     assert_eq!(tf.rarity.as_ref().unwrap().option, "magic");
+
+    // "any" → an explicit no-rarity search (the base across every rarity), even
+    // though the item itself is rare.
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            rarity: Some("any".to_string()),
+            ..Default::default()
+        },
+    );
+    let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
+    assert!(tf.rarity.is_none());
 }
 
 #[test]

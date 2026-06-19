@@ -54,4 +54,4 @@ Launch **poe2ddd** from the KDE app launcher (or just run `poe2ddd`). It starts
 hidden with a tray icon (a Chaos-orb nebula). Hover an item in POE2 and press
 **Ctrl+C** to pop the price check; open **Settings** from the tray menu or the
 gear button on the popup. Settings live in `~/.config/poe2ddd/config.json` and
-hot-reload when you edit them (hotkey/realm/focus changes need a restart).
+hot-reload when you edit them (only a realm change needs a restart).

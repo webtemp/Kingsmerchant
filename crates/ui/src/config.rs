@@ -43,7 +43,6 @@ pub struct Config {
     /// Rebindable hotkeys. Strings like `"Ctrl+C"`, `"F5"`, `"Escape"` —
     /// modifiers `Ctrl`/`Alt`/`Shift` + one key.
     pub hotkey_quick: String,
-    pub hotkey_detailed: String,
     pub hotkey_macro: String,
     pub hotkey_macro2: String,
     pub hotkey_close: String,
@@ -64,6 +63,10 @@ pub struct Config {
     /// Fixed-mode top-left position, in output-logical pixels from the top-left.
     pub fixed_x: i32,
     pub fixed_y: i32,
+    /// Emit the per-second overlay performance log (frame rate / max frame time
+    /// / resize count, on the `perf` tracing target). Off by default — it's a
+    /// diagnostic aid, toggled from Settings; plain runs stay quiet.
+    pub perf_metrics: bool,
     /// Your `POESESSID` trade-site session cookie (32-hex). `null` = not set.
     ///
     /// Optional; only needed for the **Teleport** button on Instant Buyout
@@ -71,6 +74,48 @@ pub struct Config {
     /// authenticated request. Sent ONLY to pathofexile.com; grants trade-API
     /// access to your account, so treat it like a password.
     pub poesessid: Option<String>,
+    /// Visual theme: accent colours + popup opacity. See [`ThemeConfig`].
+    pub theme: ThemeConfig,
+}
+
+/// User-tunable look of the popup. Colours are `#rrggbb` hex strings so the
+/// file stays hand-editable; a malformed colour falls back to its default. The
+/// rarity/frame colours are intentionally *not* here — they mirror the in-game
+/// item colours players rely on to recognise items at a glance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    /// Headline median-price / accent colour (the gold matching the app icon).
+    pub accent_gold: String,
+    /// Rolled-mod ("affix") text colour.
+    pub affix_blue: String,
+    /// "Online"/valid indicator dot.
+    pub online_dot: String,
+    /// Dark backing for the inset item/preview cards.
+    pub header_bg: String,
+    /// The popup's background fill (behind everything).
+    pub overlay_fill: String,
+    /// The popup's 1px border.
+    pub overlay_stroke: String,
+    /// Popup background opacity, `0.0`..=`1.0`. Lower = more see-through to the
+    /// game behind it; `1.0` is fully solid. Applies to the fill and border.
+    pub opacity: f32,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        // These mirror the original hardcoded constants, so an upgrade is a
+        // no-op visually until the user actually changes something.
+        ThemeConfig {
+            accent_gold: "#e6c25a".to_string(),
+            affix_blue: "#8a8af0".to_string(),
+            online_dot: "#4cd137".to_string(),
+            header_bg: "#17171c".to_string(),
+            overlay_fill: "#2c2e36".to_string(),
+            overlay_stroke: "#50525e".to_string(),
+            opacity: 1.0,
+        }
+    }
 }
 
 impl Default for Config {
@@ -88,7 +133,6 @@ impl Default for Config {
             f5_command: Some("/hideout".to_string()),
             macro2_command: Some("/exit".to_string()),
             hotkey_quick: "Ctrl+C".to_string(),
-            hotkey_detailed: "Ctrl+Alt+C".to_string(),
             hotkey_macro: "F5".to_string(),
             hotkey_macro2: "F2".to_string(),
             hotkey_close: "Escape".to_string(),
@@ -97,7 +141,9 @@ impl Default for Config {
             position_mode: "center".to_string(),
             fixed_x: 100,
             fixed_y: 100,
+            perf_metrics: false,
             poesessid: None,
+            theme: ThemeConfig::default(),
         }
     }
 }

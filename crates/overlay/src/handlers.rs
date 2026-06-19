@@ -30,7 +30,7 @@ use wayland_client::{
 };
 use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1;
 
-use crate::input_map::{map_button, map_keysym, BTN_LEFT};
+use crate::input_map::{format_binding, keysym_to_binding_key, map_button, map_keysym, BTN_LEFT};
 use crate::{App, Which};
 
 impl CompositorHandler for App {
@@ -325,6 +325,20 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         let modifiers = self.kbd_modifiers;
+        // Click-to-record hotkey capture (Settings): grab the whole combo for the
+        // row being recorded instead of routing the key into egui. Esc cancels;
+        // modifier-only presses (Ctrl/Alt/Shift) yield no key name, so we keep
+        // listening until a real key lands.
+        if self.quick.is_recording_hotkey() {
+            if event.keysym == Keysym::Escape {
+                self.quick.cancel_hotkey_recording();
+            } else if let Some(key) = keysym_to_binding_key(event.keysym) {
+                let binding =
+                    format_binding(modifiers.ctrl, modifiers.alt, modifiers.shift, &key);
+                self.quick.commit_hotkey(binding);
+            }
+            return;
+        }
         let Some(which) = self.focused else {
             return;
         };

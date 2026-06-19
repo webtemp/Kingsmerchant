@@ -2,9 +2,12 @@
 //! macros / Escape via evdev) and the `config.json` hot-reload watcher, plus the
 //! clipboard-polling step that decides when a fresh item has landed.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use platform_linux::{HotkeyBindings, HotkeyControl};
 
 use crate::config::Config;
 use crate::model::{item_hash, normalize_item_text};
@@ -14,26 +17,57 @@ use crate::{Hotkey, CLIPBOARD_TIMEOUT, POLL_INTERVAL};
 /// events each keyboard's multiple event-kbd nodes emit for one press.
 const MACRO_DEBOUNCE: Duration = Duration::from_millis(300);
 
+/// A live handle to the running hotkey watcher: the rebindable bindings the
+/// evdev reader threads consult on every press, plus the POE2-focus gate they
+/// honour. [`apply_config`](Self::apply_config) pushes new settings in without a
+/// restart — the watcher threads pick them up on the next keypress.
+#[derive(Clone)]
+pub struct HotkeyHandle {
+    control: HotkeyControl,
+    require_focus: Arc<AtomicBool>,
+}
+
+impl HotkeyHandle {
+    fn bindings_from(config: &Config) -> HotkeyBindings {
+        HotkeyBindings::from_strings(
+            &config.hotkey_quick,
+            &config.hotkey_macro,
+            &config.hotkey_macro2,
+            &config.hotkey_close,
+        )
+    }
+
+    /// Apply the hotkey-relevant fields of `config` to the running watcher
+    /// (bindings + focus gate). Effective immediately; no restart.
+    pub fn apply_config(&self, config: &Config) {
+        self.control.set(Self::bindings_from(config));
+        self.require_focus
+            .store(config.require_poe2_focus, Ordering::Relaxed);
+    }
+}
+
 /// Watch the global price-check hotkeys on a background thread. On each press we
 /// wait for POE2 to write the clipboard, then push the item text to the UI. If
 /// the watcher can't start (e.g. not in the `input` group), we log and carry on
 /// — the window still works manually.
-pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
-    use platform_linux::{HotkeyBindings, HotkeyEvent};
+///
+/// Returns a [`HotkeyHandle`] so the app can rebind hotkeys / toggle the focus
+/// gate live (see [`HotkeyHandle::apply_config`]); the bindings live behind a
+/// shared lock the reader threads read per keypress.
+pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHandle {
+    use platform_linux::HotkeyEvent;
     // Read-only load: this background thread must not race `build_app`'s startup
     // write (or re-trigger the config watcher) by backfilling the file.
     let config = Config::load_no_write();
-    let bindings = HotkeyBindings::from_strings(
-        &config.hotkey_quick,
-        &config.hotkey_detailed,
-        &config.hotkey_macro,
-        &config.hotkey_macro2,
-        &config.hotkey_close,
-    );
-    let require_focus = config.require_poe2_focus;
+    let control = HotkeyControl::new(HotkeyHandle::bindings_from(&config));
+    let require_focus = Arc::new(AtomicBool::new(config.require_poe2_focus));
+    let handle = HotkeyHandle {
+        control: control.clone(),
+        require_focus: require_focus.clone(),
+    };
 
     std::thread::spawn(move || {
-        let hotkeys = match platform_linux::watch_hotkeys(bindings) {
+        let hotkeys = match platform_linux::watch_hotkeys(&control) {
             Ok(rx) => rx,
             Err(e) => {
                 tracing::warn!(error = %e, "hotkey watcher disabled; use the buttons");
@@ -42,14 +76,19 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
         };
         tracing::info!(
             quick = %config.hotkey_quick,
-            detailed = %config.hotkey_detailed,
             macro_ = %config.hotkey_macro,
-            require_poe2_focus = require_focus,
+            require_poe2_focus = config.require_poe2_focus,
+            synthetic_copy = control.snapshot().quick_needs_synthetic_copy(),
             "listening for hotkeys"
         );
         // Pre-create the injection device (after the watcher scanned keyboards,
-        // so it isn't picked up) so the first macro press is instant.
-        if config.f5_command.is_some() || config.macro2_command.is_some() {
+        // so it isn't picked up) so the first macro — or synthesized copy — is
+        // instant rather than paying the ~250ms uinput enumeration wait. A later
+        // live rebind to a synthetic-copy hotkey just pays that once, lazily.
+        if control.snapshot().quick_needs_synthetic_copy()
+            || config.f5_command.is_some()
+            || config.macro2_command.is_some()
+        {
             std::thread::spawn(platform_linux::warm_up_injection);
         }
         // Shared so the clipboard wait can run OFF this loop (below): the loop
@@ -84,14 +123,16 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                     }
                     last_macro[slot] = Some(now);
 
-                    let (tx, ctx) = (tx.clone(), ctx.clone());
+                    let (tx, ctx, require_focus) =
+                        (tx.clone(), ctx.clone(), require_focus.clone());
                     let msg = if event == HotkeyEvent::Macro2 {
                         Hotkey::Macro2
                     } else {
                         Hotkey::Macro
                     };
                     std::thread::spawn(move || {
-                        if require_focus && !platform_linux::is_poe2_active() {
+                        if require_focus.load(Ordering::Relaxed) && !platform_linux::is_poe2_active()
+                        {
                             tracing::info!("macro ignored — POE2 not focused");
                             return;
                         }
@@ -99,19 +140,37 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
                         ctx.request_repaint();
                     });
                 }
-                // A copy combo: the focus check + the ≤1s clipboard poll run on
-                // their own thread so this loop keeps forwarding modifier events.
-                HotkeyEvent::QuickCopy | HotkeyEvent::DetailedCopy => {
-                    let (tx, ctx, last) = (tx.clone(), ctx.clone(), last_seen.clone());
+                // The price-check combo: the focus check + the ≤1s clipboard poll
+                // run on their own thread so this loop keeps forwarding modifier
+                // events.
+                HotkeyEvent::QuickCopy => {
+                    let (tx, ctx, last, require_focus, control) = (
+                        tx.clone(),
+                        ctx.clone(),
+                        last_seen.clone(),
+                        require_focus.clone(),
+                        control.clone(),
+                    );
                     std::thread::spawn(move || {
-                        if require_focus && !platform_linux::is_poe2_active() {
-                            tracing::info!("Ctrl+C ignored — POE2 not focused");
+                        if require_focus.load(Ordering::Relaxed) && !platform_linux::is_poe2_active()
+                        {
+                            tracing::info!("price-check hotkey ignored — POE2 not focused");
                             return;
                         }
                         // Pop the popup NOW (focus is confirmed), before the
                         // clipboard poll, so the UI reacts instantly.
                         let _ = tx.send(Hotkey::CopyStarted);
                         ctx.request_repaint();
+
+                        // If the (live) hotkey isn't Ctrl+C, POE2 hasn't copied
+                        // anything — synthesize the copy now (POE2 is focused) so
+                        // the clipboard holds the item under the cursor when we
+                        // poll below.
+                        if control.snapshot().quick_needs_synthetic_copy() {
+                            if let Err(e) = platform_linux::copy_item_under_cursor() {
+                                tracing::warn!(error = %format!("{e:#}"), "synthetic copy failed");
+                            }
+                        }
 
                         let prev = last.lock().expect("last_seen lock").clone();
                         let start = Instant::now();
@@ -134,6 +193,8 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
             }
         }
     });
+
+    handle
 }
 
 /// Watch `config.json` for external edits and push the reloaded config to the

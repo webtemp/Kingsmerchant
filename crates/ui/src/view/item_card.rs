@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use egui::{Color32, RichText};
 use parser::{Item, ModKind, ModSource, Modifier};
 
-use super::theme::{frame_color, rarity_color, AFFIX_BLUE, HEADER_BG};
+use super::theme::{affix_blue, frame_color, header_bg, rarity_color};
 
 // ---- palette ---------------------------------------------------------------
 
@@ -68,6 +68,16 @@ pub(super) fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) 
         |ui| {
             ui.set_width(ui.available_width());
 
+            // A foil unique gets a holographic shimmer on its title (the colour
+            // cycles each frame); everything else uses its flat rarity colour.
+            let foil = is_foil(item);
+            // The popup already redraws continuously while shown, so the shimmer
+            // animates without forcing extra repaints.
+            let title_color = if foil {
+                foil_shimmer(ui.input(|i| i.time))
+            } else {
+                color
+            };
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     let title = item
@@ -75,7 +85,7 @@ pub(super) fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) 
                         .as_deref()
                         .or(item.base_type.as_deref())
                         .unwrap_or("Unknown item");
-                    ui.label(RichText::new(title).color(color).size(18.0).strong());
+                    ui.label(RichText::new(title).color(title_color).size(18.0).strong());
                     if item.name.is_some() {
                         if let Some(base) = &item.base_type {
                             ui.label(RichText::new(base).color(color).weak());
@@ -148,7 +158,13 @@ fn state_badges(ui: &mut egui::Ui, item: &Item) {
             badge(ui, UNID_PILL);
         }
         for flag in &item.flags {
-            pill(ui, flag, FLAG_BG, FLAG_FG);
+            // The foil marker gets its own gold pill (matching the listing
+            // preview) rather than the generic grey flag pill.
+            if flag.starts_with("Foil") {
+                badge(ui, FOIL_PILL);
+            } else {
+                pill(ui, flag, FLAG_BG, FLAG_FG);
+            }
         }
     });
 }
@@ -222,13 +238,27 @@ fn sockets_block(ui: &mut egui::Ui, item: &Item) {
     }
 }
 
+/// Longest mod-stat line we render inline; longer lines are shortened with an
+/// ellipsis (full text on hover) so they stay one line instead of wrapping and
+/// breaking the value column's alignment.
+const MOD_STAT_MAX_CHARS: usize = 64;
+
+/// Same idea for the narrower (≈320px) hover-preview card — a tighter cap so
+/// each mod stays one line and the tooltip can't grow tall enough to flicker.
+const PREVIEW_MOD_MAX_CHARS: usize = 48;
+
 fn render_mod(ui: &mut egui::Ui, m: &Modifier) {
     let color = source_text_color(m.source);
     let meta = mod_header(m);
     let pill = m.source.map(source_pill);
     for (i, stat) in m.stats.iter().enumerate() {
+        let shown = ellipsize(stat, MOD_STAT_MAX_CHARS);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(stat).color(color));
+            let label = ui.label(RichText::new(&shown).color(color));
+            // Reveal the full text on hover only when we actually shortened it.
+            if shown.len() != stat.len() {
+                label.on_hover_text(stat);
+            }
             // Slot / name / tier right-aligned on the mod's first line, so the
             // values stay in a clean left column instead of each mod costing a
             // full extra header row. A source pill (desecrated/…) sits with it.
@@ -242,6 +272,20 @@ fn render_mod(ui: &mut egui::Ui, m: &Modifier) {
             }
         });
     }
+}
+
+/// Shorten an over-long mod stat to ~`max` characters, trimmed back to a word
+/// boundary with a trailing ellipsis. Short lines are returned unchanged.
+fn ellipsize(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max).collect();
+    let trimmed = match head.rsplit_once(' ') {
+        Some((before, _)) => before.trim_end(),
+        None => head.trim_end(),
+    };
+    format!("{trimmed}…")
 }
 
 /// The slot / name / tier shown to the right of a mod's stats.
@@ -277,7 +321,7 @@ fn source_text_color(source: Option<ModSource>) -> Color32 {
         Some(ModSource::Fractured) => FRACTURED_TEXT,
         Some(ModSource::Crafted) => CRAFTED_TEXT,
         Some(ModSource::Desecrated) => DESECRATED_TEXT,
-        None => AFFIX_BLUE,
+        None => affix_blue(),
     }
 }
 
@@ -292,9 +336,25 @@ fn item_frame_accent(item: &Item) -> Option<Color32> {
         Some(FRACTURED_ACCENT)
     } else if has(ModSource::Desecrated) {
         Some(DESECRATED_ACCENT)
+    } else if is_foil(item) {
+        Some(FOIL_ACCENT)
     } else {
         None
     }
+}
+
+/// Whether the item copied as a foil (cosmetic) unique. Captured by the parser
+/// as a `"Foil …"` flag.
+fn is_foil(item: &Item) -> bool {
+    item.flags.iter().any(|f| f.starts_with("Foil"))
+}
+
+/// A slowly-cycling holographic colour for a foil title, given the egui clock
+/// (seconds). Kept light and not-too-saturated so the title stays readable.
+fn foil_shimmer(time: f64) -> Color32 {
+    // One full hue sweep every ~7s.
+    let hue = (time / 7.0).rem_euclid(1.0) as f32;
+    egui::ecolor::Hsva::new(hue, 0.45, 1.0, 1.0).into()
 }
 
 // ---- shared widgets --------------------------------------------------------
@@ -309,13 +369,13 @@ fn framed(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let inner = egui::Frame::none()
-        .fill(HEADER_BG)
+        .fill(header_bg())
         .stroke(egui::Stroke::new(1.5, border))
         .rounding(6.0)
         .inner_margin(margin);
     if let Some(a) = accent {
         egui::Frame::none()
-            .fill(HEADER_BG)
+            .fill(header_bg())
             .stroke(egui::Stroke::new(1.0, a))
             .rounding(9.0)
             .inner_margin(egui::Margin::same(3.0))
@@ -380,7 +440,7 @@ impl ModCat {
             ModCat::Crafted | ModCat::Enchant => CRAFTED_TEXT,
             ModCat::Desecrated => DESECRATED_TEXT,
             ModCat::Rune => RUNE_TEXT,
-            ModCat::Implicit | ModCat::Explicit => AFFIX_BLUE,
+            ModCat::Implicit | ModCat::Explicit => affix_blue(),
         }
     }
 }
@@ -438,8 +498,8 @@ pub(super) fn item_preview(item: &serde_json::Value) -> ItemPreview {
         ("scourgeMods", ModCat::Explicit),
     ] {
         if let Some(arr) = item.get(key).and_then(serde_json::Value::as_array) {
-            for line in arr.iter().filter_map(serde_json::Value::as_str) {
-                mods.push((cat, line.to_string()));
+            for line in arr.iter().filter_map(mod_line_text) {
+                mods.push((cat, line));
             }
         }
     }
@@ -471,24 +531,37 @@ pub(super) fn item_preview(item: &serde_json::Value) -> ItemPreview {
     }
 }
 
+/// Extract one mod line from a `*Mods` array entry. The trade2 fetch returns
+/// these as objects (`{"description": "...", "hash": …, "mods": […]}`), but some
+/// endpoints/older payloads return plain strings — accept both. Markup like
+/// `[Accuracy|Accuracy] Rating` is left for [`clean_mod_markup`] at render time.
+fn mod_line_text(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    v.get("description")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
 /// Flatten a trade `properties`/`requirements` array into `(name, first value)`
-/// pairs, dropping entries with no value (e.g. the bare item-class label).
+/// pairs, dropping entries with no value (e.g. the bare item-class label). Both
+/// the name and value can carry `[link|display]` markup, so they're cleaned here.
 fn json_pairs(item: &serde_json::Value, key: &str) -> Vec<(String, String)> {
     let Some(arr) = item.get(key).and_then(serde_json::Value::as_array) else {
         return Vec::new();
     };
     arr.iter()
         .filter_map(|p| {
-            let name = p.get("name")?.as_str()?.to_string();
+            let name = clean_mod_markup(p.get("name")?.as_str()?);
             let value = p
                 .get("values")?
                 .as_array()?
                 .first()?
                 .as_array()?
                 .first()?
-                .as_str()?
-                .to_string();
-            (!value.is_empty()).then_some((name, value))
+                .as_str()?;
+            (!value.is_empty()).then(|| (name, clean_mod_markup(value)))
         })
         .collect()
 }
@@ -594,7 +667,11 @@ fn render_item_preview(ui: &mut egui::Ui, item: &ItemPreview) {
             if !item.mods.is_empty() {
                 thin_separator(ui);
                 for (cat, text) in &item.mods {
-                    let clean = clean_mod_markup(text);
+                    // One line per mod (ellipsised): keeps this cursor-anchored
+                    // tooltip short. A tall preview gets shoved over the cursor by
+                    // `constrain`, which flips the row's hover off and on every
+                    // frame — a flicker that reads as hover lag.
+                    let clean = ellipsize(&clean_mod_markup(text), PREVIEW_MOD_MAX_CHARS);
                     let color = cat.text_color();
                     if let Some(p) = cat.pill() {
                         ui.horizontal(|ui| {
@@ -634,43 +711,113 @@ fn clean_mod_markup(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_mod_markup, item_preview, ModCat};
+    use super::{clean_mod_markup, ellipsize, item_card, item_preview, ModCat};
+
+    /// Headless render of the real clipboard item: confirms the mod stat text
+    /// actually reaches the paint output (catches a "card shows name but no
+    /// stats" regression) and reports the rendered height.
+    #[test]
+    fn item_card_renders_mod_stats() {
+        let text = "Item Class: Gloves\nRarity: Rare\nSoul Caress\nWar Wraps\n--------\n\
+            Evasion Rating: 94\nEnergy Shield: 29\n--------\n\
+            Requires: Level 65, 44 Dex, 44 Int\n--------\nItem Level: 82\n--------\n\
+            { Prefix Modifier \"Incinerating\" (Tier: 3) }\nAdds 15 to 29 Fire damage to Attacks\n\
+            { Prefix Modifier \"Virile\" (Tier: 2) }\n+109 to maximum Life\n\
+            { Suffix Modifier \"of the Maelstrom\" (Tier: 3) }\n+33% to Lightning Resistance";
+        let item = parser::parse_item(text).expect("parse");
+        assert_eq!(item.modifiers.len(), 3, "parser sanity");
+
+        let ctx = egui::Context::default();
+        let mut height = 0.0;
+        let mut texts: Vec<String> = Vec::new();
+        // Two frames: the first lays out fonts, the second paints stable galleys.
+        for _ in 0..2 {
+            let out = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.set_max_width(450.0);
+                    let r = egui::Area::new("t".into())
+                        .show(ui.ctx(), |ui| item_card(ui, &item, None));
+                    height = r.response.rect.height();
+                });
+            });
+            texts.clear();
+            for cs in &out.shapes {
+                if let egui::epaint::Shape::Text(t) = &cs.shape {
+                    texts.push(t.galley.text().to_string());
+                }
+            }
+        }
+        let joined = texts.join(" | ");
+        println!("rendered height = {height}");
+        println!("painted texts = {joined}");
+        assert!(
+            joined.contains("Lightning Resistance"),
+            "mod stat text missing from paint output — card renders no stats"
+        );
+    }
+
+    #[test]
+    fn ellipsize_shortens_only_long_text_on_word_boundary() {
+        // Short text is untouched.
+        let short = "+12% to all Elemental Resistances";
+        assert_eq!(ellipsize(short, 64), short);
+        // Long text is cut back to a word boundary with a trailing ellipsis, and
+        // is strictly shorter than the original.
+        let long = "Cold Damage from Hits Contributes to Flammability and Ignite \
+                    Magnitudes instead of Chill Magnitude or Freeze Buildup";
+        let out = ellipsize(long, 64);
+        assert!(out.ends_with('…'));
+        assert!(!out.contains("  "));
+        assert!(out.chars().count() < long.chars().count());
+        // No mid-word cut: the part before the ellipsis is whole words.
+        assert!(long.starts_with(out.trim_end_matches('…').trim_end()));
+    }
 
     #[test]
     fn preview_extracts_properties_requirements_sockets_and_categorised_mods() {
+        // The live trade2 fetch returns `*Mods` as OBJECTS ({"description": …}),
+        // and property/requirement names with `[link|display]` markup — this test
+        // mirrors that real shape (a plain-string mod is also kept, for back-compat).
         let json = serde_json::json!({
             "typeLine": "Corsair Coat",
             "frameType": 2,
             "corrupted": true,
             "properties": [
-                {"name": "Evasion Rating", "values": [["1099", 1]]},
+                {"name": "[Evasion|Evasion Rating]", "values": [["1099", 1]]},
                 {"name": "Ring", "values": []}  // no value → dropped
             ],
             "requirements": [
                 {"name": "Level", "values": [["80", 0]]},
-                {"name": "Dex", "values": [["121", 0]]}
+                {"name": "[Dexterity|Dex]", "values": [["121", 0]]}
             ],
             "sockets": [{"group": 0}, {"group": 1}],
-            "implicitMods": ["5% increased Movement Speed"],
-            "explicitMods": ["+132 to maximum Life"],
-            "desecratedMods": ["+32 to [Dexterity|Dexterity]"]
+            "implicitMods": [{"description": "5% increased Movement Speed"}],
+            "explicitMods": [
+                {"description": "+101 to [Accuracy|Accuracy] Rating", "hash": "x"},
+                "+132 to maximum Life"
+            ],
+            "desecratedMods": [{"description": "+32 to [Dexterity|Dexterity]"}]
         });
         let p = item_preview(&json);
 
         assert!(p.corrupted);
         assert_eq!(p.sockets, 2);
         assert_eq!(p.base.as_deref(), Some("Corsair Coat"));
-        // Empty-value property is dropped; the defence is kept.
+        // Empty-value property dropped; the defence kept, with markup stripped.
         assert_eq!(
             p.properties,
             vec![("Evasion Rating".to_string(), "1099".to_string())]
         );
+        // Requirement name markup is stripped too.
         assert_eq!(p.requirements, "Level 80 · Dex 121");
-        // Mods keep their origin, in display order (implicit, explicit, desecrated).
-        assert_eq!(p.mods.len(), 3);
+        // Object-form mods are extracted (this is the bug fix): implicit(1) +
+        // explicit(2) + desecrated(1) = 4, in display order, origins preserved.
+        assert_eq!(p.mods.len(), 4, "object-format mods must be extracted");
         assert_eq!(p.mods[0].0, ModCat::Implicit);
-        assert_eq!(p.mods[2].0, ModCat::Desecrated);
-        assert!(p.mods[2].1.contains("Dexterity"));
+        assert_eq!(p.mods[1].0, ModCat::Explicit);
+        assert!(p.mods[1].1.contains("Accuracy"));
+        assert_eq!(p.mods[3].0, ModCat::Desecrated);
+        assert!(p.mods[3].1.contains("Dexterity"));
     }
 
     #[test]

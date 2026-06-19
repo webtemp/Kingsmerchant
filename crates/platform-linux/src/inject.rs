@@ -85,6 +85,22 @@ pub fn send_chat_command(command: &str) -> Result<()> {
     Ok(())
 }
 
+/// Synthesize POE2's own copy combo (Ctrl+C) into the focused window so it
+/// copies the item under the cursor. Needed when the price-check hotkey is
+/// rebound to something other than Ctrl+C — POE2 only copies on Ctrl+C, so for
+/// any other binding we must do it ourselves before reading the clipboard.
+///
+/// POE2 must be focused (the caller gates on that). Unlike
+/// [`send_chat_command`], this deliberately lets POE2 overwrite the clipboard —
+/// that new value is exactly what we then read. Blocks ~250ms only on the first
+/// call (device setup) unless [`warm_up`] ran first; ~tens of µs after.
+pub fn copy_item_under_cursor() -> Result<()> {
+    let mut device = device()?
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    ctrl_tap(&mut device, Key::KEY_C)
+}
+
 /// Create the virtual keyboard ahead of time so the first real use is instant.
 pub fn warm_up() {
     if let Err(e) = device() {
@@ -99,7 +115,14 @@ fn device() -> Result<&'static Mutex<VirtualDevice>> {
         return Ok(d);
     }
     let mut keys = AttributeSet::<Key>::new();
-    for k in [Key::KEY_ENTER, Key::KEY_LEFTCTRL, Key::KEY_A, Key::KEY_V] {
+    // ENTER/A/V for chat paste; C for the synthesized item copy.
+    for k in [
+        Key::KEY_ENTER,
+        Key::KEY_LEFTCTRL,
+        Key::KEY_A,
+        Key::KEY_V,
+        Key::KEY_C,
+    ] {
         keys.insert(k);
     }
     let device = VirtualDeviceBuilder::new()

@@ -45,6 +45,59 @@ pub(crate) fn map_keysym(k: Keysym) -> Option<egui::Key> {
     Some(key)
 }
 
+/// Map a keysym to the key name used in a hotkey-binding string (e.g. `"C"`,
+/// `"F5"`, `"Escape"`) for the settings click-to-record picker. Returns `None`
+/// for keysyms that can't anchor a binding — modifier keys (Ctrl/Alt/Shift) and
+/// anything outside the set the evdev parser understands — so the caller keeps
+/// listening until a real key is pressed.
+///
+/// Works on the raw keysym value (layout-independent for the X11 keysym block):
+/// letters fold to uppercase (the parser is case-insensitive, and uppercase
+/// reads cleanly), digits and F-keys map directly.
+pub(crate) fn keysym_to_binding_key(k: Keysym) -> Option<String> {
+    let raw = k.raw();
+    if (0x0041..=0x005a).contains(&raw) {
+        // 'A'..='Z'
+        return Some((raw as u8 as char).to_string());
+    }
+    if (0x0061..=0x007a).contains(&raw) {
+        // 'a'..='z' → uppercase
+        return Some(((raw as u8 - 0x20) as char).to_string());
+    }
+    if (0x0030..=0x0039).contains(&raw) {
+        // '0'..='9'
+        return Some((raw as u8 as char).to_string());
+    }
+    if (0xffbe..=0xffc9).contains(&raw) {
+        // F1..=F12
+        return Some(format!("F{}", raw - 0xffbe + 1));
+    }
+    Some(match raw {
+        0xff1b => "Escape".to_string(),
+        0xff0d | 0xff8d => "Enter".to_string(), // Return / KP_Enter
+        0x0020 => "Space".to_string(),
+        0xff09 => "Tab".to_string(),
+        _ => return None,
+    })
+}
+
+/// Format a hotkey-binding string from modifier flags + a key name, in the
+/// canonical `Ctrl+Alt+Shift+Key` order the evdev parser expects.
+pub(crate) fn format_binding(ctrl: bool, alt: bool, shift: bool, key: &str) -> String {
+    let mut s = String::new();
+    if ctrl {
+        s.push_str("Ctrl+");
+    }
+    if alt {
+        s.push_str("Alt+");
+    }
+    if shift {
+        s.push_str("Shift+");
+    }
+    s.push_str(key);
+    s
+}
+
 /// Linux evdev left-button code (the drag button).
 pub(crate) const BTN_LEFT: u32 = 0x110;
 

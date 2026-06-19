@@ -5,6 +5,7 @@
 
 use std::num::NonZeroU32;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -46,10 +47,80 @@ const MAX_HEIGHT: u32 = 1300;
 const HEIGHT_DEADBAND: u32 = 8;
 /// Corner radius of the popup card.
 const CORNER_RADIUS: f32 = 14.0;
-/// Popup backing: a solid (opaque) grey card. Only the rounded corners let the
-/// game show through.
-const OVERLAY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2c, 0x2e, 0x36);
-const OVERLAY_STROKE: egui::Color32 = egui::Color32::from_rgb(0x50, 0x52, 0x5e);
+
+// ---- perf instrumentation (gated by the Settings "Performance metrics" toggle,
+// off by default — see `config.perf_metrics`) -------------------------------
+struct Perf {
+    frames: u32,
+    shown_frames: u32,
+    max_ms: f32,
+    setsize: u32,
+    since: Instant,
+}
+
+/// Whether to emit the per-second `perf` log. Synced each tick from
+/// `config.perf_metrics` via [`set_perf_metrics_enabled`]; default off.
+static PERF_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Toggle the overlay performance log on/off (driven by the Settings toggle).
+pub(crate) fn set_perf_metrics_enabled(on: bool) {
+    PERF_ENABLED.store(on, Ordering::Relaxed);
+}
+
+fn perf_enabled() -> bool {
+    PERF_ENABLED.load(Ordering::Relaxed)
+}
+
+fn perf() -> &'static std::sync::Mutex<Perf> {
+    static P: OnceLock<std::sync::Mutex<Perf>> = OnceLock::new();
+    P.get_or_init(|| {
+        std::sync::Mutex::new(Perf {
+            frames: 0,
+            shown_frames: 0,
+            max_ms: 0.0,
+            setsize: 0,
+            since: Instant::now(),
+        })
+    })
+}
+
+fn perf_note_setsize() {
+    if !perf_enabled() {
+        return;
+    }
+    if let Ok(mut p) = perf().lock() {
+        p.setsize += 1;
+    }
+}
+
+fn perf_note_frame(shown: bool, ms: f32) {
+    if !perf_enabled() {
+        return;
+    }
+    let Ok(mut p) = perf().lock() else { return };
+    p.frames += 1;
+    if shown {
+        p.shown_frames += 1;
+    }
+    p.max_ms = p.max_ms.max(ms);
+    if p.since.elapsed() >= std::time::Duration::from_secs(1) {
+        tracing::info!(
+            target: "perf",
+            fps = p.frames,
+            shown_fps = p.shown_frames,
+            max_frame_ms = format!("{:.1}", p.max_ms),
+            set_size = p.setsize,
+            "PERF"
+        );
+        *p = Perf {
+            frames: 0,
+            shown_frames: 0,
+            max_ms: 0.0,
+            setsize: 0,
+            since: Instant::now(),
+        };
+    }
+}
 
 /// Seconds since the process started — fed to egui as `RawInput::time` so its
 /// click-interval timing (double/triple-click) is measured against a real
@@ -293,6 +364,10 @@ impl WinSurface {
 
     /// Lay out, size, place, and paint this surface for one frame, rendering
     /// `render` into the framed card when shown.
+    // The per-frame inputs (size, placement, spin flag, themeable colours) are
+    // genuinely distinct knobs the caller sets afresh each frame; bundling them
+    // into a struct would only move the noise, so keep them as parameters.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw(
         &mut self,
         shared: &mut Shared,
@@ -300,8 +375,13 @@ impl WinSurface {
         want_width: u32,
         place: Placement,
         request_next: bool,
+        // Themeable surface colours (alpha carries the user's opacity), read
+        // from the app each frame so a settings change takes effect at once.
+        fill: egui::Color32,
+        stroke: egui::Color32,
         render: impl FnOnce(&mut egui::Ui),
     ) -> Result<()> {
+        let perf_t0 = Instant::now();
         if self.gl.is_none() {
             self.init_gl(shared)?;
         }
@@ -367,8 +447,8 @@ impl WinSurface {
                 .show(c, |ui| {
                     ui.set_max_width(width);
                     egui::Frame::none()
-                        .fill(OVERLAY_FILL)
-                        .stroke(egui::Stroke::new(1.0, OVERLAY_STROKE))
+                        .fill(fill)
+                        .stroke(egui::Stroke::new(1.0, stroke))
                         .rounding(CORNER_RADIUS)
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
@@ -411,6 +491,7 @@ impl WinSurface {
                 self.desired_height = want_h;
                 self.desired_width = want_width;
                 self.layer.set_size(want_width, want_h);
+                perf_note_setsize();
             }
         }
 
@@ -460,6 +541,7 @@ impl WinSurface {
             surface.frame(qh, surface.clone());
         }
         self.layer.commit();
+        perf_note_frame(shown, perf_t0.elapsed().as_secs_f32() * 1000.0);
         Ok(())
     }
 

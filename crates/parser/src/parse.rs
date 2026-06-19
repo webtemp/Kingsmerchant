@@ -23,6 +23,8 @@ const STANDALONE_FLAGS: &[&str] = &[
     "Synthesised Item",
     "Split",
     "Unmodifiable",
+    // Cosmetic foil overlay on a unique — the UI gives it a shimmer treatment.
+    "Foil Unique",
 ];
 
 /// Parse a POE2 "Copy Item" clipboard string into an [`Item`].
@@ -470,6 +472,22 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn foil_unique_marker_is_captured_as_a_flag() {
+        let text = "Item Class: Helmets\n\
+            Rarity: Unique\n\
+            The Three Dragons\n\
+            Solid Mask\n\
+            --------\n\
+            Item Level: 65\n\
+            --------\n\
+            \"flavour text\"\n\
+            --------\n\
+            Foil Unique";
+        let item = parse_item(text).unwrap();
+        assert!(item.flags.iter().any(|f| f == "Foil Unique"));
     }
 
     #[test]

@@ -81,7 +81,7 @@ pub fn run() -> Result<()> {
     ui::configure_style(&settings_ctx);
 
     let (hk_tx, hk_rx) = channel::<Hotkey>();
-    ui::spawn_hotkey_watcher(popup_ctx.clone(), hk_tx.clone());
+    let hotkeys = ui::spawn_hotkey_watcher(popup_ctx.clone(), hk_tx.clone());
 
     // Tray: runs on its own thread; menu clicks (Open Settings / Quit) forward
     // into the same hotkey channel `pump()` drains every frame, so no extra
@@ -109,7 +109,7 @@ pub fn run() -> Result<()> {
             None
         }
     };
-    let quick = ui::build_app(hk_rx, tray).context("building price-check app")?;
+    let quick = ui::build_app(hk_rx, tray, hotkeys).context("building price-check app")?;
 
     // Config hot-reload: watch config.json and push reloaded configs down the
     // same channel. Started after `build_app` so the startup backfill write
@@ -239,17 +239,33 @@ impl App {
     /// Drain the channels (`pump`) and apply the resulting show/quit requests —
     /// the single per-frame tick, run by whichever surface is currently drawing.
     /// If a transition leaves a should-spin surface idle, schedule it for a kick.
+    /// Re-activate the POE2 window after hiding a surface — the compositor won't
+    /// hand keyboard focus back on its own, so it would otherwise stay on the
+    /// now-invisible overlay (forcing an Alt-Tab). Best-effort, off the UI thread
+    /// so the `xdotool` spawn never stalls the frame.
+    fn refocus_game() {
+        std::thread::spawn(|| {
+            platform_linux::focus_poe2();
+        });
+    }
+
     fn tick(&mut self, current: Which) {
         // Always pump on the popup's egui context: that's where price results
         // render and where the watcher / background tasks request repaints.
         self.quick.pump(&self.popup.egui_ctx);
+        // Keep the overlay perf log in sync with the Settings toggle (off by
+        // default); cheap enough to set every tick.
+        surface::set_perf_metrics_enabled(self.quick.perf_metrics_enabled());
         if self.quick.take_pop_request() {
             // A Ctrl+C takes over: show the popup, leave settings.
             self.popup.shown = true;
             self.settings.shown = false;
         }
         if self.quick.take_close_request() {
+            // Escape / click-outside / Alt+Tab — dismiss whichever surface is up.
+            let was_shown = self.popup.shown || self.settings.shown;
             self.popup.shown = false;
+            self.settings.shown = false;
             // Hiding the layer surface drops its keyboard grab, but the
             // compositor won't hand focus back to POE2 on its own — it would
             // leave focus on the now-invisible overlay, so the game stays
@@ -257,9 +273,11 @@ impl App {
             // Re-activate the game (best-effort, via xdotool). Off-thread so the
             // process spawn never stalls the frame. For the trade-site case the
             // browser still raises itself over the game once it finishes opening.
-            std::thread::spawn(|| {
-                platform_linux::focus_poe2();
-            });
+            // Only when something was actually open, so a stray Alt+Tab with no
+            // overlay up doesn't yank focus back to POE2.
+            if was_shown {
+                Self::refocus_game();
+            }
         }
         if self.quick.take_settings_request() {
             // Open settings and hide the popup so the two don't overlap.
@@ -268,6 +286,9 @@ impl App {
         }
         if self.quick.take_settings_close_request() {
             self.settings.shown = false;
+            // Same as the popup close: the compositor leaves keyboard focus on
+            // the now-hidden settings surface, so hand it back to the game.
+            Self::refocus_game();
         }
         if self.quick.take_quit_request() {
             self.exit = true;
@@ -313,6 +334,10 @@ impl App {
             }
             Which::Settings => (SETTINGS_WIDTH, Placement::Center),
         };
+        // Themeable popup colours (opacity baked into the alpha), read fresh each
+        // frame so a settings/hot-reload change shows up immediately.
+        let fill = self.quick.overlay_fill();
+        let stroke = self.quick.overlay_stroke();
 
         let App {
             popup,
@@ -343,6 +368,8 @@ impl App {
             want_w,
             place,
             request_next,
+            fill,
+            stroke,
             |ui| match which {
                 Which::Popup => quick.content(ui),
                 Which::Settings => quick.settings_content(ui),

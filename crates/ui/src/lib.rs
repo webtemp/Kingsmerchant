@@ -17,7 +17,7 @@ mod query;
 mod view;
 mod watchers;
 
-pub use watchers::{spawn_config_watcher, spawn_hotkey_watcher};
+pub use watchers::{spawn_config_watcher, spawn_hotkey_watcher, HotkeyHandle};
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -70,7 +70,7 @@ pub enum Hotkey {
     /// A price-check combo was pressed and POE2 is focused — pop the popup into
     /// a "reading…" state before the clipboard poll runs, for instant feedback.
     CopyStarted,
-    /// A new item landed on the clipboard (Ctrl+C / Ctrl+Alt+C — both open the
+    /// A new item landed on the clipboard (the price-check hotkey opens the
     /// pinned filter popup).
     Item { text: String },
     /// The clipboard never produced an item before the timeout — usually POE2
@@ -94,12 +94,25 @@ pub enum Hotkey {
     ConfigReloaded(Box<Config>),
 }
 
+/// Which rebindable hotkey the settings panel is currently recording (click a
+/// row, then press the combo). See [`QuickModeApp::commit_hotkey`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum HotkeySlot {
+    Quick,
+    Macro,
+    Macro2,
+    Close,
+}
+
 pub struct QuickModeApp {
     // Held to keep the runtime alive for the app's lifetime.
     rt: tokio::runtime::Runtime,
     client: Arc<Client>,
     /// Persisted settings; rewritten when the league selector changes.
     config: Config,
+    /// Resolved render-time palette (parsed from `config.theme`). Rebuilt
+    /// whenever the config changes (settings edit / hot-reload).
+    theme: view::theme::Theme,
     /// Leagues offered in the top-right selector.
     leagues: Vec<League>,
     item_text: String,
@@ -179,6 +192,13 @@ pub struct QuickModeApp {
     /// A note shown in the settings panel after an action (saved / restart
     /// needed for hotkeys, …).
     settings_note: Option<String>,
+    /// Which hotkey row, if any, is currently capturing a keypress (click-to-
+    /// record). The overlay reads this in its keyboard handler to grab the next
+    /// combo; `None` means not recording.
+    recording_hotkey: Option<HotkeySlot>,
+    /// Live handle to the evdev hotkey watcher — pushes rebinds / focus-gate
+    /// changes to the reader threads so they take effect without a restart.
+    hotkeys: HotkeyHandle,
     /// Live POESESSID validation state shown beside the field in Settings.
     session_status: SessionCheck,
     /// When the POESESSID field last changed, for debouncing the live check.
@@ -211,12 +231,15 @@ impl QuickModeApp {
         leagues: Vec<League>,
         hotkey_rx: Receiver<Hotkey>,
         tray: Option<platform_linux::TrayHandle>,
+        hotkeys: HotkeyHandle,
     ) -> Self {
         let (tx, rx) = channel();
+        let theme = view::theme::Theme::from_config(&config.theme);
         QuickModeApp {
             rt,
             client,
             config,
+            theme,
             leagues,
             item_text: String::new(),
             view: View::Item,
@@ -260,6 +283,8 @@ impl QuickModeApp {
             settings_close_requested: false,
             quit_requested: false,
             settings_note: None,
+            recording_hotkey: None,
+            hotkeys,
             session_status: SessionCheck::Idle,
             session_check_at: None,
             mode: PriceMode::Item,
@@ -311,6 +336,43 @@ impl QuickModeApp {
         std::mem::take(&mut self.quit_requested)
     }
 
+    /// Whether a hotkey row in Settings is currently capturing a keypress. The
+    /// overlay checks this each key event to know whether to grab the combo
+    /// (via [`commit_hotkey`](Self::commit_hotkey)) instead of routing it to egui.
+    pub fn is_recording_hotkey(&self) -> bool {
+        self.recording_hotkey.is_some()
+    }
+
+    /// Abandon an in-progress hotkey recording (Esc, or clicking the row again).
+    pub fn cancel_hotkey_recording(&mut self) {
+        self.recording_hotkey = None;
+    }
+
+    /// Store a recorded hotkey `binding` (e.g. `"Ctrl+D"`) into the row currently
+    /// recording, persist it, and stop recording. No-op if nothing is recording.
+    /// The new binding is pushed to the live watcher, so it works immediately —
+    /// no restart.
+    pub fn commit_hotkey(&mut self, binding: String) {
+        let Some(slot) = self.recording_hotkey.take() else {
+            return;
+        };
+        match slot {
+            HotkeySlot::Quick => self.config.hotkey_quick = binding,
+            HotkeySlot::Macro => self.config.hotkey_macro = binding,
+            HotkeySlot::Macro2 => self.config.hotkey_macro2 = binding,
+            HotkeySlot::Close => self.config.hotkey_close = binding,
+        }
+        // Apply to the running watcher first so the rebind is live even if the
+        // disk write fails.
+        self.hotkeys.apply_config(&self.config);
+        if let Err(e) = self.config.save() {
+            tracing::warn!(error = %e, "could not save hotkey");
+            self.settings_note = Some(format!("Could not save: {e}"));
+        } else {
+            self.settings_note = None;
+        }
+    }
+
     /// Configured popup position mode (`center` / `fixed`). The overlay reads
     /// this each frame to place the popup surface.
     pub fn position_mode(&self) -> &str {
@@ -320,6 +382,24 @@ impl QuickModeApp {
     /// Configured fixed-mode top-left position (output-logical pixels).
     pub fn fixed_pos(&self) -> (i32, i32) {
         (self.config.fixed_x, self.config.fixed_y)
+    }
+
+    /// Whether the per-second overlay performance log is enabled (Settings
+    /// toggle, off by default). The overlay syncs its perf instrumentation to
+    /// this each frame.
+    pub fn perf_metrics_enabled(&self) -> bool {
+        self.config.perf_metrics
+    }
+
+    /// The popup background fill (themeable; alpha carries the user's opacity).
+    /// The overlay reads this each frame to paint the surface frame.
+    pub fn overlay_fill(&self) -> egui::Color32 {
+        self.theme.overlay_fill
+    }
+
+    /// The popup border colour (themeable; alpha carries the user's opacity).
+    pub fn overlay_stroke(&self) -> egui::Color32 {
+        self.theme.overlay_stroke
     }
 
     /// Persist a dragged popup position: switch to **fixed** mode at `(x, y)`
@@ -518,18 +598,13 @@ impl QuickModeApp {
     }
 
     /// Apply the live-reloadable fields of a config reloaded from disk. League
-    /// switches the client + re-prices; filter defaults and placement take
-    /// effect on the next item. Hotkeys, realm, and the POE2-focus gate are read
-    /// once at startup, so those need a restart — flagged, not silently dropped.
+    /// switches the client + re-prices; hotkeys + the POE2-focus gate are pushed
+    /// to the running watcher; filter defaults and placement take effect on the
+    /// next item. Only the realm is read once at startup, so it still needs a
+    /// restart — flagged, not silently dropped.
     fn apply_reloaded_config(&mut self, new: Config, ctx: &egui::Context) {
         let league_changed = new.league != self.config.league;
-        let restart_needed = new.hotkey_quick != self.config.hotkey_quick
-            || new.hotkey_detailed != self.config.hotkey_detailed
-            || new.hotkey_macro != self.config.hotkey_macro
-            || new.hotkey_macro2 != self.config.hotkey_macro2
-            || new.hotkey_close != self.config.hotkey_close
-            || new.require_poe2_focus != self.config.require_poe2_focus
-            || new.realm != self.config.realm;
+        let restart_needed = new.realm != self.config.realm;
         if league_changed {
             self.client.set_league(new.league.clone());
         }
@@ -537,9 +612,13 @@ impl QuickModeApp {
             self.client.set_poesessid(new.poesessid.clone());
         }
         self.config = new;
+        // A hand-edited theme block takes effect on the next frame.
+        self.theme = view::theme::Theme::from_config(&self.config.theme);
+        // Push rebinds / focus-gate to the evdev reader threads (live, no restart).
+        self.hotkeys.apply_config(&self.config);
         if restart_needed {
             self.settings_note =
-                Some("Saved. Hotkeys / realm / focus-gate apply after a restart.".to_string());
+                Some("Saved. The realm change applies after a restart.".to_string());
         }
         tracing::info!(league_changed, restart_needed, "applied reloaded config");
         // A league change re-prices the loaded item immediately.
@@ -604,6 +683,7 @@ fn resolve_auto_league(leagues: &[League]) -> Option<String> {
 pub fn build_app(
     hotkey_rx: Receiver<Hotkey>,
     tray: Option<platform_linux::TrayHandle>,
+    hotkeys: HotkeyHandle,
 ) -> anyhow::Result<QuickModeApp> {
     let mut config = Config::load();
     // A pinned league or a POE_LEAGUE override is taken as-is; otherwise it's
@@ -675,6 +755,6 @@ pub fn build_app(
     client.set_poesessid(config.poesessid.clone());
 
     Ok(QuickModeApp::new(
-        rt, client, config, leagues, hotkey_rx, tray,
+        rt, client, config, leagues, hotkey_rx, tray, hotkeys,
     ))
 }

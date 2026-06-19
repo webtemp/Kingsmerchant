@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, RwLock};
 use std::thread;
 
 use evdev::{Device, InputEventKind, Key};
@@ -24,13 +25,12 @@ const KBD_SUFFIX: &str = "-event-kbd";
 /// A recognized global hotkey press.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyEvent {
-    /// Ctrl+C — quick price check.
+    /// The price-check hotkey (Ctrl+C by default). When it isn't POE2's own
+    /// Ctrl+C copy the caller synthesizes that copy before reading the clipboard.
     QuickCopy,
-    /// Ctrl+Alt+C — detailed price check.
-    DetailedCopy,
-    /// Escape — dismiss the popup. Detected globally because the overlay takes
-    /// no keyboard focus (so Wayland never delivers it the key). Observe-only:
-    /// POE2 still sees Escape too.
+    /// Dismiss the overlay — Escape, or Alt+Tab (the user switching away).
+    /// Detected globally because the overlay takes no keyboard focus (so Wayland
+    /// never delivers it the key). Observe-only: POE2 still sees the keys too.
     Close,
     /// Ctrl / Alt state changed. The overlay is visible only while Ctrl is held
     /// and drags on Ctrl+Alt — but with no keyboard focus it can't read
@@ -85,13 +85,19 @@ impl Binding {
     fn matches(self, key: Key, ctrl: bool, alt: bool, shift: bool) -> bool {
         self.key == key && self.ctrl == ctrl && self.alt == alt && self.shift == shift
     }
+
+    /// Whether this is exactly POE2's own copy combo (Ctrl+C) — the keypress the
+    /// game itself turns into "copy the item under the cursor". When the quick
+    /// hotkey is this, the game does the copy; otherwise we synthesize it.
+    fn is_native_copy(self) -> bool {
+        self.key == Key::KEY_C && self.ctrl && !self.alt && !self.shift
+    }
 }
 
 /// The configurable, rebindable hotkeys.
 #[derive(Debug, Clone, Copy)]
 pub struct HotkeyBindings {
     pub quick: Binding,
-    pub detailed: Binding,
     pub close: Binding,
     pub macro_: Binding,
     pub macro2: Binding,
@@ -104,12 +110,6 @@ impl Default for HotkeyBindings {
                 key: Key::KEY_C,
                 ctrl: true,
                 alt: false,
-                shift: false,
-            },
-            detailed: Binding {
-                key: Key::KEY_C,
-                ctrl: true,
-                alt: true,
                 shift: false,
             },
             close: Binding {
@@ -137,13 +137,7 @@ impl Default for HotkeyBindings {
 impl HotkeyBindings {
     /// Build from config strings, falling back to the default for any that fail
     /// to parse (logged, so a typo'd binding doesn't disable the whole hotkey).
-    pub fn from_strings(
-        quick: &str,
-        detailed: &str,
-        macro_: &str,
-        macro2: &str,
-        close: &str,
-    ) -> Self {
+    pub fn from_strings(quick: &str, macro_: &str, macro2: &str, close: &str) -> Self {
         let d = Self::default();
         let one = |s: &str, fallback: Binding| {
             Binding::parse(s).unwrap_or_else(|e| {
@@ -153,20 +147,24 @@ impl HotkeyBindings {
         };
         HotkeyBindings {
             quick: one(quick, d.quick),
-            detailed: one(detailed, d.detailed),
             macro_: one(macro_, d.macro_),
             macro2: one(macro2, d.macro2),
             close: one(close, d.close),
         }
     }
 
-    /// Which action a key-press maps to, given the exact modifier state.
-    /// Detailed (more modifiers) is checked first; exact matching means at most
-    /// one binding applies.
+    /// Whether the quick hotkey needs us to synthesize a Ctrl+C copy before
+    /// reading the clipboard. True unless quick *is* Ctrl+C, which POE2 copies on
+    /// its own; for any other binding (e.g. Ctrl+D) the game never copies, so we
+    /// must do it.
+    pub fn quick_needs_synthetic_copy(&self) -> bool {
+        !self.quick.is_native_copy()
+    }
+
+    /// Which action a key-press maps to, given the exact modifier state. Exact
+    /// matching means at most one binding applies.
     fn event_for(&self, key: Key, ctrl: bool, alt: bool, shift: bool) -> Option<HotkeyEvent> {
-        if self.detailed.matches(key, ctrl, alt, shift) {
-            Some(HotkeyEvent::DetailedCopy)
-        } else if self.quick.matches(key, ctrl, alt, shift) {
+        if self.quick.matches(key, ctrl, alt, shift) {
             Some(HotkeyEvent::QuickCopy)
         } else if self.close.matches(key, ctrl, alt, shift) {
             Some(HotkeyEvent::Close)
@@ -252,11 +250,46 @@ fn ascii_key(c: char) -> Option<Key> {
     })
 }
 
+/// A shared, live-updatable set of [`HotkeyBindings`]. The detached evdev reader
+/// threads read it on every keypress, so [`set`](Self::set) takes effect at once
+/// — no restart needed when the user rebinds a hotkey.
+#[derive(Clone)]
+pub struct HotkeyControl {
+    bindings: Arc<RwLock<HotkeyBindings>>,
+}
+
+impl HotkeyControl {
+    pub fn new(bindings: HotkeyBindings) -> Self {
+        HotkeyControl {
+            bindings: Arc::new(RwLock::new(bindings)),
+        }
+    }
+
+    /// Replace the live bindings (e.g. after a settings change). Recovers from a
+    /// poisoned lock: a reader-thread panic mustn't freeze rebinding forever.
+    pub fn set(&self, bindings: HotkeyBindings) {
+        *self
+            .bindings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = bindings;
+    }
+
+    /// A snapshot of the current bindings ([`HotkeyBindings`] is `Copy`).
+    pub fn snapshot(&self) -> HotkeyBindings {
+        *self
+            .bindings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// Start watching every connected keyboard for the price-check hotkeys.
 ///
-/// Returns a receiver that yields a [`HotkeyEvent`] on each matching press.
-/// Reader threads are detached and live for the process lifetime.
-pub fn watch_hotkeys(bindings: HotkeyBindings) -> anyhow::Result<Receiver<HotkeyEvent>> {
+/// `control` holds the live bindings the reader threads consult per keypress, so
+/// rebinds apply without a restart. Returns a receiver that yields a
+/// [`HotkeyEvent`] on each matching press. Reader threads are detached and live
+/// for the process lifetime.
+pub fn watch_hotkeys(control: &HotkeyControl) -> anyhow::Result<Receiver<HotkeyEvent>> {
     let devices = keyboard_paths()?;
     if devices.is_empty() {
         anyhow::bail!(
@@ -271,10 +304,11 @@ pub fn watch_hotkeys(bindings: HotkeyBindings) -> anyhow::Result<Receiver<Hotkey
         match Device::open(&path) {
             Ok(device) => {
                 let tx = tx.clone();
+                let bindings = control.bindings.clone();
                 let label = path.display().to_string();
                 thread::Builder::new()
                     .name(format!("evdev:{label}"))
-                    .spawn(move || reader_loop(device, label, tx, bindings))?;
+                    .spawn(move || reader_loop(device, label, tx, &bindings))?;
                 opened += 1;
             }
             Err(err) => {
@@ -314,13 +348,15 @@ fn keyboard_paths() -> anyhow::Result<Vec<PathBuf>> {
 
 /// Blocking read loop for one keyboard. Tracks this keyboard's modifier state
 /// and emits a hotkey when a key matching a configured [`Binding`] is pressed.
+/// Reads `bindings` afresh on each action keypress, so a live rebind applies
+/// immediately.
 // Owns its inputs: this runs as a thread body for the process lifetime.
 #[allow(clippy::needless_pass_by_value)]
 fn reader_loop(
     mut device: Device,
     label: String,
     tx: Sender<HotkeyEvent>,
-    bindings: HotkeyBindings,
+    bindings: &RwLock<HotkeyBindings>,
 ) {
     let mut ctrl = false;
     let mut alt = false;
@@ -357,9 +393,21 @@ fn reader_loop(
                 Key::KEY_LEFTSHIFT | Key::KEY_RIGHTSHIFT => shift = pressed,
                 _ => {}
             }
+            // Alt+Tab — the compositor's window switcher — also dismisses the
+            // overlay, matching Escape / click-outside. Detected here (globally,
+            // on the initial press) because the overlay holds no keyboard focus
+            // while merely shown, so Wayland never delivers it the combo.
+            if event.value() == 1 && alt && key == Key::KEY_TAB && tx.send(HotkeyEvent::Close).is_err()
+            {
+                return;
+            }
             // Action bindings fire on the initial press only (not autorepeat).
             if event.value() == 1 {
-                if let Some(hotkey) = bindings.event_for(key, ctrl, alt, shift) {
+                let matched = bindings
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .event_for(key, ctrl, alt, shift);
+                if let Some(hotkey) = matched {
                     if tx.send(hotkey).is_err() {
                         return;
                     }
@@ -436,17 +484,14 @@ mod tests {
     }
 
     #[test]
-    fn exact_match_disambiguates_quick_and_detailed() {
+    fn exact_match_maps_quick_and_others() {
         let b = HotkeyBindings::default();
-        // Ctrl+C → quick; Ctrl+Alt+C → detailed; neither bare nor wrong-mods.
+        // Ctrl+C → quick; bare C and wrong-mods (Ctrl+Alt+C) don't map.
         assert_eq!(
             b.event_for(Key::KEY_C, true, false, false),
             Some(HotkeyEvent::QuickCopy)
         );
-        assert_eq!(
-            b.event_for(Key::KEY_C, true, true, false),
-            Some(HotkeyEvent::DetailedCopy)
-        );
+        assert_eq!(b.event_for(Key::KEY_C, true, true, false), None);
         assert_eq!(b.event_for(Key::KEY_C, false, false, false), None);
         assert_eq!(
             b.event_for(Key::KEY_F5, false, false, false),
@@ -477,7 +522,7 @@ mod tests {
     fn from_strings_falls_back_on_invalid_binding() {
         // A garbage `quick` binding falls back to the default Ctrl+C; the rest
         // parse from the given strings.
-        let b = HotkeyBindings::from_strings("not-a-key", "Ctrl+Alt+C", "F5", "F2", "Escape");
+        let b = HotkeyBindings::from_strings("not-a-key", "F5", "F2", "Escape");
         assert_eq!(b.quick, HotkeyBindings::default().quick);
         assert_eq!(
             b.event_for(Key::KEY_C, true, false, false),
@@ -487,15 +532,11 @@ mod tests {
 
     #[test]
     fn from_strings_rebinds_to_custom_keys() {
-        // Args: quick, detailed, macro, macro2, close.
-        let b = HotkeyBindings::from_strings("Ctrl+D", "Ctrl+Shift+D", "F8", "F9", "Q");
+        // Args: quick, macro, macro2, close.
+        let b = HotkeyBindings::from_strings("Ctrl+D", "F8", "F9", "Q");
         assert_eq!(
             b.event_for(Key::KEY_D, true, false, false),
             Some(HotkeyEvent::QuickCopy)
-        );
-        assert_eq!(
-            b.event_for(Key::KEY_D, true, false, true),
-            Some(HotkeyEvent::DetailedCopy)
         );
         assert_eq!(
             b.event_for(Key::KEY_F8, false, false, false),
@@ -505,5 +546,19 @@ mod tests {
             b.event_for(Key::KEY_Q, false, false, false),
             Some(HotkeyEvent::Close)
         );
+    }
+
+    #[test]
+    fn quick_needs_synthetic_copy_only_when_not_ctrl_c() {
+        // Default quick is Ctrl+C — POE2 copies on its own.
+        assert!(!HotkeyBindings::default().quick_needs_synthetic_copy());
+        // Any other binding (e.g. Ctrl+D) needs a synthesized Ctrl+C.
+        let rebound = HotkeyBindings::from_strings("Ctrl+D", "F5", "F2", "Escape");
+        assert!(rebound.quick_needs_synthetic_copy());
+        // Even C without Ctrl, or with extra modifiers, isn't the native copy.
+        assert!(HotkeyBindings::from_strings("C", "F5", "F2", "Escape")
+            .quick_needs_synthetic_copy());
+        assert!(HotkeyBindings::from_strings("Ctrl+Alt+C", "F5", "F2", "Escape")
+            .quick_needs_synthetic_copy());
     }
 }
