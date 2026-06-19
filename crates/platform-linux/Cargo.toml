@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 tracing.workspace = true
-evdev = "0.12"
+evdev = "0.13"
 # KDE/freedesktop StatusNotifierItem tray. The `blocking` feature
 # gives a synchronous spawn()/Handle::update() so we don't need to drive it
 # from an async context.
