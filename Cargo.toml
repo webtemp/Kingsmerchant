@@ -61,7 +61,12 @@ float_cmp = "allow"                # exact-literal asserts in tests
 
 # Optimised, slimmed binary for distribution. `panic` is left as the default
 # (unwind) so a panic in a best-effort watcher thread doesn't abort the app.
+#
+# `lto = "thin"` (not "fat"): a clean fat-LTO build fails to link the `ring`
+# crate's hand-written assembly ("undefined symbol: ring_core_*") — a known
+# fat-LTO + build-script-native-object interaction. Thin LTO keeps nearly all
+# the size/perf win and links cleanly.
 [profile.release]
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 strip = "symbols"

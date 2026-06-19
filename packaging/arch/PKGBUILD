@@ -1,15 +1,17 @@
 # Maintainer: Deyan Danailov <webtemp@gmail.com>
 
-# >>> Set this to your GitHub username before publishing. The repo is assumed
-# >>> to be github.com/<_gh>/kingsmerchant and the release tag to be v$pkgver.
+# >>> GitHub account + repository. The release tag is v$pkgver. `_reponame`
+# >>> keeps the repo's canonical casing: GitHub's tag tarball extracts to a
+# >>> top-level dir named "${_reponame}-${pkgver}", which need not match pkgname.
 _gh=webtemp
+_reponame=Kingsmerchant
 
 pkgname=kingsmerchant
-pkgver=0.9.1
+pkgver=0.9.2
 pkgrel=1
 pkgdesc="Native POE2 price-check overlay for KDE Plasma 6 Wayland"
 arch=('x86_64')
-url="https://github.com/${_gh}/kingsmerchant"
+url="https://github.com/${_gh}/${_reponame}"
 license=('MIT OR GPL-3.0-or-later')
 
 # Runtime libs — verified against the built binary (ldd + dlopen strings):
@@ -35,20 +37,20 @@ depends=(
 makedepends=('cargo')
 install="${pkgname}.install"
 
-# GitHub generates the tag tarball on demand; it extracts to ${pkgname}-${pkgver}/.
+# GitHub generates the tag tarball on demand; it extracts to ${_reponame}-${pkgver}/.
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 # Replace with the real digest after tagging:  updpkgsums
 sha256sums=('87d79c4f934320ff10f4e57dfb1c1675a94cb011c25a6cae3800365c67c532ce')
 
 prepare() {
-    cd "${pkgname}-${pkgver}"
+    cd "${_reponame}-${pkgver}"
     export RUSTUP_TOOLCHAIN=stable
     # Vendor all crates now so build() can run fully offline (--frozen).
     cargo fetch --locked --target "${CARCH}-unknown-linux-gnu"
 }
 
 build() {
-    cd "${pkgname}-${pkgver}"
+    cd "${_reponame}-${pkgver}"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
     # default-members is the `kingsmerchant` app crate; -p keeps it explicit and skips
@@ -60,7 +62,7 @@ build() {
 # available in a clean build chroot. Run `cargo test` outside packaging instead.
 
 package() {
-    cd "${pkgname}-${pkgver}"
+    cd "${_reponame}-${pkgver}"
 
     install -Dm755 "target/release/kingsmerchant" "${pkgdir}/usr/bin/kingsmerchant"
     install -Dm644 "assets/kingsmerchant.desktop" \
