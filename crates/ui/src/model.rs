@@ -12,18 +12,27 @@ use trade_api::{
 /// Standard rare-item affix cap: up to three prefixes and three suffixes.
 const MAX_AFFIXES_PER_GROUP: usize = 3;
 
+/// Tablets (Breach/Abyss/… map-device tablets) cap at two prefixes and two
+/// suffixes — four mods total, not six like normal rare gear.
+const MAX_TABLET_AFFIXES_PER_GROUP: usize = 2;
+
 /// Open (empty) prefix and suffix slots on a rare item, as `(prefix, suffix)`.
 /// Only rares can be crafted into, so non-rares always report `(false, false)`.
 /// Counts each `{ Prefix }` / `{ Suffix }` descriptor as one filled slot.
+///
+/// Tablets use a lower cap (2/2) than normal gear (3/3), so a full tablet
+/// correctly reports no open slots instead of phantom empty rows.
 pub(crate) fn open_affix_slots(item: &Item) -> (bool, bool) {
     if item.rarity != Rarity::Rare {
         return (false, false);
     }
+    let max = if item.item_class == "Tablet" {
+        MAX_TABLET_AFFIXES_PER_GROUP
+    } else {
+        MAX_AFFIXES_PER_GROUP
+    };
     let count = |kind: &ModKind| item.modifiers.iter().filter(|m| &m.kind == kind).count();
-    (
-        count(&ModKind::Prefix) < MAX_AFFIXES_PER_GROUP,
-        count(&ModKind::Suffix) < MAX_AFFIXES_PER_GROUP,
-    )
+    (count(&ModKind::Prefix) < max, count(&ModKind::Suffix) < max)
 }
 
 /// Result of a background price check, sent back to the UI thread.
@@ -381,9 +390,14 @@ mod tests {
 
     /// Build a parsed item with `prefixes` prefix and `suffixes` suffix mods.
     fn item_with(rarity: &str, prefixes: usize, suffixes: usize) -> Item {
+        item_with_class("Rings", rarity, prefixes, suffixes)
+    }
+
+    /// As [`item_with`], but with an explicit `Item Class:` (e.g. `Tablet`).
+    fn item_with_class(class: &str, rarity: &str, prefixes: usize, suffixes: usize) -> Item {
         use std::fmt::Write as _;
         let mut text = format!(
-            "Item Class: Rings\nRarity: {rarity}\nTest Name\nSapphire Ring\n--------\n\
+            "Item Class: {class}\nRarity: {rarity}\nTest Name\nSapphire Ring\n--------\n\
              Item Level: 80\n--------\n"
         );
         for i in 0..prefixes {
@@ -414,5 +428,18 @@ mod tests {
         // Non-rares never qualify, even with free slots.
         assert_eq!(open_affix_slots(&item_with("Magic", 1, 0)), (false, false));
         assert_eq!(open_affix_slots(&item_with("Normal", 0, 0)), (false, false));
+    }
+
+    #[test]
+    fn tablets_cap_affixes_at_two_per_group() {
+        // A full tablet is 2 prefixes + 2 suffixes — no open slots (the bug:
+        // it used to report a phantom 3rd prefix/suffix as craftable).
+        assert_eq!(open_affix_slots(&item_with_class("Tablet", "Rare", 2, 2)), (false, false));
+        // One prefix free, suffixes full.
+        assert_eq!(open_affix_slots(&item_with_class("Tablet", "Rare", 1, 2)), (true, false));
+        // Both groups have room.
+        assert_eq!(open_affix_slots(&item_with_class("Tablet", "Rare", 1, 1)), (true, true));
+        // Normal gear still uses the 3/3 cap (regression guard).
+        assert_eq!(open_affix_slots(&item_with_class("Rings", "Rare", 2, 2)), (true, true));
     }
 }
