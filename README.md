@@ -177,6 +177,14 @@ cargo clippy --workspace --all-targets -- -D warnings   # lint
 cargo fmt --all                                         # format
 ```
 
+For a tight edit loop, keep a watcher running in one terminal and code in
+another — it re-lints and relaunches the overlay on every save:
+
+```sh
+cargo install cargo-watch     # once
+cargo watch -x clippy -x run  # lint, then run, on each change
+```
+
 CI runs fmt, clippy (`-D warnings`), tests, doc, and an MSRV check on every push
 and pull request.
 
