@@ -27,6 +27,28 @@ const EMPTY_SUFFIX_STAT: &str = "pseudo.pseudo_number_of_empty_suffix_mods";
 const UNREVEALED_PREFIX_STAT: &str = "pseudo.pseudo_number_of_unrevealed_prefix_mods";
 const UNREVEALED_SUFFIX_STAT: &str = "pseudo.pseudo_number_of_unrevealed_suffix_mods";
 
+/// Pseudo stat id for a tablet's remaining uses. A used tablet is worth less, so
+/// this is seeded with the current count and ticked on by default.
+const USES_REMAINING_STAT: &str = "pseudo.pseudo_number_of_uses_remaining";
+
+/// A tablet's current "N uses remaining" count, read from its modifier stat
+/// lines (the game prints it under the implicit, e.g. `10 uses remaining`).
+/// `None` for non-tablets or when the line is absent.
+fn tablet_uses_remaining(item: &Item) -> Option<u32> {
+    if item.item_class != "Tablet" {
+        return None;
+    }
+    item.modifiers
+        .iter()
+        .flat_map(|m| &m.stats)
+        .find_map(|line| {
+            let n = line
+                .strip_suffix(" uses remaining")
+                .or_else(|| line.strip_suffix(" use remaining"))?;
+            n.trim().parse::<u32>().ok()
+        })
+}
+
 impl QuickModeApp {
     /// Start a *fresh* price check from `item_text` (a new Ctrl+C, manual button,
     /// or paste). Rebuilds the filter panel from the item and resets the price
@@ -395,6 +417,18 @@ impl QuickModeApp {
             is_implicit: false,
         };
 
+        // Tablet uses remaining: a used tablet is worth less, so seed the min
+        // with the current count and tick it on by default. Exact count (not
+        // scaled by the roll-tolerance %) — you want at-least-this-many uses.
+        if let Some(uses) = tablet_uses_remaining(item) {
+            rows.push(count_row(
+                USES_REMAINING_STAT,
+                "# uses remaining (Tablets)",
+                uses.to_string(),
+                true,
+            ));
+        }
+
         // Unrevealed desecrated mods: searchable only by how many prefix/suffix
         // slots are still hidden, not by their (unknown) rolls. Enabled with the
         // exact count so the search matches items in the same unrevealed state,
@@ -465,5 +499,32 @@ mod tests {
         assert!(exchange_eligible_rarity(&Rarity::Currency));
         assert!(exchange_eligible_rarity(&Rarity::Normal));
         assert!(exchange_eligible_rarity(&Rarity::Gem));
+    }
+
+    #[test]
+    fn tablet_uses_remaining_is_extracted_for_tablets_only() {
+        let tablet = parser::parse_item(
+            "Item Class: Tablet\nRarity: Rare\nPhoenix Myth\nAbyss Tablet\n--------\n\
+             Item Level: 82\n--------\n{ Implicit Modifier }\nAdds Abysses to a Map\n\
+             10 uses remaining\n",
+        )
+        .expect("parses");
+        assert_eq!(tablet_uses_remaining(&tablet), Some(10));
+
+        // Singular "1 use remaining" is handled too.
+        let one = parser::parse_item(
+            "Item Class: Tablet\nRarity: Rare\nX\nAbyss Tablet\n--------\n\
+             { Implicit Modifier }\nAdds Abysses to a Map\n1 use remaining\n",
+        )
+        .expect("parses");
+        assert_eq!(tablet_uses_remaining(&one), Some(1));
+
+        // Not a tablet → never extracted, even if such a line appeared.
+        let ring = parser::parse_item(
+            "Item Class: Rings\nRarity: Rare\nX\nSapphire Ring\n--------\n\
+             { Prefix Modifier \"P\" }\n+50 to maximum Life\n",
+        )
+        .expect("parses");
+        assert_eq!(tablet_uses_remaining(&ring), None);
     }
 }
