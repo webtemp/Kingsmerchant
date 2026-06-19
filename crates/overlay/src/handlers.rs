@@ -333,8 +333,7 @@ impl KeyboardHandler for App {
             if event.keysym == Keysym::Escape {
                 self.quick.cancel_hotkey_recording();
             } else if let Some(key) = keysym_to_binding_key(event.keysym) {
-                let binding =
-                    format_binding(modifiers.ctrl, modifiers.alt, modifiers.shift, &key);
+                let binding = format_binding(modifiers.ctrl, modifiers.alt, modifiers.shift, &key);
                 self.quick.commit_hotkey(binding);
             }
             return;

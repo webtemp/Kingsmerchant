@@ -44,7 +44,10 @@ impl Theme {
             affix_blue: parse_hex(&cfg.affix_blue).unwrap_or(d.affix_blue),
             online_dot: parse_hex(&cfg.online_dot).unwrap_or(d.online_dot),
             header_bg: parse_hex(&cfg.header_bg).unwrap_or(d.header_bg),
-            overlay_fill: with_opacity(parse_hex(&cfg.overlay_fill).unwrap_or(d.overlay_fill), opacity),
+            overlay_fill: with_opacity(
+                parse_hex(&cfg.overlay_fill).unwrap_or(d.overlay_fill),
+                opacity,
+            ),
             overlay_stroke: with_opacity(
                 parse_hex(&cfg.overlay_stroke).unwrap_or(d.overlay_stroke),
                 opacity,
@@ -189,6 +192,18 @@ pub(super) fn rarity_color(rarity: &Rarity) -> Color32 {
     }
 }
 
+/// Trade `frameType` → its in-game rarity colour (mirrors [`rarity_color`]).
+pub(super) fn frame_color(frame_type: u64) -> Color32 {
+    match frame_type {
+        1 => Color32::from_rgb(0x88, 0x88, 0xff), // magic
+        2 => Color32::from_rgb(0xff, 0xff, 0x77), // rare
+        3 => Color32::from_rgb(0xaf, 0x60, 0x25), // unique
+        4 => Color32::from_rgb(0x1b, 0xa2, 0x9b), // gem
+        5 => Color32::from_rgb(0xaa, 0x99, 0x77), // currency
+        _ => Color32::from_rgb(0xc8, 0xc8, 0xc8), // normal / other
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,17 +252,5 @@ mod tests {
         let theme = Theme::from_config(&cfg);
         assert_eq!(theme.accent_gold, Theme::default().accent_gold);
         assert_eq!(theme.overlay_fill.a(), 0xff); // clamped to 1.0
-    }
-}
-
-/// Trade `frameType` → its in-game rarity colour (mirrors [`rarity_color`]).
-pub(super) fn frame_color(frame_type: u64) -> Color32 {
-    match frame_type {
-        1 => Color32::from_rgb(0x88, 0x88, 0xff), // magic
-        2 => Color32::from_rgb(0xff, 0xff, 0x77), // rare
-        3 => Color32::from_rgb(0xaf, 0x60, 0x25), // unique
-        4 => Color32::from_rgb(0x1b, 0xa2, 0x9b), // gem
-        5 => Color32::from_rgb(0xaa, 0x99, 0x77), // currency
-        _ => Color32::from_rgb(0xc8, 0xc8, 0xc8), // normal / other
     }
 }

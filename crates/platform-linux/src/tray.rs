@@ -57,11 +57,11 @@ struct PoeTray {
 
 impl ksni::Tray for PoeTray {
     fn id(&self) -> String {
-        "poe2ddd".into()
+        "kingsmerchant".into()
     }
 
     fn title(&self) -> String {
-        "poe2ddd".into()
+        "kingsmerchant".into()
     }
 
     fn category(&self) -> Category {
@@ -72,7 +72,7 @@ impl ksni::Tray for PoeTray {
     /// installed); the embedded pixmap is the fallback so the tray is visible
     /// even before install.
     fn icon_name(&self) -> String {
-        "poe2ddd".into()
+        "kingsmerchant".into()
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
@@ -81,9 +81,9 @@ impl ksni::Tray for PoeTray {
 
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
-            title: "poe2ddd".into(),
+            title: "kingsmerchant".into(),
             description: self.state.description(),
-            icon_name: "poe2ddd".into(),
+            icon_name: "kingsmerchant".into(),
             icon_pixmap: Vec::new(),
         }
     }
@@ -160,7 +160,7 @@ pub fn spawn_tray() -> anyhow::Result<(TrayHandle, Receiver<TrayAction>)> {
 }
 
 /// The app icon as ARGB32 pixmaps, so the tray is visible without relying on an
-/// installed theme icon. Pre-rasterised from `assets/poe2ddd.svg` (the Chaos-orb
+/// installed theme icon. Pre-rasterised from `assets/kingsmerchant.svg` (the Chaos-orb
 /// nebula) at the sizes a KDE tray is likely to request; the host picks the
 /// closest. Regenerate with `assets/tray/regen.sh`.
 fn app_icon() -> Vec<Icon> {

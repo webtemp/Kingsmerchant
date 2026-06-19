@@ -123,15 +123,15 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                     }
                     last_macro[slot] = Some(now);
 
-                    let (tx, ctx, require_focus) =
-                        (tx.clone(), ctx.clone(), require_focus.clone());
+                    let (tx, ctx, require_focus) = (tx.clone(), ctx.clone(), require_focus.clone());
                     let msg = if event == HotkeyEvent::Macro2 {
                         Hotkey::Macro2
                     } else {
                         Hotkey::Macro
                     };
                     std::thread::spawn(move || {
-                        if require_focus.load(Ordering::Relaxed) && !platform_linux::is_poe2_active()
+                        if require_focus.load(Ordering::Relaxed)
+                            && !platform_linux::is_poe2_active()
                         {
                             tracing::info!("macro ignored — POE2 not focused");
                             return;
@@ -152,7 +152,8 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                         control.clone(),
                     );
                     std::thread::spawn(move || {
-                        if require_focus.load(Ordering::Relaxed) && !platform_linux::is_poe2_active()
+                        if require_focus.load(Ordering::Relaxed)
+                            && !platform_linux::is_poe2_active()
                         {
                             tracing::info!("price-check hotkey ignored — POE2 not focused");
                             return;

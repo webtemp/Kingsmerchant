@@ -1,15 +1,15 @@
 # Maintainer: Deyan Danailov <webtemp@gmail.com>
 
 # >>> Set this to your GitHub username before publishing. The repo is assumed
-# >>> to be github.com/<_gh>/poe2ddd and the release tag to be v$pkgver.
-_gh=OWNER
+# >>> to be github.com/<_gh>/kingsmerchant and the release tag to be v$pkgver.
+_gh=webtemp
 
-pkgname=poe2ddd
+pkgname=kingsmerchant
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="Native POE2 price-check overlay for KDE Plasma 6 Wayland"
 arch=('x86_64')
-url="https://github.com/${_gh}/poe2ddd"
+url="https://github.com/${_gh}/kingsmerchant"
 license=('MIT OR GPL-3.0-or-later')
 
 # Runtime libs — verified against the built binary (ldd + dlopen strings):
@@ -51,9 +51,9 @@ build() {
     cd "${pkgname}-${pkgver}"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
-    # default-members is the `poe2ddd` app crate; -p keeps it explicit and skips
-    # the workspace's other binaries (e.g. the standalone poe2-overlay).
-    cargo build --frozen --release --package poe2ddd
+    # default-members is the `kingsmerchant` app crate; -p keeps it explicit and skips
+    # the workspace's other binaries (e.g. the standalone kingsmerchant-overlay).
+    cargo build --frozen --release --package kingsmerchant
 }
 
 # No check(): the workspace's tests touch evdev/uinput and DISPLAY, which aren't
@@ -62,11 +62,11 @@ build() {
 package() {
     cd "${pkgname}-${pkgver}"
 
-    install -Dm755 "target/release/poe2ddd" "${pkgdir}/usr/bin/poe2ddd"
-    install -Dm644 "assets/poe2ddd.desktop" \
-        "${pkgdir}/usr/share/applications/poe2ddd.desktop"
-    install -Dm644 "assets/poe2ddd.svg" \
-        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/poe2ddd.svg"
+    install -Dm755 "target/release/kingsmerchant" "${pkgdir}/usr/bin/kingsmerchant"
+    install -Dm644 "assets/kingsmerchant.desktop" \
+        "${pkgdir}/usr/share/applications/kingsmerchant.desktop"
+    install -Dm644 "assets/kingsmerchant.svg" \
+        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/kingsmerchant.svg"
 
     # MIT is not a "common" license on Arch, so its text must ship. Both halves
     # of the disjunction are installed. (See the LICENSE note in PUBLISHING.md —

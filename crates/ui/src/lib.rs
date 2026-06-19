@@ -37,7 +37,7 @@ use model::{
 
 const BASE_URL: &str = "https://www.pathofexile.com";
 /// Identifies the app to pathofexile.com and the poe2scout API.
-const USER_AGENT: &str = concat!("poe2ddd/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("kingsmerchant/", env!("CARGO_PKG_VERSION"));
 /// Fetch a sample of this many so the median is meaningful; show the cheapest N.
 pub(crate) const SAMPLE: usize = 10;
 pub(crate) const SHOWN: usize = 10;

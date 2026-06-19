@@ -1,7 +1,7 @@
 _input_group_notice() {
     cat <<'EOF'
 
-==> poe2ddd needs your user in the `input` group for the global Ctrl+C hotkey
+==> kingsmerchant needs your user in the `input` group for the global Ctrl+C hotkey
     (evdev read) and chat injection (uinput write). Without it the hotkey
     SILENTLY does nothing — no error, no popup. One-time setup:
 

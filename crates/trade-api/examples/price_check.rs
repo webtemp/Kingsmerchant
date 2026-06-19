@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Fetch the live definition snapshots (anonymous; these always work).
     let ua = std::env::var("POE_UA")
-        .unwrap_or_else(|_| "poe2ddd/0.1 (+manual test harness)".to_string());
+        .unwrap_or_else(|_| "kingsmerchant/0.1 (+manual test harness)".to_string());
     let mut transport = ReqwestTransport::new(ua)?;
     if let Ok(cookie) = std::env::var("POE_COOKIE") {
         transport = transport.with_cookie(cookie);

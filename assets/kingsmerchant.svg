@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- poe2ddd icon: the "Chaos-orb nebula" (candidate chaos-C). Raster art
-     embedded as a base64 PNG so the single poe2ddd.svg stays the icon source;
+<!-- kingsmerchant icon: the "Chaos-orb nebula" (candidate chaos-C). Raster art
+     embedded as a base64 PNG so the single kingsmerchant.svg stays the icon source;
      rsvg-convert rasterises it for the tray pixmaps (see assets/tray/regen.sh). -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
      width="256" height="256" viewBox="0 0 256 256">

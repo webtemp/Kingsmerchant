@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=poe2ddd
+Name=kingsmerchant
 GenericName=POE2 Price Check Overlay
 Comment=Native Path of Exile 2 price-check overlay for KDE Wayland
-# Assumes the binary is on PATH (e.g. ~/.local/bin/poe2ddd). If you keep it
+# Assumes the binary is on PATH (e.g. ~/.local/bin/kingsmerchant). If you keep it
 # elsewhere, change this to the absolute path of the binary.
-Exec=poe2ddd
-Icon=poe2ddd
+Exec=kingsmerchant
+Icon=kingsmerchant
 Terminal=false
 Categories=Game;
 Keywords=poe;poe2;path of exile;trade;price;exile;overlay;

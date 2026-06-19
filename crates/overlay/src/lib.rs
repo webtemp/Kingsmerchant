@@ -12,9 +12,9 @@
 //! button or the tray and closes by its own X / the tray Quit. Neither surface
 //! takes keyboard focus while hidden, so POE2 keeps it.
 //!
-//! Entry point is [`run`], shared by the `poe2ddd` binary (`cargo run`) and the
-//! `poe2-overlay` binary (`cargo run -p overlay`). The league/config come from
-//! `~/.config/poe2ddd/config.json`; set `POE_LEAGUE` only to override one run.
+//! Entry point is [`run`], shared by the `kingsmerchant` binary (`cargo run`) and the
+//! `kingsmerchant-overlay` binary (`cargo run -p overlay`). The league/config come from
+//! `~/.config/kingsmerchant/config.json`; set `POE_LEAGUE` only to override one run.
 
 // The workspace denies `unsafe_code`; this crate is the sole exception, for the
 // glutin EGL bindings in `surface.rs` (inherently `unsafe` FFI).
@@ -131,7 +131,7 @@ pub fn run() -> Result<()> {
         &layer_shell,
         &qh,
         popup_ctx,
-        "poe2ddd",
+        "kingsmerchant",
         POPUP_INIT_WIDTH,
     );
     let settings = WinSurface::new(
@@ -139,7 +139,7 @@ pub fn run() -> Result<()> {
         &layer_shell,
         &qh,
         settings_ctx,
-        "poe2ddd-settings",
+        "kingsmerchant-settings",
         SETTINGS_WIDTH,
     );
 

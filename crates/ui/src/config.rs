@@ -1,7 +1,7 @@
 //! Persistent settings. Read on startup, rewritten when the user changes a
 //! setting (currently just the league) so the choice survives restarts.
 //!
-//! Lives at `$XDG_CONFIG_HOME/poe2ddd/config.json`. Hand-editable JSON; a
+//! Lives at `$XDG_CONFIG_HOME/kingsmerchant/config.json`. Hand-editable JSON; a
 //! missing or malformed file falls back to defaults. A file watcher hot-reloads
 //! edits (see the `watchers` module), so writes are atomic to avoid the watcher
 //! observing a half-written file.
@@ -161,7 +161,7 @@ impl Config {
             .any(|p| lower.contains(&p.to_lowercase()))
     }
 
-    /// `~/.config/poe2ddd/config.json` (honouring `XDG_CONFIG_HOME`).
+    /// `~/.config/kingsmerchant/config.json` (honouring `XDG_CONFIG_HOME`).
     pub fn path() -> PathBuf {
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -172,7 +172,7 @@ impl Config {
                     .unwrap_or_default();
                 home.join(".config")
             });
-        base.join("poe2ddd").join("config.json")
+        base.join("kingsmerchant").join("config.json")
     }
 
     /// Load from disk, falling back to defaults on a missing or invalid file.

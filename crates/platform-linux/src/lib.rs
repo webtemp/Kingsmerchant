@@ -1,4 +1,4 @@
-//! Linux platform layer for poe2ddd.
+//! Linux platform layer for kingsmerchant.
 //!
 //! Platform integration: evdev hotkeys, X11 clipboard, uinput injection,
 //! xdotool window polling, and the system tray.

@@ -127,7 +127,7 @@ fn device() -> Result<&'static Mutex<VirtualDevice>> {
     }
     let device = VirtualDeviceBuilder::new()
         .context("open /dev/uinput (in the `input` group?)")?
-        .name("poe2ddd-virtual-kbd")
+        .name("kingsmerchant-virtual-kbd")
         .with_keys(&keys)
         .context("declare virtual keyboard keys")?
         .build()

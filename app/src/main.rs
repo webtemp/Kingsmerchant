@@ -1,4 +1,4 @@
-//! poe2ddd — the application entry point.
+//! kingsmerchant — the application entry point.
 //!
 //! Launches the quick-mode price-check overlay. Wiring lives in the `overlay`
 //! library (Wayland layer surface + egui), which reuses the `parser`,

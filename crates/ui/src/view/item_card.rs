@@ -728,16 +728,13 @@ mod tests {
         assert_eq!(item.modifiers.len(), 3, "parser sanity");
 
         let ctx = egui::Context::default();
-        let mut height = 0.0;
         let mut texts: Vec<String> = Vec::new();
         // Two frames: the first lays out fonts, the second paints stable galleys.
         for _ in 0..2 {
             let out = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.set_max_width(450.0);
-                    let r = egui::Area::new("t".into())
-                        .show(ui.ctx(), |ui| item_card(ui, &item, None));
-                    height = r.response.rect.height();
+                    egui::Area::new("t".into()).show(ui.ctx(), |ui| item_card(ui, &item, None));
                 });
             });
             texts.clear();
@@ -748,8 +745,6 @@ mod tests {
             }
         }
         let joined = texts.join(" | ");
-        println!("rendered height = {height}");
-        println!("painted texts = {joined}");
         assert!(
             joined.contains("Lightning Resistance"),
             "mod stat text missing from paint output — card renders no stats"

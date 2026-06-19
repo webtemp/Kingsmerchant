@@ -397,7 +397,10 @@ fn reader_loop(
             // overlay, matching Escape / click-outside. Detected here (globally,
             // on the initial press) because the overlay holds no keyboard focus
             // while merely shown, so Wayland never delivers it the combo.
-            if event.value() == 1 && alt && key == Key::KEY_TAB && tx.send(HotkeyEvent::Close).is_err()
+            if event.value() == 1
+                && alt
+                && key == Key::KEY_TAB
+                && tx.send(HotkeyEvent::Close).is_err()
             {
                 return;
             }
@@ -556,9 +559,12 @@ mod tests {
         let rebound = HotkeyBindings::from_strings("Ctrl+D", "F5", "F2", "Escape");
         assert!(rebound.quick_needs_synthetic_copy());
         // Even C without Ctrl, or with extra modifiers, isn't the native copy.
-        assert!(HotkeyBindings::from_strings("C", "F5", "F2", "Escape")
-            .quick_needs_synthetic_copy());
-        assert!(HotkeyBindings::from_strings("Ctrl+Alt+C", "F5", "F2", "Escape")
-            .quick_needs_synthetic_copy());
+        assert!(
+            HotkeyBindings::from_strings("C", "F5", "F2", "Escape").quick_needs_synthetic_copy()
+        );
+        assert!(
+            HotkeyBindings::from_strings("Ctrl+Alt+C", "F5", "F2", "Escape")
+                .quick_needs_synthetic_copy()
+        );
     }
 }

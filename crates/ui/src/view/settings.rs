@@ -106,8 +106,7 @@ impl QuickModeApp {
                                 }
                             });
                         if chosen != current {
-                            self.config.realm =
-                                if chosen == "pc" { None } else { Some(chosen) };
+                            self.config.realm = if chosen == "pc" { None } else { Some(chosen) };
                             changed = true;
                             restart = true;
                         }
@@ -292,8 +291,7 @@ impl QuickModeApp {
                          catch slightly worse copies. Applies to the item on screen now.",
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut tolerance =
-                            100u32.saturating_sub(self.config.filter_min_percent);
+                        let mut tolerance = 100u32.saturating_sub(self.config.filter_min_percent);
                         let resp = ui.add(egui::Slider::new(&mut tolerance, 0..=20).suffix("%"));
                         // Track the slider live so its handle follows the drag.
                         self.config.filter_min_percent = 100 - tolerance.min(100);
@@ -351,7 +349,8 @@ impl QuickModeApp {
 
                 // POE2-focus gate (pushed live to the evdev watcher).
                 if setting_row(ui, "Only fire hotkeys while POE2 is focused", |ui| {
-                    ui.checkbox(&mut self.config.require_poe2_focus, "").changed()
+                    ui.checkbox(&mut self.config.require_poe2_focus, "")
+                        .changed()
                 }) {
                     changed = true;
                     // Apply to the running watcher at once (no restart).
@@ -378,10 +377,12 @@ impl QuickModeApp {
                 // palette each frame, so colour & opacity changes are instant).
                 ui.label(RichText::new("Appearance").strong());
                 ui.label(
-                    RichText::new("Pick a preset, then fine-tune. Colours are also \
-                                   hand-editable as #rrggbb in config.json.")
-                        .weak()
-                        .small(),
+                    RichText::new(
+                        "Pick a preset, then fine-tune. Colours are also \
+                                   hand-editable as #rrggbb in config.json.",
+                    )
+                    .weak()
+                    .small(),
                 );
                 ui.horizontal(|ui| {
                     ui.label("Preset");
@@ -440,10 +441,26 @@ impl QuickModeApp {
                         .small(),
                 );
                 let rows = [
-                    (HotkeySlot::Quick, "Price check", self.config.hotkey_quick.clone()),
-                    (HotkeySlot::Macro, "Hideout macro", self.config.hotkey_macro.clone()),
-                    (HotkeySlot::Macro2, "Exit macro", self.config.hotkey_macro2.clone()),
-                    (HotkeySlot::Close, "Close popup", self.config.hotkey_close.clone()),
+                    (
+                        HotkeySlot::Quick,
+                        "Price check",
+                        self.config.hotkey_quick.clone(),
+                    ),
+                    (
+                        HotkeySlot::Macro,
+                        "Hideout macro",
+                        self.config.hotkey_macro.clone(),
+                    ),
+                    (
+                        HotkeySlot::Macro2,
+                        "Exit macro",
+                        self.config.hotkey_macro2.clone(),
+                    ),
+                    (
+                        HotkeySlot::Close,
+                        "Close popup",
+                        self.config.hotkey_close.clone(),
+                    ),
                 ];
                 for (slot, label, current) in rows {
                     let recording = self.recording_hotkey == Some(slot);

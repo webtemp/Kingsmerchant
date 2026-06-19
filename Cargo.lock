@@ -1138,6 +1138,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kingsmerchant"
+version = "0.9.1"
+dependencies = [
+ "anyhow",
+ "overlay",
+]
+
+[[package]]
 name = "kqueue"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1566,14 +1574,6 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
-]
-
-[[package]]
-name = "poe2ddd"
-version = "0.9.1"
-dependencies = [
- "anyhow",
- "overlay",
 ]
 
 [[package]]

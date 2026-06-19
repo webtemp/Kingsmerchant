@@ -8,7 +8,7 @@ members = [
     "crates/ui",
     "crates/overlay",
 ]
-# Plain `cargo run` launches the app (the `poe2ddd` overlay binary) instead of
+# Plain `cargo run` launches the app (the `kingsmerchant` overlay binary) instead of
 # erroring on which of the workspace's binaries to run.
 default-members = ["app"]
 
@@ -18,9 +18,8 @@ edition = "2021"
 license = "MIT OR GPL-3.0-or-later"
 rust-version = "1.96"
 authors = ["Deyan Danailov <webtemp@gmail.com>"]
-# TODO: replace OWNER with the GitHub account once the repo is pushed.
-repository = "https://github.com/OWNER/poe2ddd"
-homepage = "https://github.com/OWNER/poe2ddd"
+repository = "https://github.com/webtemp/Kingsmerchant"
+homepage = "https://github.com/webtemp/Kingsmerchant"
 readme = "README.md"
 keywords = ["poe2", "path-of-exile", "trade", "overlay", "wayland"]
 categories = ["games"]

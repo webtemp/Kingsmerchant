@@ -20,7 +20,7 @@
 Thumbs.db
 
 # Note: Cargo.lock IS committed on purpose — this workspace ships a binary
-# (poe2ddd), so a locked, reproducible dependency set is what we want.
+# (kingsmerchant), so a locked, reproducible dependency set is what we want.
 
 # Local release staging (packaged tarballs)
 dist/
