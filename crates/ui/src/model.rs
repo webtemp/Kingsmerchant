@@ -237,7 +237,7 @@ pub(crate) fn build_equipment_rows(
     if sockets > 0 {
         rows.push(EquipmentRow {
             key: "rune_sockets".to_string(),
-            label: "Rune sockets".to_string(),
+            label: "Sockets".to_string(),
             enabled: exceptional,
             min: sockets.to_string(),
             max: String::new(),
