@@ -3,6 +3,7 @@ pkgbase = kingsmerchant
 	pkgver = 0.9.1
 	pkgrel = 1
 	url = https://github.com/webtemp/kingsmerchant
+	install = kingsmerchant.install
 	arch = x86_64
 	license = MIT OR GPL-3.0-or-later
 	makedepends = cargo
@@ -14,8 +15,7 @@ pkgbase = kingsmerchant
 	depends = xdotool
 	depends = xdg-utils
 	depends = hicolor-icon-theme
-	install = kingsmerchant.install
 	source = kingsmerchant-0.9.1.tar.gz::https://github.com/webtemp/kingsmerchant/archive/refs/tags/v0.9.1.tar.gz
-	sha256sums = SKIP
+	sha256sums = 87d79c4f934320ff10f4e57dfb1c1675a94cb011c25a6cae3800365c67c532ce
 
 pkgname = kingsmerchant
