@@ -1,27 +1,56 @@
-_input_group_notice() {
+_loud_input_notice() {
     cat <<'EOF'
 
-==> kingsmerchant needs your user in the `input` group for the global Ctrl+C hotkey
-    (evdev read) and chat injection (uinput write). Without it the hotkey
-    SILENTLY does nothing — no error, no popup. One-time setup:
+═══════════════════════════════════════════════════════════════════════════════
+  ⚠   ACTION REQUIRED  —  kingsmerchant will NOT work until you do ONE thing
+═══════════════════════════════════════════════════════════════════════════════
 
-        sudo usermod -aG input "$USER"
+  1.  Add your user to the  "input"  group:
 
-    Then log out and back in for it to take effect.
+          sudo usermod -aG input "$USER"
 
-==> Requires a KDE Plasma 6 *Wayland* session (the overlay uses wlr-layer-shell;
-    GNOME/Mutter has no layer-shell and will not show the popup).
+  2.  LOG OUT and back in (or reboot) for it to take effect.
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  WITHOUT THIS, THE Ctrl+C HOTKEY SILENTLY DOES NOTHING — no error, no    │
+  │  popup, nothing. It is the #1 reason people think the app is broken.     │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  Why: the global Ctrl+C hotkey (evdev read) and the Whisper / Invite chat
+  buttons (uinput write) both require membership in the "input" group.
+
+───────────────────────────────────────────────────────────────────────────────
+  ALSO REQUIRED:  a KDE Plasma 6  *Wayland*  session. The overlay uses
+  wlr-layer-shell; GNOME/Mutter has no layer-shell and will not show the popup.
+═══════════════════════════════════════════════════════════════════════════════
 
 EOF
 }
 
+_already_ok_notice() {
+    cat <<'EOF'
+
+==> kingsmerchant: your user is already in the "input" group — you're set.
+    (Reminder: this needs a KDE Plasma 6 *Wayland* session to show the popup.)
+
+EOF
+}
+
+# Shout the setup steps unless the user is already in the `input` group, in
+# which case a quiet confirmation is enough. During a pacman transaction the
+# scriptlet runs as root, so resolve the real invoking user via SUDO_USER.
+_notice() {
+    if id -nG "${SUDO_USER:-$USER}" 2>/dev/null | grep -qw input; then
+        _already_ok_notice
+    else
+        _loud_input_notice
+    fi
+}
+
 post_install() {
-    _input_group_notice
+    _notice
 }
 
 post_upgrade() {
-    # Only re-print if they're still not in the group.
-    if ! id -nG "${SUDO_USER:-$USER}" 2>/dev/null | grep -qw input; then
-        _input_group_notice
-    fi
+    _notice
 }
