@@ -407,6 +407,25 @@ fn detailed_query_attaches_enabled_equipment_filters() {
 }
 
 #[test]
+fn detailed_query_attaches_waystone_tier_map_filter() {
+    let item = parse_item(RARE_RING).unwrap();
+    let req = build_detailed_query(
+        &item,
+        &items(),
+        &DetailedFilters {
+            waystone_tier: Some(16.0),
+            ..Default::default()
+        },
+    );
+    let map = &req.query.filters.map_filters.as_ref().unwrap().filters;
+    assert_eq!(min_i64(map.map_tier.as_ref()), Some(16));
+
+    // No tier → the map_filters group is omitted entirely.
+    let bare = build_detailed_query(&item, &items(), &DetailedFilters::default());
+    assert!(bare.query.filters.map_filters.is_none());
+}
+
+#[test]
 fn detailed_query_carries_sockets_and_quality() {
     let item = parse_item(RARE_RING).unwrap();
     let req = build_detailed_query(

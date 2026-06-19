@@ -130,6 +130,8 @@ pub struct Filters {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub misc_filters: Option<MiscFilters>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_filters: Option<MapFilters>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trade_filters: Option<TradeFilters>,
 }
 
@@ -138,8 +140,23 @@ impl Filters {
         self.type_filters.is_none()
             && self.equipment_filters.is_none()
             && self.misc_filters.is_none()
+            && self.map_filters.is_none()
             && self.trade_filters.is_none()
     }
+}
+
+/// The `map_filters` group: waystone/map endgame properties. Only the waystone
+/// tier (`map_tier`) is modelled — its dedicated search on the trade site.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MapFilters {
+    pub filters: MapFilterFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+pub struct MapFilterFields {
+    /// `map_tier` — "Waystone Tier", a `{ "min": .., "max": .. }` value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_tier: Option<StatValue>,
 }
 
 /// The `misc_filters` group: boolean item attributes (corrupted, mirrored,

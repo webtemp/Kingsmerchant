@@ -11,9 +11,9 @@ use parser::{Item, Rarity};
 
 use crate::definitions::{ItemDefinitions, StatDefinitions};
 use crate::model::{
-    EquipmentFilters, Filters, MiscFilters, OptionFilter, PriceRange, Query, SearchRequest, Sort,
-    StatFilter, StatGroup, StatValue, Status, TradeFilterFields, TradeFilters, TypeFilterFields,
-    TypeFilters,
+    EquipmentFilters, Filters, MapFilterFields, MapFilters, MiscFilters, OptionFilter, PriceRange,
+    Query, SearchRequest, Sort, StatFilter, StatGroup, StatValue, Status, TradeFilterFields,
+    TradeFilters, TypeFilterFields, TypeFilters,
 };
 
 /// Which listings a search should return, by seller/trade availability.
@@ -153,6 +153,7 @@ pub fn build_search_query(
         type_filters,
         equipment_filters: None,
         misc_filters: None,
+        map_filters: None,
         trade_filters: None,
     };
 
@@ -259,6 +260,9 @@ pub struct DetailedFilters {
     pub quality: Option<f64>,
     /// Minimum item level (goes in `type_filters.ilvl`); `None` = no filter.
     pub item_level: Option<f64>,
+    /// Minimum waystone tier (goes in `map_filters.map_tier`); `None` = no
+    /// filter. Only meaningful for waystones.
+    pub waystone_tier: Option<f64>,
     /// Rarity option for `type_filters.rarity` (`normal`/`magic`/`rare`/`unique`).
     /// `None` defaults to the item's own rarity; `Some("any")` is an explicit
     /// "any rarity" search (no rarity filter emitted).
@@ -313,10 +317,17 @@ pub fn build_detailed_query(
         } else {
             None
         };
+    // Waystone tier → the dedicated map_filters.map_tier search.
+    let map_filters = f.waystone_tier.map(|t| MapFilters {
+        filters: MapFilterFields {
+            map_tier: Some(StatValue::min(t)),
+        },
+    });
     let filters = Filters {
         type_filters,
         equipment_filters: build_equipment_filters(&f.equipment),
         misc_filters: build_misc_filters(&f.misc),
+        map_filters,
         trade_filters,
     };
 

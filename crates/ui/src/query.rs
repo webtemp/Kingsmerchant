@@ -11,9 +11,9 @@ use parser::{Item, Rarity};
 use trade_api::{DetailedFilters, MiscSelection};
 
 use crate::model::{
-    build_equipment_rows, fmt_amount, open_affix_slots, parse_status, scaled_min, EquipmentRow,
-    ExchangePhase, MinFilter, Msg, Phase, PriceFilterState, PriceMode, ScoutPhase, SessionCheck,
-    StatFilterRow,
+    build_equipment_rows, fmt_amount, open_affix_slots, parse_status, scaled_min, waystone_tier,
+    EquipmentRow, ExchangePhase, MinFilter, Msg, Phase, PriceFilterState, PriceMode, ScoutPhase,
+    SessionCheck, StatFilterRow,
 };
 use crate::{QuickModeApp, SAMPLE};
 
@@ -100,6 +100,9 @@ impl QuickModeApp {
         // (still prefilled with the item's ilvl for when the user ticks it).
         let ilvl_on = item.rarity == Rarity::Normal && item.item_level.is_some();
         self.ilvl_filter = MinFilter::new(ilvl_on, item.item_level);
+        // Waystone tier: only waystones have one; default-on, seeded with it.
+        let tier = waystone_tier(&item);
+        self.waystone_filter = MinFilter::new(tier.is_some(), tier);
         // Rarity defaults to the item's own (results match by default); editable.
         self.rarity_filter = match item.rarity {
             Rarity::Normal => "normal",
@@ -317,6 +320,7 @@ impl QuickModeApp {
                 .collect(),
             quality: self.quality_filter.value(),
             item_level: self.ilvl_filter.value(),
+            waystone_tier: self.waystone_filter.value(),
             rarity: (!self.rarity_filter.is_empty()).then(|| self.rarity_filter.clone()),
             price: self.price_filter.to_filter(),
             resistance_mode: self.resistance_mode,

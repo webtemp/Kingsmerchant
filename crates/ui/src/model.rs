@@ -35,6 +35,18 @@ pub(crate) fn open_affix_slots(item: &Item) -> (bool, bool) {
     (count(&ModKind::Prefix) < max, count(&ModKind::Suffix) < max)
 }
 
+/// A waystone's map tier, parsed from its base type (`Waystone (Tier 16)`).
+/// `None` for non-waystones or when no tier is present.
+pub(crate) fn waystone_tier(item: &Item) -> Option<u32> {
+    if item.item_class != "Waystones" {
+        return None;
+    }
+    let base = item.base_type.as_deref()?;
+    let open = base.find('(')?;
+    let inner = &base[open + 1..base.find(')')?];
+    inner.split_whitespace().last()?.parse::<u32>().ok()
+}
+
 /// Result of a background price check, sent back to the UI thread.
 pub(crate) enum Msg {
     Result(Box<Result<PriceCheck, String>>),
@@ -428,6 +440,20 @@ mod tests {
         // Non-rares never qualify, even with free slots.
         assert_eq!(open_affix_slots(&item_with("Magic", 1, 0)), (false, false));
         assert_eq!(open_affix_slots(&item_with("Normal", 0, 0)), (false, false));
+    }
+
+    #[test]
+    fn waystone_tier_is_parsed_for_waystones_only() {
+        let ws = parser::parse_item(
+            "Item Class: Waystones\nRarity: Rare\nEvil Bearings\nWaystone (Tier 16)\n--------\n\
+             Item Level: 82\n",
+        )
+        .expect("parses");
+        assert_eq!(waystone_tier(&ws), Some(16));
+
+        // A ring with parentheses elsewhere must not be mistaken for a tier.
+        let ring = item_with_class("Rings", "Rare", 1, 0);
+        assert_eq!(waystone_tier(&ring), None);
     }
 
     #[test]

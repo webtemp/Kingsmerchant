@@ -102,6 +102,14 @@ impl QuickModeApp {
                 // only. And item quality (type_filters.quality).
                 changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
                 changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
+                // Waystone tier (map_filters.map_tier) — only for waystones.
+                let is_waystone = self
+                    .item
+                    .as_ref()
+                    .is_some_and(|i| i.item_class == "Waystones");
+                if is_waystone {
+                    changed |= min_filter_row(ui, "Waystone tier ≥", &mut self.waystone_filter);
+                }
 
                 // Rarity (type_filters.rarity), defaulting to the item's own.
                 ui.horizontal(|ui| {
