@@ -660,7 +660,7 @@ fn render_item_preview(ui: &mut egui::Ui, item: &ItemPreview) {
             }
             if item.sockets > 0 {
                 ui.label(
-                    RichText::new(format!("Rune sockets: {}", item.sockets)).color(PROP_COLOR),
+                    RichText::new(format!("Sockets: {}", item.sockets)).color(PROP_COLOR),
                 );
             }
 
