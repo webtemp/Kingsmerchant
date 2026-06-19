@@ -16,8 +16,8 @@ first, the AUR second.
 
 ```sh
 # in the kingsmerchant repo
-git tag v0.1.0
-git push origin v0.1.0          # or cut a GitHub Release for tag v0.1.0
+git tag v0.9.1
+git push origin v0.9.1          # or cut a GitHub Release for tag v0.9.1
 ```
 
 ## 2. Finalize the PKGBUILD
@@ -53,7 +53,7 @@ git clone ssh://aur@aur.archlinux.org/kingsmerchant.git aur-kingsmerchant
 cd aur-kingsmerchant
 cp ../kingsmerchant/packaging/arch/{PKGBUILD,.SRCINFO,kingsmerchant.install} .
 git add PKGBUILD .SRCINFO kingsmerchant.install
-git commit -m "Initial import: kingsmerchant 0.1.0"
+git commit -m "Initial import: kingsmerchant 0.9.1"
 git push
 ```
 
