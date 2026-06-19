@@ -14,6 +14,15 @@ arch=('x86_64')
 url="https://github.com/${_gh}/${_reponame}"
 license=('MIT OR GPL-3.0-or-later')
 
+# Disable makepkg's link-time optimization. Its `-flto` reaches the `cc` that
+# compiles the `ring` crate's assembly (the cc crate reads CFLAGS), turning
+# ring's native objects into GCC LTO bitcode whose symbols rustc's linker can't
+# resolve ("undefined symbol: ring_core_*"). The Rust release profile still
+# does its own LTO regardless.
+# Also !debug: the Rust release profile strips symbols itself, so makepkg's
+# debug split would only produce an empty -debug package.
+options=(!lto !debug)
+
 # Runtime libs — verified against the built binary (ldd + dlopen strings):
 #   libxkbcommon.so.0       -> libxkbcommon   (linked)
 #   libwayland-client.so.0  -> wayland        (dlopen'd by the overlay)
@@ -40,7 +49,7 @@ install="${pkgname}.install"
 # GitHub generates the tag tarball on demand; it extracts to ${_reponame}-${pkgver}/.
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 # Replace with the real digest after tagging:  updpkgsums
-sha256sums=('87d79c4f934320ff10f4e57dfb1c1675a94cb011c25a6cae3800365c67c532ce')
+sha256sums=('20e22ad835b6d0869d73b8179e9bca85e23c43c2fda3915b7720835ee99b80f4')
 
 prepare() {
     cd "${_reponame}-${pkgver}"

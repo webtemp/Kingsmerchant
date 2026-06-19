@@ -15,7 +15,9 @@ pkgbase = kingsmerchant
 	depends = xdotool
 	depends = xdg-utils
 	depends = hicolor-icon-theme
+	options = !lto
+	options = !debug
 	source = kingsmerchant-0.9.2.tar.gz::https://github.com/webtemp/Kingsmerchant/archive/refs/tags/v0.9.2.tar.gz
-	sha256sums = 87d79c4f934320ff10f4e57dfb1c1675a94cb011c25a6cae3800365c67c532ce
+	sha256sums = 20e22ad835b6d0869d73b8179e9bca85e23c43c2fda3915b7720835ee99b80f4
 
 pkgname = kingsmerchant
