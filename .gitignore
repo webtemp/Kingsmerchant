@@ -24,3 +24,6 @@ Thumbs.db
 
 # Local release staging (packaged tarballs)
 dist/
+
+# Local-only release helper (never upload)
+/scripts/deploy.sh
