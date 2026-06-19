@@ -1,0 +1,50 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/unique_ring_mirrored.txt
+---
+Item {
+    item_class: "Rings",
+    rarity: Unique,
+    name: Some(
+        "Kalandra's Touch",
+    ),
+    base_type: Some(
+        "Ring",
+    ),
+    item_level: Some(
+        80,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Reflects opposite Ring — Unscalable Value",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [
+        "~b/o 25 divine",
+    ],
+    corrupted: false,
+    mirrored: true,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

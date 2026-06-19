@@ -1,0 +1,38 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/currency_breach_splinter.txt
+---
+Item {
+    item_class: "Stackable Currency",
+    rarity: Currency,
+    name: Some(
+        "Breach Splinter",
+    ),
+    base_type: None,
+    item_level: None,
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: Some(
+        StackSize {
+            count: 205,
+            max: 300,
+        },
+    ),
+    properties: [],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

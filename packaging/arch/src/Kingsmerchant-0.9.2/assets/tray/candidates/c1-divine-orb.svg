@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Candidate 1: "Divine Orb" — a glassy gold currency sphere (the iconic PoE
+     trade currency) with an engraved "ddd". Fits a price-check tool. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="orb" cx="0.38" cy="0.32" r="0.85">
+      <stop offset="0"    stop-color="#fff3c4"/>
+      <stop offset="0.35" stop-color="#f0cf6e"/>
+      <stop offset="0.72" stop-color="#c79433"/>
+      <stop offset="1"    stop-color="#7c5417"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.6" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1"   stop-color="#d9b24a" stop-opacity="0.55"/>
+    </radialGradient>
+  </defs>
+  <circle cx="128" cy="128" r="118" fill="url(#halo)"/>
+  <circle cx="128" cy="130" r="92" fill="#3a2a0e"/>
+  <circle cx="128" cy="128" r="92" fill="url(#orb)" stroke="#8a6320" stroke-width="3"/>
+  <!-- top specular highlight -->
+  <ellipse cx="100" cy="92" rx="42" ry="26" fill="#ffffff" opacity="0.35"/>
+  <!-- engraved ddd -->
+  <text x="128" y="158" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="86" font-weight="700" fill="#4a3208" opacity="0.92">ddd</text>
+  <text x="128" y="156" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
+        font-size="86" font-weight="700" fill="#fbe9a8" opacity="0.5">ddd</text>
+</svg>

@@ -1,0 +1,59 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/currency_alloy.txt
+---
+Item {
+    item_class: "Stackable Currency",
+    rarity: Currency,
+    name: Some(
+        "Mystic Alloy",
+    ),
+    base_type: None,
+    item_level: None,
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: Some(
+        StackSize {
+            count: 2,
+            max: 10,
+        },
+    ),
+    properties: [
+        Property {
+            name: "Helmet",
+            value: "Spell Skills have (10-15)% increased Area of Effect",
+        },
+        Property {
+            name: "Gloves",
+            value: "(10-15)% increased Area of Effect for Attacks",
+        },
+        Property {
+            name: "Boots",
+            value: "+(10-15) to Spirit",
+        },
+        Property {
+            name: "Quiver",
+            value: "(25-35)% chance to Chain an additional time",
+        },
+        Property {
+            name: "Caster Weapon",
+            value: "+1 to maximum number of Elemental Infusions",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

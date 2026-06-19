@@ -1,0 +1,146 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/unique_belt_mageblood.txt
+---
+Item {
+    item_class: "Belts",
+    rarity: Unique,
+    name: Some(
+        "Mageblood",
+    ),
+    base_type: Some(
+        "Utility Belt",
+    ),
+    item_level: Some(
+        78,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            55,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Other(
+                "Corruption Enhancement",
+            ),
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Elemental",
+                "Lightning",
+                "Resistance",
+            ],
+            stats: [
+                "+22(20-25)% to Lightning Resistance",
+            ],
+        },
+        Modifier {
+            kind: Other(
+                "Corruption Enhancement",
+            ),
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Attribute",
+            ],
+            stats: [
+                "+10(10-15) to Dexterity",
+            ],
+        },
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "20% of Flask Recovery applied Instantly",
+            ],
+        },
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Charm",
+            ],
+            stats: [
+                "Has 3(1-3) Charm Slots",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Legacy of Quicksilver(Amethyst-Topaz) — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Legacy of Diamond(Amethyst-Topaz) — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Legacy of Bismuth(Amethyst-Topaz) — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Legacy of Quicksilver(Amethyst-Topaz) — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "All Mage's Legacies have 35(25-50)% increased effect per duplicate Mage's Legacy you have",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [
+        "~b/o 650 divine",
+    ],
+    corrupted: true,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [
+        "Twice Corrupted",
+    ],
+}

@@ -1,0 +1,91 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/magic_jewel.txt
+---
+Item {
+    item_class: "Jewels",
+    rarity: Magic,
+    name: Some(
+        "Prismatic Sapphire of Potency",
+    ),
+    base_type: None,
+    item_level: Some(
+        80,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Other(
+                "Corruption Enhancement",
+            ),
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Elemental",
+                "Lightning",
+                "Resistance",
+            ],
+            stats: [
+                "+10(5-10)% to Lightning Resistance",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Prismatic",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Damage",
+                "Elemental",
+                "Fire",
+                "Cold",
+                "Lightning",
+            ],
+            stats: [
+                "14(5-15)% increased Elemental Damage",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Potency",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Damage",
+                "Critical",
+            ],
+            stats: [
+                "19(10-20)% increased Critical Damage Bonus",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [
+        "~b/o 50 divine",
+    ],
+    corrupted: true,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

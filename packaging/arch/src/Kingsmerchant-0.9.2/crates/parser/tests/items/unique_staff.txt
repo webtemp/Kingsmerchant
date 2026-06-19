@@ -1,0 +1,28 @@
+Item Class: Staves
+Rarity: Unique
+Sire of Shards
+Chiming Staff
+--------
+Requires: Level 84, 147 Int
+--------
+Sockets: S S S
+--------
+Item Level: 82
+--------
+Grants Skill: Level 19 Sigil of Power
+--------
+{ Unique Modifier — Damage, Caster }
+103(80-120)% increased Spell Damage
+{ Unique Modifier — Caster, Speed }
+15(10-20)% increased Cast Speed
+{ Unique Modifier — Elemental, Fire, Cold, Lightning, Resistance }
++5(5-10)% to all Elemental Resistances
+{ Unique Modifier }
+20% increased Light Radius
+{ Unique Modifier — Caster }
+Spells fire 4 additional Projectiles
+Spells fire Projectiles in a circle
+--------
+That which was broken may yet break.
+--------
+Corrupted

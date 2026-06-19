@@ -1,0 +1,793 @@
+{
+  "result": [
+    {
+      "id": "67753e82421bf87bb41900684daa640cdf7757f870cabc417355b8be6f56809b",
+      "listing": {
+        "method": "psapi",
+        "indexed": "2026-06-10T16:03:23Z",
+        "stash": {
+          "name": "Торговля",
+          "x": 11,
+          "y": 21
+        },
+        "price": {
+          "type": "~b/o",
+          "amount": 1,
+          "currency": "aug"
+        },
+        "account": {
+          "name": "3voke#1255",
+          "online": {
+            "league": "Runes of Aldur",
+            "status": "afk"
+          },
+          "lastCharacterName": "Evk",
+          "language": "ru_RU",
+          "realm": "poe2"
+        },
+        "whisper": "@Evk Здравствуйте, хочу купить у вас Кольцо с топазом за 1 aug в лиге Runes of Aldur (секция \"Торговля\"; позиция: 12 столбец, 22 ряд)"
+      },
+      "item": {
+        "realm": "poe2",
+        "verified": true,
+        "w": 1,
+        "h": 1,
+        "icon": "https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvUmluZ3MvQmFzZXR5cGVzL1RvcGF6UmluZyIsInciOjEsImgiOjEsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/83315d9397/TopazRing.png",
+        "league": "Runes of Aldur",
+        "id": "67753e82421bf87bb41900684daa640cdf7757f870cabc417355b8be6f56809b",
+        "name": "",
+        "typeLine": "Topaz Ring",
+        "baseType": "Topaz Ring",
+        "rarity": "Normal",
+        "ilvl": 55,
+        "identified": true,
+        "note": "~b/o 1 aug",
+        "properties": [
+          {
+            "name": "Ring",
+            "values": [],
+            "displayMode": 0,
+            "type": 109
+          }
+        ],
+        "requirements": [
+          {
+            "name": "Level",
+            "values": [
+              [
+                "16",
+                0
+              ]
+            ],
+            "displayMode": 0,
+            "type": 62
+          }
+        ],
+        "implicitMods": [
+          "+27% to [Resistances|Lightning Resistance]"
+        ],
+        "frameType": 0,
+        "frameTypeId": "Normal",
+        "extended": {
+          "mods": {
+            "implicit": [
+              {
+                "name": "",
+                "tier": "",
+                "level": 20,
+                "magnitudes": [
+                  {
+                    "hash": "implicit.stat_1671376347",
+                    "min": "20",
+                    "max": "30"
+                  }
+                ]
+              }
+            ]
+          },
+          "hashes": {
+            "implicit": [
+              [
+                "implicit.stat_1671376347",
+                [
+                  0
+                ]
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "77900c101e08431e157a6ef1e96c1e85095eb0becb3fab2afa6dbf926e6cf543",
+      "listing": {
+        "method": "psapi",
+        "indexed": "2026-06-04T15:45:36Z",
+        "stash": {
+          "name": "~price 1 regal",
+          "x": 7,
+          "y": 6
+        },
+        "price": {
+          "type": "~price",
+          "amount": 1,
+          "currency": "regal"
+        },
+        "account": {
+          "name": "Golgen86#0166",
+          "online": {
+            "league": "Runes of Aldur"
+          },
+          "lastCharacterName": "Golgen",
+          "language": "en_US",
+          "realm": "poe2"
+        },
+        "whisper": "@Golgen Hi, I would like to buy your Gale Knuckle Topaz Ring listed for 1 regal in Runes of Aldur (stash tab \"~price 1 regal\"; position: left 8, top 7)"
+      },
+      "item": {
+        "realm": "poe2",
+        "verified": true,
+        "w": 1,
+        "h": 1,
+        "icon": "https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvUmluZ3MvQmFzZXR5cGVzL1RvcGF6UmluZyIsInciOjEsImgiOjEsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/83315d9397/TopazRing.png",
+        "league": "Runes of Aldur",
+        "id": "77900c101e08431e157a6ef1e96c1e85095eb0becb3fab2afa6dbf926e6cf543",
+        "name": "Gale Knuckle",
+        "typeLine": "Topaz Ring",
+        "baseType": "Topaz Ring",
+        "rarity": "Rare",
+        "ilvl": 66,
+        "identified": true,
+        "properties": [
+          {
+            "name": "Ring",
+            "values": [],
+            "displayMode": 0,
+            "type": 109
+          }
+        ],
+        "requirements": [
+          {
+            "name": "Level",
+            "values": [
+              [
+                "52",
+                0
+              ]
+            ],
+            "displayMode": 0,
+            "type": 62
+          }
+        ],
+        "implicitMods": [
+          "+24% to [Resistances|Lightning Resistance]"
+        ],
+        "explicitMods": [
+          "Adds 2 to 3 [Fire] damage to [Attack|Attacks]",
+          "23% increased [Lightning] Damage",
+          "+11 to [Intelligence|Intelligence]",
+          "+3% to all [ElementalDamage|Elemental] [Resistances]"
+        ],
+        "frameType": 2,
+        "frameTypeId": "Rare",
+        "extended": {
+          "mods": {
+            "explicit": [
+              {
+                "name": "Heated",
+                "tier": "P9",
+                "level": 1,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_1573130764",
+                    "min": "1",
+                    "max": "2"
+                  },
+                  {
+                    "hash": "explicit.stat_1573130764",
+                    "min": "3",
+                    "max": "3"
+                  }
+                ]
+              },
+              {
+                "name": "Striking",
+                "tier": "P2",
+                "level": 65,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_2231156303",
+                    "min": "23",
+                    "max": "26"
+                  }
+                ]
+              },
+              {
+                "name": "of the Student",
+                "tier": "S7",
+                "level": 11,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_328541901",
+                    "min": "9",
+                    "max": "12"
+                  }
+                ]
+              },
+              {
+                "name": "of the Crystal",
+                "tier": "S5",
+                "level": 12,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_2901986750",
+                    "min": "3",
+                    "max": "5"
+                  }
+                ]
+              }
+            ],
+            "implicit": [
+              {
+                "name": "",
+                "tier": "",
+                "level": 20,
+                "magnitudes": [
+                  {
+                    "hash": "implicit.stat_1671376347",
+                    "min": "20",
+                    "max": "30"
+                  }
+                ]
+              }
+            ]
+          },
+          "hashes": {
+            "explicit": [
+              [
+                "explicit.stat_1573130764",
+                [
+                  0
+                ]
+              ],
+              [
+                "explicit.stat_2231156303",
+                [
+                  1
+                ]
+              ],
+              [
+                "explicit.stat_328541901",
+                [
+                  2
+                ]
+              ],
+              [
+                "explicit.stat_2901986750",
+                [
+                  3
+                ]
+              ]
+            ],
+            "implicit": [
+              [
+                "implicit.stat_1671376347",
+                [
+                  0
+                ]
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "68388329c67abc772fb6d6a4a7bc4720f58fea3172c34293db331e4d35e64e68",
+      "listing": {
+        "method": "psapi",
+        "indexed": "2026-06-03T13:02:39Z",
+        "stash": {
+          "name": "ขาย",
+          "x": 22,
+          "y": 22
+        },
+        "price": {
+          "type": "~price",
+          "amount": 1,
+          "currency": "regal"
+        },
+        "account": {
+          "name": "inkinium#8999",
+          "online": {
+            "league": "Runes of Aldur"
+          },
+          "lastCharacterName": "เลียลู้ลม",
+          "language": "en_US",
+          "realm": "poe2"
+        },
+        "whisper": "@เลียลู้ลม Hi, I would like to buy your Focused Topaz Ring of the Penguin listed for 1 regal in Runes of Aldur (stash tab \"ขาย\"; position: left 23, top 23)"
+      },
+      "item": {
+        "realm": "poe2",
+        "verified": true,
+        "w": 1,
+        "h": 1,
+        "icon": "https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvUmluZ3MvQmFzZXR5cGVzL1RvcGF6UmluZyIsInciOjEsImgiOjEsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/83315d9397/TopazRing.png",
+        "league": "Runes of Aldur",
+        "id": "68388329c67abc772fb6d6a4a7bc4720f58fea3172c34293db331e4d35e64e68",
+        "name": "",
+        "typeLine": "Focused Topaz Ring of the Penguin",
+        "baseType": "Topaz Ring",
+        "rarity": "Magic",
+        "ilvl": 18,
+        "identified": true,
+        "note": "~price 1 regal",
+        "properties": [
+          {
+            "name": "Ring",
+            "values": [],
+            "displayMode": 0,
+            "type": 109
+          }
+        ],
+        "requirements": [
+          {
+            "name": "Level",
+            "values": [
+              [
+                "16",
+                0
+              ]
+            ],
+            "displayMode": 0,
+            "type": 62
+          }
+        ],
+        "implicitMods": [
+          "+28% to [Resistances|Lightning Resistance]"
+        ],
+        "explicitMods": [
+          "+78 to [Accuracy|Accuracy] Rating",
+          "+12% to [Resistances|Cold Resistance]"
+        ],
+        "frameType": 1,
+        "frameTypeId": "Magic",
+        "extended": {
+          "mods": {
+            "explicit": [
+              {
+                "name": "Focused",
+                "tier": "P6",
+                "level": 18,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_803737631",
+                    "min": "61",
+                    "max": "84"
+                  }
+                ]
+              },
+              {
+                "name": "of the Penguin",
+                "tier": "S7",
+                "level": 14,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_4220027924",
+                    "min": "11",
+                    "max": "15"
+                  }
+                ]
+              }
+            ],
+            "implicit": [
+              {
+                "name": "",
+                "tier": "",
+                "level": 20,
+                "magnitudes": [
+                  {
+                    "hash": "implicit.stat_1671376347",
+                    "min": "20",
+                    "max": "30"
+                  }
+                ]
+              }
+            ]
+          },
+          "hashes": {
+            "explicit": [
+              [
+                "explicit.stat_803737631",
+                [
+                  0
+                ]
+              ],
+              [
+                "explicit.stat_4220027924",
+                [
+                  1
+                ]
+              ]
+            ],
+            "implicit": [
+              [
+                "implicit.stat_1671376347",
+                [
+                  0
+                ]
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "5998f8f9dde2c2a32a5f5055309993b0b538cbcc7bac3605c5e1c458d55180c7",
+      "listing": {
+        "method": "psapi",
+        "indexed": "2026-06-13T15:11:57Z",
+        "stash": {
+          "name": "~price 1 regal",
+          "x": 1,
+          "y": 9
+        },
+        "price": {
+          "type": "~price",
+          "amount": 1,
+          "currency": "regal"
+        },
+        "account": {
+          "name": "yasan99#0089",
+          "online": {
+            "league": "Runes of Aldur"
+          },
+          "lastCharacterName": "TheLegendZ",
+          "language": "th_TH",
+          "realm": "poe2"
+        },
+        "whisper": "@TheLegendZ สวัสดี เราต้องการซื้อ Armageddon Coil Topaz Ring ที่คุณตั้งขายไว้ในราคา 1 regal ในลีก Runes of Aldur (แท็บ \"~price 1 regal\" ตำแหน่ง: ซ้าย 2, บน 10)"
+      },
+      "item": {
+        "realm": "poe2",
+        "verified": true,
+        "w": 1,
+        "h": 1,
+        "icon": "https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvUmluZ3MvQmFzZXR5cGVzL1RvcGF6UmluZyIsInciOjEsImgiOjEsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/83315d9397/TopazRing.png",
+        "league": "Runes of Aldur",
+        "id": "5998f8f9dde2c2a32a5f5055309993b0b538cbcc7bac3605c5e1c458d55180c7",
+        "name": "Armageddon Coil",
+        "typeLine": "Topaz Ring",
+        "baseType": "Topaz Ring",
+        "rarity": "Rare",
+        "ilvl": 48,
+        "identified": true,
+        "properties": [
+          {
+            "name": "Ring",
+            "values": [],
+            "displayMode": 0,
+            "type": 109
+          },
+          {
+            "name": "Quality (Lightning Modifiers)",
+            "values": [
+              [
+                "+10%",
+                1
+              ]
+            ],
+            "displayMode": 0,
+            "type": 6
+          }
+        ],
+        "requirements": [
+          {
+            "name": "Level",
+            "values": [
+              [
+                "36",
+                0
+              ]
+            ],
+            "displayMode": 0,
+            "type": 62
+          }
+        ],
+        "implicitMods": [
+          "+23% to [Resistances|Lightning Resistance]"
+        ],
+        "explicitMods": [
+          "23% increased [Lightning] Damage",
+          "+67 to [Accuracy|Accuracy] Rating",
+          "+19% to [Resistances|Cold Resistance]",
+          "[LifeLeech|Leech] 6.26% of [Physical] [Attack] Damage as Life"
+        ],
+        "frameType": 2,
+        "frameTypeId": "Rare",
+        "extended": {
+          "mods": {
+            "explicit": [
+              {
+                "name": "of the Locust",
+                "tier": "S2",
+                "level": 21,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_2557965901",
+                    "min": "6",
+                    "max": "6.9"
+                  }
+                ]
+              },
+              {
+                "name": "Coursing",
+                "tier": "P3",
+                "level": 46,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_2231156303",
+                    "min": "18",
+                    "max": "22"
+                  }
+                ]
+              },
+              {
+                "name": "Focused",
+                "tier": "P6",
+                "level": 18,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_803737631",
+                    "min": "61",
+                    "max": "84"
+                  }
+                ]
+              },
+              {
+                "name": "of the Narwhal",
+                "tier": "S6",
+                "level": 26,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_4220027924",
+                    "min": "16",
+                    "max": "20"
+                  }
+                ]
+              }
+            ],
+            "implicit": [
+              {
+                "name": "",
+                "tier": "",
+                "level": 20,
+                "magnitudes": [
+                  {
+                    "hash": "implicit.stat_1671376347",
+                    "min": "20",
+                    "max": "30"
+                  }
+                ]
+              }
+            ]
+          },
+          "hashes": {
+            "explicit": [
+              [
+                "explicit.stat_2231156303",
+                [
+                  1
+                ]
+              ],
+              [
+                "explicit.stat_803737631",
+                [
+                  2
+                ]
+              ],
+              [
+                "explicit.stat_4220027924",
+                [
+                  3
+                ]
+              ],
+              [
+                "explicit.stat_2557965901",
+                [
+                  0
+                ]
+              ]
+            ],
+            "implicit": [
+              [
+                "implicit.stat_1671376347",
+                [
+                  0
+                ]
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bf4edf658f504e71f61e7d93074a12c6dfb6631982fbe012dac7093da45393ff",
+      "listing": {
+        "method": "psapi",
+        "indexed": "2026-06-13T09:29:47Z",
+        "stash": {
+          "name": "~price 1 regal",
+          "x": 1,
+          "y": 9
+        },
+        "price": {
+          "type": "~price",
+          "amount": 1,
+          "currency": "regal"
+        },
+        "account": {
+          "name": "ruhisu#1639",
+          "online": {
+            "league": "Runes of Aldur"
+          },
+          "lastCharacterName": "BloodyroootZ",
+          "language": "en_US",
+          "realm": "poe2"
+        },
+        "whisper": "@BloodyroootZ Hi, I would like to buy your Loath Gyre Topaz Ring listed for 1 regal in Runes of Aldur (stash tab \"~price 1 regal\"; position: left 2, top 10)"
+      },
+      "item": {
+        "realm": "poe2",
+        "verified": true,
+        "w": 1,
+        "h": 1,
+        "icon": "https://web.poecdn.com/gen/image/WzI1LDE0LHsiZiI6IjJESXRlbXMvUmluZ3MvQmFzZXR5cGVzL1RvcGF6UmluZyIsInciOjEsImgiOjEsInNjYWxlIjoxLCJyZWFsbSI6InBvZTIifV0/83315d9397/TopazRing.png",
+        "league": "Runes of Aldur",
+        "id": "bf4edf658f504e71f61e7d93074a12c6dfb6631982fbe012dac7093da45393ff",
+        "name": "Loath Gyre",
+        "typeLine": "Topaz Ring",
+        "baseType": "Topaz Ring",
+        "rarity": "Rare",
+        "ilvl": 65,
+        "identified": true,
+        "properties": [
+          {
+            "name": "Ring",
+            "values": [],
+            "displayMode": 0,
+            "type": 109
+          }
+        ],
+        "requirements": [
+          {
+            "name": "Level",
+            "values": [
+              [
+                "38",
+                0
+              ]
+            ],
+            "displayMode": 0,
+            "type": 62
+          }
+        ],
+        "implicitMods": [
+          "+24% to [Resistances|Lightning Resistance]"
+        ],
+        "explicitMods": [
+          "+64 to [Evasion] Rating",
+          "+11 to all [Attributes|Attributes]",
+          "+11 to [Strength|Strength]",
+          "+27% to [Resistances|Fire Resistance]"
+        ],
+        "frameType": 2,
+        "frameTypeId": "Rare",
+        "extended": {
+          "mods": {
+            "explicit": [
+              {
+                "name": "of the Wrestler",
+                "tier": "S7",
+                "level": 11,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_4080418644",
+                    "min": "9",
+                    "max": "12"
+                  }
+                ]
+              },
+              {
+                "name": "Fleet",
+                "tier": "P6",
+                "level": 25,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_2144192055",
+                    "min": "52",
+                    "max": "79"
+                  }
+                ]
+              },
+              {
+                "name": "of the Comet",
+                "tier": "S1",
+                "level": 33,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_1379411836",
+                    "min": "11",
+                    "max": "13"
+                  }
+                ]
+              },
+              {
+                "name": "of the Furnace",
+                "tier": "S4",
+                "level": 48,
+                "magnitudes": [
+                  {
+                    "hash": "explicit.stat_3372524247",
+                    "min": "26",
+                    "max": "30"
+                  }
+                ]
+              }
+            ],
+            "implicit": [
+              {
+                "name": "",
+                "tier": "",
+                "level": 20,
+                "magnitudes": [
+                  {
+                    "hash": "implicit.stat_1671376347",
+                    "min": "20",
+                    "max": "30"
+                  }
+                ]
+              }
+            ]
+          },
+          "hashes": {
+            "explicit": [
+              [
+                "explicit.stat_2144192055",
+                [
+                  1
+                ]
+              ],
+              [
+                "explicit.stat_1379411836",
+                [
+                  2
+                ]
+              ],
+              [
+                "explicit.stat_4080418644",
+                [
+                  0
+                ]
+              ],
+              [
+                "explicit.stat_3372524247",
+                [
+                  3
+                ]
+              ]
+            ],
+            "implicit": [
+              [
+                "implicit.stat_1671376347",
+                [
+                  0
+                ]
+              ]
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

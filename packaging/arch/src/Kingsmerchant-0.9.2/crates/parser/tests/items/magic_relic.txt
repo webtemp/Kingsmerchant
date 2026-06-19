@@ -1,0 +1,12 @@
+Item Class: Relics
+Rarity: Magic
+Djinn's Seal Relic of Abundance
+--------
+Item Level: 79
+--------
+{ Prefix Modifier "Djinn's" (Tier: 1) }
+Gain 59(50-59) Sacred Water at the start of the Trial
+{ Suffix Modifier "of Abundance" (Tier: 1) }
+Fountains have 15(11-15)% chance to grant double Sacred Water
+--------
+Place this item on the Relic Altar at the start of the Trial of the Sekhemas

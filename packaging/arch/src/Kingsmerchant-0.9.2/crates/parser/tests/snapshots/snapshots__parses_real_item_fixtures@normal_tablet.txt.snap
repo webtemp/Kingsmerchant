@@ -1,0 +1,47 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/normal_tablet.txt
+---
+Item {
+    item_class: "Tablet",
+    rarity: Normal,
+    name: None,
+    base_type: Some(
+        "Breach Tablet",
+    ),
+    item_level: Some(
+        80,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Adds an Otherworldy Breach to a Map",
+                "10 uses remaining",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

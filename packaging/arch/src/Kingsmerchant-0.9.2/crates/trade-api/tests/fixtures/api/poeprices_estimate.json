@@ -1,0 +1,12 @@
+{
+  "error": 0,
+  "error_msg": "",
+  "currency": "divine",
+  "min": 1.0,
+  "max": 2.5,
+  "pred_confidence_score": 84.21,
+  "pred_explanation": [
+    ["+# to maximum Life", 0.182],
+    ["#% increased Spell Damage", 0.121]
+  ]
+}

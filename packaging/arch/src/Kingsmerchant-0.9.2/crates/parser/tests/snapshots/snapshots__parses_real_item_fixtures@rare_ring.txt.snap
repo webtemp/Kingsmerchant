@@ -1,0 +1,152 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/rare_ring.txt
+---
+Item {
+    item_class: "Rings",
+    rarity: Rare,
+    name: Some(
+        "Honour Spiral",
+    ),
+    base_type: Some(
+        "Topaz Ring",
+    ),
+    item_level: Some(
+        79,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            60,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Elemental",
+                "Lightning",
+                "Resistance",
+            ],
+            stats: [
+                "+30(20-30)% to Lightning Resistance",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Exploiter's",
+            ),
+            tier: None,
+            tags: [
+                "Damage",
+                "Minion",
+            ],
+            stats: [
+                "Minions deal 24(22-24)% increased Damage",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Fortifying",
+            ),
+            tier: None,
+            tags: [
+                "Life",
+                "Minion",
+            ],
+            stats: [
+                "Minions have 29(27-30)% increased maximum Life",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Adroit",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [
+                "Evasion",
+            ],
+            stats: [
+                "+221(203-233) to Evasion Rating",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Gouging",
+            ),
+            tier: None,
+            tags: [
+                "Minion",
+                "Critical",
+            ],
+            stats: [
+                "Minions have 25(21-28)% increased Critical Hit Chance",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Desensitisation",
+            ),
+            tier: None,
+            tags: [
+                "Elemental",
+                "Fire",
+                "Cold",
+                "Lightning",
+                "Resistance",
+                "Minion",
+            ],
+            stats: [
+                "Minions have +15(14-16)% to all Elemental Resistances",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Thunderhead",
+            ),
+            tier: Some(
+                5,
+            ),
+            tags: [
+                "Elemental",
+                "Lightning",
+                "Resistance",
+            ],
+            stats: [
+                "+23(21-25)% to Lightning Resistance",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

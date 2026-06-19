@@ -1,0 +1,543 @@
+{
+  "result": [
+    {
+      "id": "pseudo",
+      "label": "Pseudo",
+      "entries": [
+        {
+          "id": "pseudo.pseudo_total_lightning_resistance",
+          "text": "+#% total to Lightning Resistance",
+          "type": "pseudo"
+        },
+        {
+          "id": "pseudo.pseudo_total_life",
+          "text": "+# total maximum Life",
+          "type": "pseudo"
+        }
+      ]
+    },
+    {
+      "id": "explicit",
+      "label": "Explicit",
+      "entries": [
+        {
+          "id": "explicit.stat_1050105434",
+          "text": "# to maximum Mana",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_3299347043",
+          "text": "# to maximum Life",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_4220027924",
+          "text": "#% to Cold Resistance",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_1671376347",
+          "text": "#% to Lightning Resistance",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_3372524247",
+          "text": "#% to Fire Resistance",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_2974417149",
+          "text": "#% increased Spell Damage",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_2891184298",
+          "text": "#% increased Cast Speed",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_2901986750",
+          "text": "#% to all Elemental Resistances",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_2144192055",
+          "text": "# to Evasion Rating",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_587431675",
+          "text": "#% increased Critical Hit Chance",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_1940865751",
+          "text": "Adds # to # Physical Damage",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_709508406",
+          "text": "Adds # to # Fire Damage",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_770672621",
+          "text": "Minions have #% increased maximum Life",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_1589917703",
+          "text": "Minions deal #% increased Damage",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_2748665614",
+          "text": "#% increased maximum Mana",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_983749596",
+          "text": "#% increased maximum Life",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_4163415912",
+          "text": "+# to Spirit per Socket filled",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_448592698|44",
+          "text": "+# to Level of all Tornado Shot Skills",
+          "type": "explicit"
+        },
+        {
+          "id": "explicit.stat_3650769924",
+          "text": "Map contains an additional Rare Chest",
+          "type": "explicit"
+        }
+      ]
+    },
+    {
+      "id": "implicit",
+      "label": "Implicit",
+      "entries": [
+        {
+          "id": "implicit.stat_4220027924",
+          "text": "#% to Cold Resistance",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_2901986750",
+          "text": "#% to all Elemental Resistances",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_1671376347",
+          "text": "#% to Lightning Resistance",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_3372524247",
+          "text": "#% to Fire Resistance",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_3299347043",
+          "text": "# to maximum Life",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_2891184298",
+          "text": "#% increased Cast Speed",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_1050105434",
+          "text": "# to maximum Mana",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_1589917703",
+          "text": "Minions deal #% increased Damage",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_2748665614",
+          "text": "#% increased maximum Mana",
+          "type": "implicit"
+        },
+        {
+          "id": "implicit.stat_983749596",
+          "text": "#% increased maximum Life",
+          "type": "implicit"
+        }
+      ]
+    },
+    {
+      "id": "fractured",
+      "label": "Fractured",
+      "entries": [
+        {
+          "id": "fractured.stat_1050105434",
+          "text": "# to maximum Mana",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_3299347043",
+          "text": "# to maximum Life",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_4220027924",
+          "text": "#% to Cold Resistance",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_1671376347",
+          "text": "#% to Lightning Resistance",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_2974417149",
+          "text": "#% increased Spell Damage",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_3372524247",
+          "text": "#% to Fire Resistance",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_2891184298",
+          "text": "#% increased Cast Speed",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_1940865751",
+          "text": "Adds # to # Physical Damage",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_2901986750",
+          "text": "#% to all Elemental Resistances",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_587431675",
+          "text": "#% increased Critical Hit Chance",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_709508406",
+          "text": "Adds # to # Fire Damage",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_2748665614",
+          "text": "#% increased maximum Mana",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_2144192055",
+          "text": "# to Evasion Rating",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_983749596",
+          "text": "#% increased maximum Life",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_1589917703",
+          "text": "Minions deal #% increased Damage",
+          "type": "fractured"
+        },
+        {
+          "id": "fractured.stat_770672621",
+          "text": "Minions have #% increased maximum Life",
+          "type": "fractured"
+        }
+      ]
+    },
+    {
+      "id": "crafted",
+      "label": "Crafted",
+      "entries": [
+        {
+          "id": "crafted.stat_1671376347",
+          "text": "#% to Lightning Resistance",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_3372524247",
+          "text": "#% to Fire Resistance",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_4220027924",
+          "text": "#% to Cold Resistance",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_1940865751",
+          "text": "Adds # to # Physical Damage",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_3299347043",
+          "text": "# to maximum Life",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_2748665614",
+          "text": "#% increased maximum Mana",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_2974417149",
+          "text": "#% increased Spell Damage",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_2891184298",
+          "text": "#% increased Cast Speed",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_1050105434",
+          "text": "# to maximum Mana",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_709508406",
+          "text": "Adds # to # Fire Damage",
+          "type": "crafted"
+        },
+        {
+          "id": "crafted.stat_983749596",
+          "text": "#% increased maximum Life",
+          "type": "crafted"
+        }
+      ]
+    },
+    {
+      "id": "enchant",
+      "label": "Enchant",
+      "entries": [
+        {
+          "id": "enchant.stat_4220027924",
+          "text": "#% to Cold Resistance",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_1671376347",
+          "text": "#% to Lightning Resistance",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_3372524247",
+          "text": "#% to Fire Resistance",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_3299347043",
+          "text": "# to maximum Life",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_1050105434",
+          "text": "# to maximum Mana",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_709508406",
+          "text": "Adds # to # Fire Damage",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_2901986750",
+          "text": "#% to all Elemental Resistances",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_2974417149",
+          "text": "#% increased Spell Damage",
+          "type": "enchant"
+        },
+        {
+          "id": "enchant.stat_2891184298",
+          "text": "#% increased Cast Speed",
+          "type": "enchant"
+        }
+      ]
+    },
+    {
+      "id": "rune",
+      "label": "Augment",
+      "entries": [
+        {
+          "id": "rune.stat_1671376347",
+          "text": "#% to Lightning Resistance",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_3372524247",
+          "text": "#% to Fire Resistance",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_4220027924",
+          "text": "#% to Cold Resistance",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_2901986750",
+          "text": "#% to all Elemental Resistances",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_3299347043",
+          "text": "# to maximum Life",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_1050105434",
+          "text": "# to maximum Mana",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_709508406",
+          "text": "Adds # to # Fire Damage",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_2974417149",
+          "text": "#% increased Spell Damage",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_2748665614",
+          "text": "#% increased maximum Mana",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_983749596",
+          "text": "#% increased maximum Life",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_2891184298",
+          "text": "#% increased Cast Speed",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_770672621",
+          "text": "Minions have #% increased maximum Life",
+          "type": "augment"
+        },
+        {
+          "id": "rune.stat_587431675",
+          "text": "#% increased Critical Hit Chance",
+          "type": "augment"
+        }
+      ]
+    },
+    {
+      "id": "desecrated",
+      "label": "Desecrated",
+      "entries": [
+        {
+          "id": "desecrated.stat_3299347043",
+          "text": "# to maximum Life",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_4220027924",
+          "text": "#% to Cold Resistance",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_1671376347",
+          "text": "#% to Lightning Resistance",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_3372524247",
+          "text": "#% to Fire Resistance",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_1050105434",
+          "text": "# to maximum Mana",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_587431675",
+          "text": "#% increased Critical Hit Chance",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_2974417149",
+          "text": "#% increased Spell Damage",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_2891184298",
+          "text": "#% increased Cast Speed",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_1940865751",
+          "text": "Adds # to # Physical Damage",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_709508406",
+          "text": "Adds # to # Fire Damage",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_2901986750",
+          "text": "#% to all Elemental Resistances",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_2144192055",
+          "text": "# to Evasion Rating",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_1589917703",
+          "text": "Minions deal #% increased Damage",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_770672621",
+          "text": "Minions have #% increased maximum Life",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_983749596",
+          "text": "#% increased maximum Life",
+          "type": "desecrated"
+        },
+        {
+          "id": "desecrated.stat_2748665614",
+          "text": "#% increased maximum Mana",
+          "type": "desecrated"
+        }
+      ]
+    },
+    {
+      "id": "sanctum",
+      "label": "Sanctum",
+      "entries": [
+        {
+          "id": "sanctum.stat_1200789871",
+          "text": "#% increased maximum Life",
+          "type": "sanctum"
+        }
+      ]
+    }
+  ]
+}

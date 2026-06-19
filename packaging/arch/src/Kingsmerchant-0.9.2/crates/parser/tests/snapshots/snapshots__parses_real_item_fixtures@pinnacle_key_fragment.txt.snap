@@ -1,0 +1,33 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/pinnacle_key_fragment.txt
+---
+Item {
+    item_class: "Pinnacle Keys",
+    rarity: Currency,
+    name: Some(
+        "Ancient Crisis Fragment",
+    ),
+    base_type: None,
+    item_level: None,
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

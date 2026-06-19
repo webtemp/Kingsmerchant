@@ -1,0 +1,21 @@
+[package]
+name = "platform-linux"
+version = "0.6.0"
+description = "Linux platform glue for kingsmerchant: evdev hotkeys, X11 clipboard, uinput injection, tray."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+evdev = "0.12"
+# KDE/freedesktop StatusNotifierItem tray. The `blocking` feature
+# gives a synchronous spawn()/Handle::update() so we don't need to drive it
+# from an async context.
+ksni = { version = "0.3", features = ["blocking"] }

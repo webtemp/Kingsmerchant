@@ -1,0 +1,36 @@
+Item Class: Gloves
+Rarity: Rare
+Horror Touch
+Runeforged War Wraps
+--------
+Quality: +20% (augmented)
+Evasion Rating: 88 (augmented)
+Energy Shield: 26 (augmented)
+Runic Ward: 34 (augmented)
+--------
+Requires: Level 65, 44 Dex, 44 Int
+--------
+Sockets: S J
+--------
+Item Level: 80
+--------
+Destroys all Augment Sockets on the item to create a Jewel Socket (rune)
+--------
+{ Fractured Prefix Modifier "Entombing" (Tier: 1) — Damage, Elemental, Cold, Attack }
+Adds 22(21-24) to 36(32-37) Cold damage to Attacks
+{ Prefix Modifier "Blasting" (Tier: 2) — Damage, Elemental, Fire, Attack }
+Adds 24(20-24) to 36(33-36) Fire damage to Attacks
+{ Desecrated Prefix Modifier "Electrocuting" (Tier: 1) — Damage, Elemental, Lightning, Attack }
+Adds 2(1-4) to 69(60-71) Lightning damage to Attacks
+{ Suffix Modifier "of Renown" (Tier: 1) — Attack, Speed }
+15(14-16)% increased Attack Speed
+{ Crafted Suffix Modifier "of the Essence" }
+60% increased effect of Socketed Augment Items — Unscalable Value
+{ Crafted Suffix Modifier "of Fury" (Tier: 2) — Damage, Critical }
+29(25-29)% increased Critical Damage Bonus
+--------
+Fractured Item
+--------
+Hinekora's Lock
+--------
+Note: ~b/o 350 divine

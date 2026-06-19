@@ -659,9 +659,7 @@ fn render_item_preview(ui: &mut egui::Ui, item: &ItemPreview) {
                 );
             }
             if item.sockets > 0 {
-                ui.label(
-                    RichText::new(format!("Sockets: {}", item.sockets)).color(PROP_COLOR),
-                );
+                ui.label(RichText::new(format!("Sockets: {}", item.sockets)).color(PROP_COLOR));
             }
 
             if !item.mods.is_empty() {

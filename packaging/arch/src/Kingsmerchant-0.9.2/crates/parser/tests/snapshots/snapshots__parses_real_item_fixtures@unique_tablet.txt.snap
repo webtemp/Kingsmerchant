@@ -1,0 +1,62 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/unique_tablet.txt
+---
+Item {
+    item_class: "Tablet",
+    rarity: Unique,
+    name: Some(
+        "Unforeseen Consequences",
+    ),
+    base_type: Some(
+        "Abyss Tablet",
+    ),
+    item_level: Some(
+        81,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Adds Abysses to a Map",
+                "1 use remaining",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Map contains 18(14-18) additional Abysses",
+                "Map is overrun by the Abyssal — Unscalable Value",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [
+        "~b/o 3 divine",
+    ],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

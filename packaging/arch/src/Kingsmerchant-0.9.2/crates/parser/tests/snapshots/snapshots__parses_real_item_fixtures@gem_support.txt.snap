@@ -1,0 +1,40 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/gem_support.txt
+---
+Item {
+    item_class: "Support Gems",
+    rarity: Gem,
+    name: Some(
+        "Prototype Seventeen",
+    ),
+    base_type: None,
+    item_level: None,
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Category",
+            value: "Prototype",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [
+        "The murals tell a story of creation, of design... the Precursors\ndelved into the secrets of life itself. In their war with the Abyssals,\nthey sought to breed warriors, grown in legions, to fight back...",
+    ],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

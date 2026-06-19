@@ -1,0 +1,139 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/waystone_tier16_corrupted.txt
+---
+Item {
+    item_class: "Waystones",
+    rarity: Rare,
+    name: Some(
+        "Blood Solitude",
+    ),
+    base_type: Some(
+        "Waystone (Tier 16)",
+    ),
+    item_level: Some(
+        82,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Revives Available",
+            value: "0 (augmented)",
+        },
+        Property {
+            name: "Item Rarity",
+            value: "+38% (augmented)",
+        },
+        Property {
+            name: "Pack Size",
+            value: "+8% (augmented)",
+        },
+        Property {
+            name: "Monster Rarity",
+            value: "+19% (augmented)",
+        },
+        Property {
+            name: "Monster Effectiveness",
+            value: "+13% (augmented)",
+        },
+        Property {
+            name: "Waystone Drop Chance",
+            value: "+90% (augmented)",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Impacting",
+            ),
+            tier: None,
+            tags: [],
+            stats: [
+                "Monsters have 93(90-100)% increased Stun Buildup",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Thunderous",
+            ),
+            tier: None,
+            tags: [],
+            stats: [
+                "Monsters deal 17(15-19)% of Damage as Extra Lightning",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Shattering",
+            ),
+            tier: None,
+            tags: [],
+            stats: [
+                "Monsters Break Armour equal to 27(25-30)% of Physical Damage dealt",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Buffering",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [],
+            stats: [
+                "Monsters gain 22(12-25)% of maximum Life as Extra maximum Energy Shield",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "Sleet",
+            ),
+            tier: None,
+            tags: [],
+            stats: [
+                "Area has patches of Chilled Ground",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Erosion",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [],
+            stats: [
+                "Players are periodically Cursed with Elemental Weakness — Unscalable Value",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: true,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

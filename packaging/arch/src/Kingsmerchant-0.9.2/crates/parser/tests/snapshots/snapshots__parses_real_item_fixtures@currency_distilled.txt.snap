@@ -1,0 +1,51 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/currency_distilled.txt
+---
+Item {
+    item_class: "Stackable Currency",
+    rarity: Currency,
+    name: Some(
+        "Liquid Envy",
+    ),
+    base_type: None,
+    item_level: None,
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: Some(
+        StackSize {
+            count: 8,
+            max: 10,
+        },
+    ),
+    properties: [
+        Property {
+            name: "Sapphire",
+            value: "(5-15)% increased Spell Damage",
+        },
+        Property {
+            name: "Ruby",
+            value: "(4-6)% of Skill Mana Costs Converted to Life Costs",
+        },
+        Property {
+            name: "Emerald",
+            value: "(3-5)% increased Cooldown Recovery Rate",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

@@ -1,0 +1,106 @@
+{
+ "id": "5n2ORePVta",
+ "complexity": null,
+ "result": {
+  "88a912ba7ddace75dfd263cb4bb9fe089cefbfc00c6019f52f1a54": {
+   "id": "66e6e8f7b988a912ba7ddace75dfd263cb4bb9fe089cefbfc00c6019f52f1a54",
+   "item": null,
+   "listing": {
+    "indexed": "2026-06-15T11:53:09+00:00",
+    "account": {
+     "name": "gmf3609#0520",
+     "online": {
+      "league": "Runes of Aldur",
+      "status": "afk"
+     },
+     "lastCharacterName": "해동용궁사",
+     "language": "ko_KR",
+     "realm": "poe2"
+    },
+    "offers": [
+     {
+      "exchange": {
+       "currency": "exalted",
+       "amount": 1,
+       "whisper": "{0} 엑잘티드 오브"
+      },
+      "item": {
+       "currency": "farruls-rune-of-the-chase",
+       "amount": 1,
+       "stock": 1,
+       "id": "66e6e8f7b988a912ba7ddace75dfd263cb4bb9fe089cefbfc00c6019f52f1a54",
+       "whisper": "{0} 페룰의 추격의 룬"
+      }
+     }
+    ],
+    "whisper": "@해동용궁사 안녕하세요, Runes of Aldur 리그의 {0}(을)를 {1}(으)로 구매하고 싶습니다"
+   }
+  },
+  "e749e7648f2fbe2abded056def0595449faef2eff1390906257323": {
+   "id": "1fc09ab4dae749e7648f2fbe2abded056def0595449faef2eff1390906257323",
+   "item": null,
+   "listing": {
+    "indexed": "2026-06-15T12:47:52+00:00",
+    "account": {
+     "name": "75097259#6589",
+     "online": {
+      "league": "Runes of Aldur"
+     },
+     "lastCharacterName": "nufeng",
+     "language": "zh_TW",
+     "realm": "poe2"
+    },
+    "offers": [
+     {
+      "exchange": {
+       "currency": "exalted",
+       "amount": 3,
+       "whisper": "{0} 崇高石"
+      },
+      "item": {
+       "currency": "farruls-rune-of-the-chase",
+       "amount": 1,
+       "stock": 4,
+       "id": "1fc09ab4dae749e7648f2fbe2abded056def0595449faef2eff1390906257323",
+       "whisper": "{0} 費爾羅的追擊符文"
+      }
+     }
+    ],
+    "whisper": "@nufeng 嗨，我想在Runes of Aldur用{1}購買你的{0}"
+   }
+  },
+  "b0adf580bbfa8a526d771015c3f89ee0b4602ac961a18636948025": {
+   "id": "2ea51ad611b0adf580bbfa8a526d771015c3f89ee0b4602ac961a18636948025",
+   "item": null,
+   "listing": {
+    "indexed": "2026-06-15T12:53:13+00:00",
+    "account": {
+     "name": "Skywarps#4454",
+     "online": {
+      "league": "Runes of Aldur"
+     },
+     "lastCharacterName": "Sky_Boom_Boom_MF",
+     "language": "en_US",
+     "realm": "poe2"
+    },
+    "offers": [
+     {
+      "exchange": {
+       "currency": "exalted",
+       "amount": 3,
+       "whisper": "{0} Exalted Orb"
+      },
+      "item": {
+       "currency": "farruls-rune-of-the-chase",
+       "amount": 1,
+       "stock": 2,
+       "id": "2ea51ad611b0adf580bbfa8a526d771015c3f89ee0b4602ac961a18636948025",
+       "whisper": "{0} Farrul's Rune of the Chase"
+      }
+     }
+    ],
+    "whisper": "@Sky_Boom_Boom_MF Hi, I'd like to buy your {0} for my {1} in Runes of Aldur"
+   }
+  }
+ }
+}

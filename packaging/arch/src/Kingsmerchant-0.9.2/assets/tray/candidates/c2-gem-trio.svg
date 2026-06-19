@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Candidate 2: "Socketed Gems" — the red/green/blue skill-gem trio with gold
+     links, the most instantly-PoE motif. Each faceted gem carries a "d". -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="card2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34363f"/>
+      <stop offset="1" stop-color="#1f2027"/>
+    </linearGradient>
+    <radialGradient id="gemR" cx="0.4" cy="0.35" r="0.8">
+      <stop offset="0" stop-color="#ff9a8a"/><stop offset="0.6" stop-color="#e23b30"/><stop offset="1" stop-color="#8c160f"/>
+    </radialGradient>
+    <radialGradient id="gemG" cx="0.4" cy="0.35" r="0.8">
+      <stop offset="0" stop-color="#b8f5a0"/><stop offset="0.6" stop-color="#3fb24a"/><stop offset="1" stop-color="#155e1f"/>
+    </radialGradient>
+    <radialGradient id="gemB" cx="0.4" cy="0.35" r="0.8">
+      <stop offset="0" stop-color="#a9d6ff"/><stop offset="0.6" stop-color="#3f8fe2"/><stop offset="1" stop-color="#16407e"/>
+    </radialGradient>
+  </defs>
+  <rect x="14" y="14" width="228" height="228" rx="52" fill="url(#card2)" stroke="#caa23c" stroke-width="5"/>
+  <!-- gold links between sockets -->
+  <path d="M84 92 L128 128 L172 92" fill="none" stroke="#caa23c" stroke-width="9" stroke-linecap="round"/>
+  <path d="M128 128 V184" fill="none" stroke="#caa23c" stroke-width="9" stroke-linecap="round"/>
+  <!-- three faceted gems (octagon-ish), each with a d -->
+  <g font-family="Georgia, serif" font-size="40" font-weight="700" fill="#ffffff" text-anchor="middle">
+    <polygon points="84,58 108,82 84,106 60,82" fill="url(#gemR)" stroke="#2a0c08" stroke-width="2"/>
+    <text x="84" y="96">d</text>
+    <polygon points="172,58 196,82 172,106 148,82" fill="url(#gemB)" stroke="#0c1c3a" stroke-width="2"/>
+    <text x="172" y="96">d</text>
+    <polygon points="128,150 152,174 128,198 104,174" fill="url(#gemG)" stroke="#0c2a0f" stroke-width="2"/>
+    <text x="128" y="188">d</text>
+  </g>
+</svg>

@@ -1,0 +1,54 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/normal_body_armour_hybrid.txt
+---
+Item {
+    item_class: "Body Armours",
+    rarity: Normal,
+    name: None,
+    base_type: Some(
+        "Exceptional Hawker's Jacket",
+    ),
+    item_level: Some(
+        82,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            62,
+        ),
+        strength: None,
+        dexterity: Some(
+            54,
+        ),
+        intelligence: Some(
+            54,
+        ),
+    },
+    sockets: Some(
+        "S S S",
+    ),
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Evasion Rating",
+            value: "237",
+        },
+        Property {
+            name: "Energy Shield",
+            value: "73",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [
+        "~b/o 10 exalted",
+    ],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

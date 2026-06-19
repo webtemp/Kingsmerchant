@@ -1,0 +1,154 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/rare_amulet.txt
+---
+Item {
+    item_class: "Amulets",
+    rarity: Rare,
+    name: Some(
+        "Apocalypse Locket",
+    ),
+    base_type: Some(
+        "Jade Amulet",
+    ),
+    item_level: Some(
+        74,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            48,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Attribute",
+            ],
+            stats: [
+                "+11(10-15) to Dexterity",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Virile",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [
+                "Life",
+            ],
+            stats: [
+                "+118(100-119) to maximum Life",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Cognizant",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [
+                "Mana",
+            ],
+            stats: [
+                "4(3-4)% increased maximum Mana",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Lobstered",
+            ),
+            tier: Some(
+                5,
+            ),
+            tags: [
+                "Armour",
+            ],
+            stats: [
+                "22(21-26)% increased Armour",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Volcano",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [
+                "Elemental",
+                "Fire",
+                "Resistance",
+            ],
+            stats: [
+                "+35(31-35)% to Fire Resistance",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Variegation",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [
+                "Elemental",
+                "Fire",
+                "Cold",
+                "Lightning",
+                "Resistance",
+            ],
+            stats: [
+                "+14(12-14)% to all Elemental Resistances",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Disaster",
+            ),
+            tier: Some(
+                4,
+            ),
+            tags: [
+                "Critical",
+            ],
+            stats: [
+                "22(20-24)% increased Critical Hit Chance",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

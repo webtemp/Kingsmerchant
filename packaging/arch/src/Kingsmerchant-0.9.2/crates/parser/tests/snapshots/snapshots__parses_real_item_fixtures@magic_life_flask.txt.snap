@@ -1,0 +1,66 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/magic_life_flask.txt
+---
+Item {
+    item_class: "Life Flasks",
+    rarity: Magic,
+    name: Some(
+        "Simmering Colossal Life Flask of the Doctor",
+    ),
+    base_type: None,
+    item_level: Some(
+        33,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            30,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Simmering",
+            ),
+            tier: Some(
+                3,
+            ),
+            tags: [],
+            stats: [
+                "21(20-23)% of Recovery applied Instantly",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Doctor",
+            ),
+            tier: Some(
+                2,
+            ),
+            tags: [],
+            stats: [
+                "30(26-30)% Chance to gain a Charge when you kill an enemy",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

@@ -1,0 +1,79 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/magic_wand.txt
+---
+Item {
+    item_class: "Wands",
+    rarity: Magic,
+    name: Some(
+        "Professor's Volatile Wand of Expertise",
+    ),
+    base_type: None,
+    item_level: Some(
+        65,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            58,
+        ),
+        strength: None,
+        dexterity: None,
+        intelligence: Some(
+            103,
+        ),
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Grants Skill",
+            value: "Level 14 Volatile Dead",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Professor's",
+            ),
+            tier: Some(
+                5,
+            ),
+            tags: [
+                "Damage",
+                "Caster",
+            ],
+            stats: [
+                "63(55-64)% increased Spell Damage",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Expertise",
+            ),
+            tier: Some(
+                5,
+            ),
+            tags: [
+                "Caster",
+                "Speed",
+            ],
+            stats: [
+                "17(17-20)% increased Cast Speed",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

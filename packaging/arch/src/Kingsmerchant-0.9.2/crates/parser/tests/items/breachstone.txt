@@ -1,0 +1,8 @@
+Item Class: Breachstones
+Rarity: Normal
+Breachstone
+--------
+The Twisted Breachlord reaches out from his
+Domain with maddened agony and anger.
+--------
+Required to reveal Breach Strongholds on the Atlas.

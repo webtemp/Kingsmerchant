@@ -1,0 +1,26 @@
+Item Class: Belts
+Rarity: Rare
+Glyph Cord
+Utility Belt
+--------
+Requires: Level 60
+--------
+Item Level: 81
+--------
+{ Implicit Modifier }
+20% of Flask Recovery applied Instantly
+{ Implicit Modifier — Charm }
+Has 3(1-3) Charm Slots
+--------
+{ Prefix Modifier "Revolutionary" (Tier: 1) — Charm }
+31(28-33)% increased Charm Effect Duration
+{ Prefix Modifier "Athlete's" (Tier: 2) — Life }
++142(120-149) to maximum Life
+{ Desecrated Prefix Modifier "Ulaman's" (Tier: 1) }
+Life Flasks gain 0.1(0.1-0.2) charges per Second
+{ Suffix Modifier "of the Ice" (Tier: 2) — Elemental, Cold, Resistance }
++36(36-40)% to Cold Resistance
+{ Suffix Modifier "of the Maelstrom" (Tier: 3) — Elemental, Lightning, Resistance }
++35(31-35)% to Lightning Resistance
+{ Suffix Modifier "of Resurgence" (Tier: 1) — Life }
+24.4(23.1-29) Life Regeneration per second

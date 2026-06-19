@@ -1,0 +1,14 @@
+Item Class: Sceptres
+Rarity: Rare
+Superior Rattling Sceptre
+--------
+Quality: +6% (augmented)
+Spirit: 100
+--------
+Requires: 113 Intelligence
+--------
+Item Level: 72
+--------
+Grants Skill: Level 15 Skeletal Warrior Minion
+--------
+Unidentified

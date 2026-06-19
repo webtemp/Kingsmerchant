@@ -1,0 +1,110 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/unique_shield.txt
+---
+Item {
+    item_class: "Shields",
+    rarity: Unique,
+    name: Some(
+        "Doomgate",
+    ),
+    base_type: Some(
+        "Braced Tower Shield",
+    ),
+    item_level: Some(
+        82,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: Some(
+            12,
+        ),
+        strength: Some(
+            19,
+        ),
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [
+        Property {
+            name: "Block chance",
+            value: "49% (augmented)",
+        },
+        Property {
+            name: "Armour",
+            value: "108 (augmented)",
+        },
+        Property {
+            name: "Grants Skill",
+            value: "Raise Shield",
+        },
+    ],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Armour",
+            ],
+            stats: [
+                "115(100-150)% increased Armour",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "90(80-100)% increased Block chance",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "You take 28(25-40)% of damage from Blocked Hits",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Enemies are Culled on Block — Unscalable Value",
+            ],
+        },
+        Modifier {
+            kind: Unique,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [
+                "Chaos",
+                "Resistance",
+            ],
+            stats: [
+                "+16(13-17)% to Chaos Resistance",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Candidate 3: "Notable Node" — a passive skill-tree notable: ornate gold ring
+     with radiating connection spokes, dark center stamped "ddd". -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="gold3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4dd8c"/><stop offset="0.55" stop-color="#d6a93f"/><stop offset="1" stop-color="#9c6e1c"/>
+    </linearGradient>
+    <radialGradient id="core3" cx="0.5" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#3a3c46"/><stop offset="1" stop-color="#191a20"/>
+    </radialGradient>
+  </defs>
+  <!-- radiating spokes to neighbouring nodes -->
+  <g stroke="url(#gold3)" stroke-width="10" stroke-linecap="round">
+    <line x1="128" y1="128" x2="128" y2="24"/>
+    <line x1="128" y1="128" x2="220" y2="190"/>
+    <line x1="128" y1="128" x2="36"  y2="190"/>
+  </g>
+  <circle cx="36"  cy="190" r="13" fill="url(#gold3)"/>
+  <circle cx="220" cy="190" r="13" fill="url(#gold3)"/>
+  <circle cx="128" cy="24"  r="13" fill="url(#gold3)"/>
+  <!-- ornate notable ring -->
+  <circle cx="128" cy="128" r="78" fill="url(#core3)" stroke="url(#gold3)" stroke-width="12"/>
+  <circle cx="128" cy="128" r="60" fill="none" stroke="#caa23c" stroke-width="2" opacity="0.6"/>
+  <!-- ddd -->
+  <text x="128" y="156" text-anchor="middle" font-family="Georgia, serif"
+        font-size="64" font-weight="700" fill="url(#gold3)">ddd</text>
+</svg>

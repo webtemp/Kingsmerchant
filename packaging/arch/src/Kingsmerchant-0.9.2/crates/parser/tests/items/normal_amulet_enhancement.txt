@@ -1,0 +1,13 @@
+Item Class: Amulets
+Rarity: Normal
+Distorted Amulet
+--------
+Item Level: 79
+--------
+{ Enhancement }
+Allocates Embodiment of Frost — Unscalable Value
+{ Enhancement }
+Allocates Frozen Limit — Unscalable Value
+--------
+{ Implicit Modifier }
+-1 Suffix Modifier allowed

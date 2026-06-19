@@ -1,0 +1,35 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/relic_unidentified.txt
+---
+Item {
+    item_class: "Relics",
+    rarity: Unique,
+    name: None,
+    base_type: Some(
+        "Amphora Relic",
+    ),
+    item_level: Some(
+        82,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: true,
+    fractured: false,
+    flags: [],
+}

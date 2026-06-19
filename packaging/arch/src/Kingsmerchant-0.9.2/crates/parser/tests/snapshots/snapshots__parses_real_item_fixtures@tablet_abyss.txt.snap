@@ -1,0 +1,105 @@
+---
+source: crates/parser/tests/snapshots.rs
+expression: item
+input_file: crates/parser/tests/items/tablet_abyss.txt
+---
+Item {
+    item_class: "Tablet",
+    rarity: Rare,
+    name: Some(
+        "Mythic Apex",
+    ),
+    base_type: Some(
+        "Abyss Tablet",
+    ),
+    item_level: Some(
+        79,
+    ),
+    quality: None,
+    requirements: Requirements {
+        level: None,
+        strength: None,
+        dexterity: None,
+        intelligence: None,
+    },
+    sockets: None,
+    stack_size: None,
+    properties: [],
+    rune_mods: [],
+    modifiers: [
+        Modifier {
+            kind: Implicit,
+            source: None,
+            name: None,
+            tier: None,
+            tags: [],
+            stats: [
+                "Adds Abysses to a Map",
+                "10 uses remaining",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Breeding",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [],
+            stats: [
+                "6(5-7)% increased Pack Size in Map",
+            ],
+        },
+        Modifier {
+            kind: Prefix,
+            source: None,
+            name: Some(
+                "Challenger's",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [],
+            stats: [
+                "Monsters have 11(10-15)% increased Effectiveness",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of the Exile",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [],
+            stats: [
+                "Map has 73(70-100)% increased chance to contain Rogue Exiles",
+            ],
+        },
+        Modifier {
+            kind: Suffix,
+            source: None,
+            name: Some(
+                "of Ossification",
+            ),
+            tier: Some(
+                1,
+            ),
+            tags: [],
+            stats: [
+                "28(20-30)% increased chance for Desecrated Currency from Abysses in Map",
+            ],
+        },
+    ],
+    flavour_text: [],
+    notes: [],
+    corrupted: false,
+    mirrored: false,
+    unidentified: false,
+    fractured: false,
+    flags: [],
+}

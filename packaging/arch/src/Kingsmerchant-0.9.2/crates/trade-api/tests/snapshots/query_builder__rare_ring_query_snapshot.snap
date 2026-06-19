@@ -1,0 +1,54 @@
+---
+source: crates/trade-api/tests/query_builder.rs
+expression: req
+---
+{
+  "query": {
+    "status": {
+      "option": "online"
+    },
+    "stats": [
+      {
+        "type": "and",
+        "filters": [
+          {
+            "id": "implicit.stat_1671376347",
+            "value": {
+              "min": 30
+            },
+            "disabled": true
+          },
+          {
+            "id": "explicit.stat_2144192055",
+            "value": {
+              "min": 221
+            },
+            "disabled": true
+          },
+          {
+            "id": "explicit.stat_1671376347",
+            "value": {
+              "min": 23
+            },
+            "disabled": true
+          }
+        ]
+      }
+    ],
+    "filters": {
+      "type_filters": {
+        "filters": {
+          "category": {
+            "option": "accessory.ring"
+          },
+          "rarity": {
+            "option": "rare"
+          }
+        }
+      }
+    }
+  },
+  "sort": {
+    "price": "asc"
+  }
+}
