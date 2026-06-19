@@ -434,12 +434,24 @@ mod tests {
     fn tablets_cap_affixes_at_two_per_group() {
         // A full tablet is 2 prefixes + 2 suffixes — no open slots (the bug:
         // it used to report a phantom 3rd prefix/suffix as craftable).
-        assert_eq!(open_affix_slots(&item_with_class("Tablet", "Rare", 2, 2)), (false, false));
+        assert_eq!(
+            open_affix_slots(&item_with_class("Tablet", "Rare", 2, 2)),
+            (false, false)
+        );
         // One prefix free, suffixes full.
-        assert_eq!(open_affix_slots(&item_with_class("Tablet", "Rare", 1, 2)), (true, false));
+        assert_eq!(
+            open_affix_slots(&item_with_class("Tablet", "Rare", 1, 2)),
+            (true, false)
+        );
         // Both groups have room.
-        assert_eq!(open_affix_slots(&item_with_class("Tablet", "Rare", 1, 1)), (true, true));
+        assert_eq!(
+            open_affix_slots(&item_with_class("Tablet", "Rare", 1, 1)),
+            (true, true)
+        );
         // Normal gear still uses the 3/3 cap (regression guard).
-        assert_eq!(open_affix_slots(&item_with_class("Rings", "Rare", 2, 2)), (true, true));
+        assert_eq!(
+            open_affix_slots(&item_with_class("Rings", "Rare", 2, 2)),
+            (true, true)
+        );
     }
 }
