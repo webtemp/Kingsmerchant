@@ -17,7 +17,7 @@ jobs:
     name: fmt · clippy · test · doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The overlay crate links against Wayland / EGL / xkbcommon; the rest of
       # the workspace is pure Rust (rustls, no OpenSSL).
@@ -53,7 +53,7 @@ jobs:
     name: MSRV (1.96)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: |
