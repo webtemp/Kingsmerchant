@@ -1,7 +1,4 @@
-//! The small shared data types and pure (egui-free) helpers used across the
-//! UI: the background-message and phase enums, the detailed-filter row structs
-//! and their selection mappings, and the item-hashing / number-formatting /
-//! status-parsing helpers. No rendering lives here.
+//! Shared data types and pure (egui-free) helpers used across the UI.
 
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
@@ -9,28 +6,12 @@ use trade_api::{
     PriceFilter, ScoutPrice, SessionStatus, StatSelection,
 };
 
-/// Standard rare-item affix cap: up to three prefixes and three suffixes.
 const MAX_AFFIXES_PER_GROUP: usize = 3;
 
-/// Tablets (Breach/Abyss/… map-device tablets) and jewels cap at two prefixes
-/// and two suffixes — four mods total, not six like normal rare gear.
+/// Tablets and jewels cap at two prefixes and two suffixes (not six like normal gear).
 const MAX_LOW_AFFIXES_PER_GROUP: usize = 2;
 
-/// Open (empty) prefix and suffix slots on a rare item, as `(prefix, suffix)`.
-/// Only rares can be crafted into, so non-rares always report `(false, false)`.
-/// Counts each `{ Prefix }` / `{ Suffix }` descriptor as one filled slot.
-///
-/// Tablets and jewels use a lower cap (2/2) than normal gear (3/3), so a full
-/// one correctly reports no open slots instead of phantom empty rows.
-///
-/// Jewels and Tablets are the *only* rare-craftable classes with the 2/2 cap
-/// (verified against community references, 2026-06). The other special classes
-/// need no entry here:
-/// - Life/Mana Flasks, Charms and Relics are **Magic-only** — they can never be
-///   Rare, so the rarity guard below already reports them as having no open
-///   slots. Don't add a lower-cap branch for them.
-/// - Waystones are Rare-craftable but use the **standard 3/3** cap, so they fall
-///   through to `MAX_AFFIXES_PER_GROUP` on purpose.
+/// Open prefix and suffix slots on a rare item, as `(prefix, suffix)`; non-rares are `(false, false)`.
 pub(crate) fn open_affix_slots(item: &Item) -> (bool, bool) {
     if item.rarity != Rarity::Rare {
         return (false, false);
@@ -45,7 +26,6 @@ pub(crate) fn open_affix_slots(item: &Item) -> (bool, bool) {
 }
 
 /// A waystone's map tier, parsed from its base type (`Waystone (Tier 16)`).
-/// `None` for non-waystones or when no tier is present.
 pub(crate) fn waystone_tier(item: &Item) -> Option<u32> {
     if item.item_class != "Waystones" {
         return None;
@@ -53,8 +33,7 @@ pub(crate) fn waystone_tier(item: &Item) -> Option<u32> {
     let base = item.base_type.as_deref()?;
     let open = base.find('(')?;
     let close = base.find(')')?;
-    // `get` (not slicing) so a malformed base like `"foo )( bar"`, where `)`
-    // precedes `(`, yields `None` instead of panicking on an inverted range.
+    // `get` (not slicing) so a malformed `)( ` order yields None instead of panicking.
     let inner = base.get(open + 1..close)?;
     inner.split_whitespace().last()?.parse::<u32>().ok()
 }
@@ -62,51 +41,38 @@ pub(crate) fn waystone_tier(item: &Item) -> Option<u32> {
 /// Result of a background price check, sent back to the UI thread.
 pub(crate) enum Msg {
     Result(Box<Result<PriceCheck, String>>),
-    /// poeprices.info ML estimate (rares). `None` = poeprices declined to price
-    /// it; `Err` = it failed.
+    /// poeprices.info ML estimate (rares); `Ok(None)` = declined.
     Estimate(Box<Result<Option<PriceEstimate>, String>>),
-    /// Bulk-exchange result for a stackable (currency/rune/fragment/…), used as
-    /// the fallback when poe2scout has no economy data.
+    /// Bulk-exchange result for a stackable; fallback when poe2scout has no data.
     Exchange(Box<Result<ExchangeCheck, String>>),
-    /// poe2scout economy price for a stackable (the primary currency source).
-    /// `Ok(None)` = poe2scout doesn't know it → fall back to the exchange.
+    /// poe2scout economy price; `Ok(None)` = unknown → fall back to the exchange.
     Scout(Box<Result<Option<ScoutPrice>, String>>),
-    /// Outcome of an Instant Buyout hideout teleport (`Ok` = GGG accepted it).
     Teleport(Result<(), String>),
-    /// Outcome of a live POESESSID validation (Settings panel).
     SessionChecked(SessionStatus),
 }
 
-/// What the Settings panel shows beside the POESESSID field, driven by the
-/// instant format check and then the live server validation.
+/// What the Settings panel shows beside the POESESSID field.
 #[derive(Default, Clone)]
 pub(crate) enum SessionCheck {
-    /// Nothing entered, or a saved session not yet (re)validated this session.
     #[default]
     Idle,
-    /// The entered value isn't a 32-hex POESESSID — never sent to the server.
+    /// Not a 32-hex POESESSID — never sent to the server.
     Malformed,
-    /// Debounce elapsing / validation request in flight.
     Checking,
-    /// The server accepted it (with the account name, when exposed).
     Valid(Option<String>),
-    /// The server rejected it (401/403) — wrong or expired.
     Invalid,
-    /// Couldn't confirm (offline, or an unexpected status); the cause is logged.
+    /// Couldn't confirm (offline / unexpected status).
     Unknown,
 }
 
-/// Which pricing path the loaded item uses: a per-item search, or the bulk
-/// currency exchange for stackables.
+/// Which pricing path the loaded item uses.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PriceMode {
     Item,
     Exchange,
 }
 
-/// Background state of a bulk-exchange price check (parallel to [`Phase`], which
-/// covers the per-item search). Used only as the fallback path now that
-/// poe2scout (see [`ScoutPhase`]) is the primary currency source.
+/// Background state of a bulk-exchange price check (the fallback path).
 #[derive(Default)]
 pub(crate) enum ExchangePhase {
     #[default]
@@ -116,19 +82,15 @@ pub(crate) enum ExchangePhase {
     Failed(String),
 }
 
-/// Background state of the poe2scout economy lookup — the primary price source
-/// for stackables. On [`Failed`](ScoutPhase::Failed) or
-/// [`NotFound`](ScoutPhase::NotFound) the UI falls back to the official
-/// bulk exchange (see [`ExchangePhase`]).
+/// Background state of the poe2scout lookup (the primary stackable price source).
 #[derive(Default)]
 pub(crate) enum ScoutPhase {
     #[default]
     Idle,
     Loading,
     Done(ScoutPrice),
-    /// poe2scout was reachable but had no entry for this currency.
+    /// Reachable but no entry for this currency.
     NotFound,
-    /// poe2scout failed (down / decode / HTTP) — cause carried for logging.
     Failed(String),
 }
 
@@ -147,17 +109,14 @@ pub(crate) enum View {
     Text,
 }
 
-/// One toggleable stat filter in the detailed panel, built from the item's
-/// mapped stats. `min`/`max` are text buffers (blank = unbounded) so they can be
-/// cleared.
+/// One toggleable stat filter in the detailed panel. `min`/`max` are text buffers.
 pub(crate) struct StatFilterRow {
     pub(crate) id: String,
-    /// Human-ish label (the canonical stat template, e.g. `#% to Fire Resistance`).
+    /// Canonical stat template, e.g. `#% to Fire Resistance`.
     pub(crate) label: String,
     pub(crate) enabled: bool,
     pub(crate) min: String,
     pub(crate) max: String,
-    /// This filter is an implicit mod — flagged with a pill and off by default.
     pub(crate) is_implicit: bool,
 }
 
@@ -172,12 +131,10 @@ impl StatFilterRow {
     }
 }
 
-/// A defence/offence equipment-property filter, built from the item's parsed
-/// properties (e.g. `Evasion Rating: 1099`) rather than its affix mods.
+/// A defence/offence equipment-property filter, built from parsed properties.
 pub(crate) struct EquipmentRow {
     /// Trade filter id (`ev`, `ar`, `es`, …).
     key: String,
-    /// Display label (the property name, e.g. `Evasion Rating`).
     pub(crate) label: String,
     pub(crate) enabled: bool,
     pub(crate) min: String,
@@ -195,8 +152,7 @@ impl EquipmentRow {
     }
 }
 
-/// Map a parsed item-property name to its trade equipment-filter id, for the
-/// properties worth filtering on (defences + spirit).
+/// Map a parsed item-property name to its trade equipment-filter id.
 fn equipment_key(property_name: &str) -> Option<&'static str> {
     match property_name {
         "Armour" => Some("ar"),
@@ -219,8 +175,7 @@ fn first_number(s: &str) -> Option<f64> {
     rest[..end].parse().ok()
 }
 
-/// Build equipment-property filter rows from the item's defences, prefilled with
-/// the item's value and ticked — the key thing you search armour by.
+/// Build equipment-property filter rows from the item's defences, prefilled and ticked.
 pub(crate) fn build_equipment_rows(
     item: &Item,
     percent: u32,
@@ -242,9 +197,7 @@ pub(crate) fn build_equipment_rows(
         })
         .collect();
 
-    // Rune sockets (the "S S S" line). Usually not worth filtering, but on an
-    // Exceptional base the extra socket is the whole value, so default it on
-    // there (min = the item's own count); otherwise available but off.
+    // Rune sockets: default-on only on Exceptional bases, where the extra socket is the value.
     let sockets = socket_count(item);
     if sockets > 0 {
         rows.push(EquipmentRow {
@@ -270,7 +223,7 @@ fn socket_count(item: &Item) -> usize {
 pub(crate) struct PriceFilterState {
     pub(crate) min: String,
     pub(crate) max: String,
-    /// Currency id (`exalted`, …) or empty for "any".
+    /// Currency id, or empty for "any".
     pub(crate) currency: String,
 }
 
@@ -288,9 +241,7 @@ impl PriceFilterState {
     }
 }
 
-/// Which tab of the detailed-filter panel is showing. "General" holds the bulk
-/// of the filters (price, defences, modifiers, …); "Misc" holds the boolean
-/// attribute toggles (corrupted, mirrored, …).
+/// Which tab of the detailed-filter panel is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum FilterTab {
     #[default]
@@ -298,8 +249,7 @@ pub(crate) enum FilterTab {
     Misc,
 }
 
-/// A single-value "≥ min" filter with an enable toggle (item quality, item
-/// level — both routed to `type_filters`).
+/// A single-value "≥ min" filter with an enable toggle.
 #[derive(Default)]
 pub(crate) struct MinFilter {
     pub(crate) enabled: bool,
@@ -326,8 +276,7 @@ impl MinFilter {
     }
 }
 
-/// Boolean item attributes for the Miscellaneous section (trade filter id,
-/// label), sorted alphabetically by label. All off by default.
+/// Boolean item attributes for the Miscellaneous section (trade filter id, label).
 pub(crate) const MISC_OPTIONS: &[(&str, &str)] = &[
     ("corrupted", "Corrupted"),
     ("crafted", "Crafted"),
@@ -339,8 +288,7 @@ pub(crate) const MISC_OPTIONS: &[(&str, &str)] = &[
     ("twice_corrupted", "Twice Corrupted"),
 ];
 
-/// A three-state Miscellaneous toggle (e.g. Corrupted): Any / Yes (require) /
-/// No (forbid). See [`MiscState`].
+/// A three-state Miscellaneous toggle: Any / Yes (require) / No (forbid).
 pub(crate) struct MiscToggle {
     pub(crate) key: &'static str,
     pub(crate) label: &'static str,
@@ -357,35 +305,20 @@ fn parse_num(s: &str) -> Option<f64> {
     }
 }
 
-/// Whitespace-collapsed form of clipboard text. Two copies of the same item can
-/// differ by line endings/spacing (the XWayland bridge isn't byte-stable), so we
-/// collapse every whitespace run to one space before comparing/hashing.
+/// Whitespace-collapsed clipboard text (the XWayland bridge isn't byte-stable).
 pub(crate) fn normalize_item_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Stable hash identifying an item, for de-duplicating repeated Ctrl+C. Hashes
-/// the *parsed* structure (name/base/class/mod lines) so it's invariant to
-/// clipboard formatting; falls back to normalised text if it doesn't parse.
+/// Stable hash of the whitespace-normalised item text, for de-duplicating repeated Ctrl+C.
 pub(crate) fn item_hash(text: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    match parser::parse_item(text) {
-        Ok(item) => {
-            item.name.hash(&mut h);
-            item.base_type.hash(&mut h);
-            item.item_class.hash(&mut h);
-            for m in &item.modifiers {
-                m.stats.hash(&mut h);
-            }
-        }
-        Err(_) => normalize_item_text(text).hash(&mut h),
-    }
+    normalize_item_text(text).hash(&mut h);
     h.finish()
 }
 
-/// Map the configured trade-status string to a [`ListingStatus`] (defaults to
-/// Instant Buyout / securable for anything unrecognised).
+/// Map the configured trade-status string to a [`ListingStatus`] (default securable).
 pub(crate) fn parse_status(s: &str) -> ListingStatus {
     match s.trim().to_ascii_lowercase().as_str() {
         "online" => ListingStatus::Online,
@@ -399,8 +332,7 @@ pub(crate) fn fmt_amount(amount: f64) -> String {
     if amount.fract() == 0.0 {
         format!("{}", amount as i64)
     } else {
-        // Up to 3 decimals, trailing zeros trimmed — so 0.17 stays "0.17" (not
-        // rounded to "0.2", which over-tightens the search) and 2.5 stays "2.5".
+        // Up to 3 decimals, trailing zeros trimmed (no rounding, which would over-tighten).
         format!("{amount:.3}")
             .trim_end_matches('0')
             .trim_end_matches('.')
@@ -408,8 +340,7 @@ pub(crate) fn fmt_amount(amount: f64) -> String {
     }
 }
 
-/// Scale a rolled value to the configured filter-min percentage. Integer rolls
-/// floor (90% of 132 → 118); fractional rolls keep their precision.
+/// Scale a rolled value to the filter-min percentage; integer rolls floor, fractions keep precision.
 pub(crate) fn scaled_min(rolled: f64, percent: u32) -> f64 {
     let scaled = rolled * f64::from(percent) / 100.0;
     if rolled.fract() == 0.0 {
@@ -423,12 +354,10 @@ pub(crate) fn scaled_min(rolled: f64, percent: u32) -> f64 {
 mod tests {
     use super::*;
 
-    /// Build a parsed item with `prefixes` prefix and `suffixes` suffix mods.
     fn item_with(rarity: &str, prefixes: usize, suffixes: usize) -> Item {
         item_with_class("Rings", rarity, prefixes, suffixes)
     }
 
-    /// As [`item_with`], but with an explicit `Item Class:` (e.g. `Tablet`).
     fn item_with_class(class: &str, rarity: &str, prefixes: usize, suffixes: usize) -> Item {
         use std::fmt::Write as _;
         let mut text = format!(
@@ -452,15 +381,11 @@ mod tests {
 
     #[test]
     fn open_affix_slots_reports_prefix_and_suffix_separately() {
-        // Rare with room in both groups.
         assert_eq!(open_affix_slots(&item_with("Rare", 1, 1)), (true, true));
         assert_eq!(open_affix_slots(&item_with("Rare", 0, 0)), (true, true));
-        // One group full, the other free — reported independently.
         assert_eq!(open_affix_slots(&item_with("Rare", 3, 1)), (false, true));
         assert_eq!(open_affix_slots(&item_with("Rare", 1, 3)), (true, false));
-        // All six slots filled → nothing to craft.
         assert_eq!(open_affix_slots(&item_with("Rare", 3, 3)), (false, false));
-        // Non-rares never qualify, even with free slots.
         assert_eq!(open_affix_slots(&item_with("Magic", 1, 0)), (false, false));
         assert_eq!(open_affix_slots(&item_with("Normal", 0, 0)), (false, false));
     }
@@ -474,11 +399,9 @@ mod tests {
         .expect("parses");
         assert_eq!(waystone_tier(&ws), Some(16));
 
-        // A ring with parentheses elsewhere must not be mistaken for a tier.
         let ring = item_with_class("Rings", "Rare", 1, 0);
         assert_eq!(waystone_tier(&ring), None);
 
-        // Malformed base where `)` precedes `(` must yield None, not panic.
         let weird = parser::parse_item(
             "Item Class: Waystones\nRarity: Rare\nName\nWeird )( Name\n--------\nItem Level: 82\n",
         )
@@ -488,39 +411,55 @@ mod tests {
 
     #[test]
     fn fmt_amount_trims_decimals_without_rounding() {
-        assert_eq!(fmt_amount(5.0), "5"); // whole values drop the point
+        assert_eq!(fmt_amount(5.0), "5");
         assert_eq!(fmt_amount(2.5), "2.5");
-        assert_eq!(fmt_amount(0.17), "0.17"); // not rounded up to 0.2
-        assert_eq!(fmt_amount(1.250), "1.25"); // trailing zeros trimmed
+        assert_eq!(fmt_amount(0.17), "0.17");
+        assert_eq!(fmt_amount(1.250), "1.25");
     }
 
     #[test]
     fn scaled_min_floors_integers_but_keeps_fractions() {
-        assert_eq!(scaled_min(132.0, 90), 118.0); // 118.8 floored
-        assert_eq!(scaled_min(132.0, 100), 132.0); // exact roll unchanged
-        assert_eq!(scaled_min(2.5, 100), 2.5); // fractional precision kept
+        assert_eq!(scaled_min(132.0, 90), 118.0);
+        assert_eq!(scaled_min(132.0, 100), 132.0);
+        assert_eq!(scaled_min(2.5, 100), 2.5);
         assert!((scaled_min(2.5, 90) - 2.25).abs() < 1e-9);
     }
 
     #[test]
+    fn item_hash_is_whitespace_stable_but_craft_sensitive() {
+        let base = "Item Class: Rings\nRarity: Rare\nHonour Spiral\nTopaz Ring\n\
+                    --------\n+30% to Lightning Resistance";
+        // Whitespace-only noise must NOT change the hash.
+        let noisy = "Item Class: Rings\r\nRarity: Rare\nHonour Spiral\nTopaz Ring\n\
+                     --------\n+30% to Lightning Resistance   ";
+        assert_eq!(item_hash(base), item_hash(noisy));
+
+        // Crafts (quality, socketed rune, added mod) must bust the cache.
+        let quality = "Item Class: Rings\nRarity: Rare\nHonour Spiral\nTopaz Ring\n\
+                       --------\nQuality: +20%\n--------\n+30% to Lightning Resistance";
+        let runed = "Item Class: Rings\nRarity: Rare\nHonour Spiral\nTopaz Ring\n\
+                     --------\n+30% to Lightning Resistance\n+10 to Strength (rune)";
+        let exalted = "Item Class: Rings\nRarity: Rare\nHonour Spiral\nTopaz Ring\n\
+                       --------\n+30% to Lightning Resistance\n+50 to maximum Life";
+        assert_ne!(item_hash(base), item_hash(quality));
+        assert_ne!(item_hash(base), item_hash(runed));
+        assert_ne!(item_hash(base), item_hash(exalted));
+    }
+
+    #[test]
     fn tablets_cap_affixes_at_two_per_group() {
-        // A full tablet is 2 prefixes + 2 suffixes — no open slots (the bug:
-        // it used to report a phantom 3rd prefix/suffix as craftable).
         assert_eq!(
             open_affix_slots(&item_with_class("Tablet", "Rare", 2, 2)),
             (false, false)
         );
-        // One prefix free, suffixes full.
         assert_eq!(
             open_affix_slots(&item_with_class("Tablet", "Rare", 1, 2)),
             (true, false)
         );
-        // Both groups have room.
         assert_eq!(
             open_affix_slots(&item_with_class("Tablet", "Rare", 1, 1)),
             (true, true)
         );
-        // Normal gear still uses the 3/3 cap (regression guard).
         assert_eq!(
             open_affix_slots(&item_with_class("Rings", "Rare", 2, 2)),
             (true, true)
@@ -529,14 +468,10 @@ mod tests {
 
     #[test]
     fn jewels_cap_affixes_at_two_per_group() {
-        // Jewels share the tablet 2/2 cap. The reported item — 2 prefixes, 1
-        // suffix — must show NO open prefix and one open suffix (the bug: it
-        // reported a phantom 3rd prefix slot as craftable).
         assert_eq!(
             open_affix_slots(&item_with_class("Jewels", "Rare", 2, 1)),
             (false, true)
         );
-        // A full jewel (2 + 2) has no open slots.
         assert_eq!(
             open_affix_slots(&item_with_class("Jewels", "Rare", 2, 2)),
             (false, false)
@@ -545,10 +480,6 @@ mod tests {
 
     #[test]
     fn magic_only_classes_never_report_open_slots() {
-        // Flasks, charms and relics are Magic-only in PoE2 (verified 2026-06) —
-        // they can never be Rare, so the rarity guard must report nothing
-        // craftable no matter how many mods they carry. This guards against
-        // anyone mistakenly adding a lower-cap branch for them.
         for class in ["Life Flasks", "Mana Flasks", "Charms", "Relics"] {
             assert_eq!(
                 open_affix_slots(&item_with_class(class, "Magic", 1, 1)),
@@ -560,13 +491,10 @@ mod tests {
 
     #[test]
     fn waystones_use_the_standard_three_per_group_cap() {
-        // Rare waystones cap at 3/3 like normal gear — NOT the jewel/tablet 2/2.
-        // A 2 + 2 waystone still has room in both groups.
         assert_eq!(
             open_affix_slots(&item_with_class("Waystones", "Rare", 2, 2)),
             (true, true)
         );
-        // A full 3 + 3 waystone has no open slots.
         assert_eq!(
             open_affix_slots(&item_with_class("Waystones", "Rare", 3, 3)),
             (false, false)

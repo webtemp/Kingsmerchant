@@ -1,5 +1,4 @@
-//! Aggregating listing prices for quick mode: a median asking price and the
-//! cheapest few live listings.
+//! Aggregating listing prices for quick mode.
 
 use std::collections::HashMap;
 
@@ -16,8 +15,7 @@ pub fn modal_currency(entries: &[ResultEntry]) -> Option<String> {
         }
         *counts.entry(c).or_default() += 1;
     }
-    // `max_by_key` returns the *last* of equally-maximum elements, so reverse
-    // the first-seen order to make ties resolve to the first-seen currency.
+    // max_by_key keeps the last max; reverse so ties resolve to first-seen.
     order
         .into_iter()
         .rev()
@@ -25,8 +23,7 @@ pub fn modal_currency(entries: &[ResultEntry]) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Median asking price, computed within the modal currency so we never average
-/// exalted against divine. Returns `None` if nothing is priced.
+/// Median asking price within the modal currency. `None` if nothing is priced.
 pub fn median_price(entries: &[ResultEntry]) -> Option<Price> {
     let currency = modal_currency(entries)?;
     let mut amounts: Vec<f64> = entries
@@ -52,8 +49,7 @@ pub fn median_price(entries: &[ResultEntry]) -> Option<Price> {
     })
 }
 
-/// The cheapest `n` priced listings. The search is requested price-ascending,
-/// so we keep that order and simply drop unpriced entries.
+/// The cheapest `n` priced listings (search is already price-ascending).
 pub fn cheapest(entries: &[ResultEntry], n: usize) -> Vec<&ResultEntry> {
     entries
         .iter()

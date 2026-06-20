@@ -1,7 +1,4 @@
-//! Request-builder tests: a parsed item + the real definition snapshot
-//! subsets → the search body we'd POST. Bodies are snapshotted as JSON with
-//! `insta` (run `cargo insta review` on a diff), and key fields asserted
-//! directly.
+//! Request-builder tests: parsed item + definition subsets → the search body we POST.
 
 use parser::parse_item;
 use trade_api::{
@@ -10,14 +7,11 @@ use trade_api::{
     ResistanceMode, StatDefinitions, StatSelection, StatValue,
 };
 
-/// The three plain single-element resistance stat ids (explicit variant).
 const FIRE_RES: &str = "explicit.stat_3372524247";
 const COLD_RES: &str = "explicit.stat_4220027924";
 const LIGHTNING_RES: &str = "explicit.stat_1671376347";
-/// The summed "+#% total Elemental Resistance" pseudo id.
 const PSEUDO_TOTAL_ELE: &str = "pseudo.pseudo_total_elemental_resistance";
 
-/// An enabled, min-only stat selection (the common shape in these tests).
 fn sel(id: &str, min: f64) -> StatSelection {
     StatSelection {
         id: id.to_string(),
@@ -27,8 +21,6 @@ fn sel(id: &str, min: f64) -> StatSelection {
     }
 }
 
-/// The integer `min` of a stat/group value (the count threshold, or a filter's
-/// minimum), unwrapping the nested options these assertions otherwise repeat.
 fn min_i64(value: Option<&StatValue>) -> Option<i64> {
     value?.min.as_ref()?.as_i64()
 }
@@ -85,8 +77,6 @@ Item Level: 80
 
 #[test]
 fn normal_item_keeps_exact_base_and_normal_rarity() {
-    // A white base must search its EXACT base + rarity "normal" — not the whole
-    // category at any rarity (which returned magic items).
     let item = parse_item(NORMAL_RING).unwrap();
     let req = build_search_query(&item, &stats(), &items(), QueryOptions::default());
     assert_eq!(req.query.type_.as_deref(), Some("Prismatic Ring"));
@@ -112,7 +102,6 @@ fn rare_ring_query_searches_by_category_not_base_type() {
     let req = build_search_query(&item, &stats(), &items(), QueryOptions::default());
 
     let query = &req.query;
-    // Rares search the whole category, not the exact base type (Topaz Ring).
     assert_eq!(query.type_, None);
     assert_eq!(query.name, None);
     let category = &query
@@ -124,7 +113,6 @@ fn rare_ring_query_searches_by_category_not_base_type() {
         .category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
 
-    // Three stat lines all map; default options emit them disabled.
     let filters = &query.stats[0].filters;
     assert_eq!(filters.len(), 3);
     assert!(filters.iter().all(|f| f.disabled));
@@ -143,7 +131,6 @@ fn rare_ring_query_snapshot() {
 #[test]
 fn magic_wand_base_is_split_out_of_the_fused_name() {
     let item = parse_item(MAGIC_WAND).unwrap();
-    // The parser leaves a magic base as None; the builder splits it.
     assert_eq!(item.base_type, None);
     let req = build_search_query(&item, &stats(), &items(), QueryOptions::default());
     assert_eq!(req.query.type_.as_deref(), Some("Volatile Wand"));
@@ -185,7 +172,6 @@ fn enabled_stat_filters_carry_min_values() {
     let req = build_search_query(&item, &stats(), &items(), opts);
     let filters = &req.query.stats[0].filters;
     assert!(filters.iter().all(|f| !f.disabled));
-    // The implicit lightning-res roll (30) becomes a min filter.
     let res = filters
         .iter()
         .find(|f| f.id == "implicit.stat_1671376347")
@@ -203,12 +189,9 @@ fn securable_status_selects_instant_buyout_listings() {
     };
     let req = build_search_query(&item, &stats(), &items(), opts);
     assert_eq!(req.query.status.option, "securable");
-    // Default stays plain online.
     let online = build_search_query(&item, &stats(), &items(), QueryOptions::default());
     assert_eq!(online.query.status.option, "online");
 }
-
-// ---- detailed mode --------------------------------------------------------
 
 #[test]
 fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
@@ -232,14 +215,11 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
         &items(),
         &DetailedFilters {
             stats: selections,
-            // This test is about the disabled flag, not resistance grouping.
             resistance_mode: ResistanceMode::Specific,
             ..Default::default()
         },
     );
 
-    // Category-based search (no exact base type) carries over from the quick
-    // query.
     assert_eq!(req.query.type_, None);
     let category = &req
         .query
@@ -251,7 +231,6 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
         .category;
     assert_eq!(category.as_ref().unwrap().option, "accessory.ring");
 
-    // Both selections appear; disabled mirrors !enabled.
     let filters = &req.query.stats[0].filters;
     assert_eq!(filters.len(), 2);
     let enabled = filters
@@ -277,7 +256,6 @@ fn detailed_query_emits_selections_with_disabled_reflecting_the_toggle() {
     assert!(disabled.disabled);
     assert!(disabled.value.is_none());
 
-    // No price filter requested → no trade_filters group.
     assert!(req.query.filters.trade_filters.is_none());
 }
 
@@ -311,7 +289,6 @@ fn detailed_query_attaches_price_range_filter() {
     assert_eq!(price.min.as_ref().unwrap().as_i64(), Some(1));
     assert_eq!(price.max.as_ref().unwrap().as_i64(), Some(20));
     assert_eq!(price.option.as_deref(), Some("exalted"));
-    // No selections → no stat group.
     assert!(req.query.stats.is_empty());
 }
 
@@ -338,12 +315,10 @@ fn detailed_query_with_nothing_active_is_a_bare_base_search() {
 fn detailed_query_rarity_defaults_to_item_then_honours_override() {
     let item = parse_item(RARE_RING).unwrap();
 
-    // Unset → falls back to the item's own rarity.
     let req = build_detailed_query(&item, &items(), &DetailedFilters::default());
     let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
     assert_eq!(tf.rarity.as_ref().unwrap().option, "rare");
 
-    // Set → overrides the item's rarity (search the base at another rarity).
     let req = build_detailed_query(
         &item,
         &items(),
@@ -355,8 +330,6 @@ fn detailed_query_rarity_defaults_to_item_then_honours_override() {
     let tf = &req.query.filters.type_filters.as_ref().unwrap().filters;
     assert_eq!(tf.rarity.as_ref().unwrap().option, "magic");
 
-    // "any" → an explicit no-rarity search (the base across every rarity), even
-    // though the item itself is rare.
     let req = build_detailed_query(
         &item,
         &items(),
@@ -383,7 +356,6 @@ fn detailed_query_attaches_enabled_equipment_filters() {
                     min: Some(1099.0),
                     max: None,
                 },
-                // Disabled → omitted entirely (no greyed state for equipment).
                 EquipmentSelection {
                     key: "ar".to_string(),
                     enabled: false,
@@ -420,7 +392,6 @@ fn detailed_query_attaches_waystone_tier_map_filter() {
     let map = &req.query.filters.map_filters.as_ref().unwrap().filters;
     assert_eq!(min_i64(map.map_tier.as_ref()), Some(16));
 
-    // No tier → the map_filters group is omitted entirely.
     let bare = build_detailed_query(&item, &items(), &DetailedFilters::default());
     assert!(bare.query.filters.map_filters.is_none());
 }
@@ -443,7 +414,6 @@ fn detailed_query_carries_sockets_and_quality() {
             ..Default::default()
         },
     );
-    // Sockets ride in equipment_filters; quality + ilvl ride in type_filters.
     let eq = &req
         .query
         .filters
@@ -488,7 +458,6 @@ fn detailed_query_carries_checked_misc_filters() {
         },
     );
     let misc = &req.query.filters.misc_filters.as_ref().unwrap().filters;
-    // Include → "true", Exclude → "false", Any → omitted entirely.
     assert_eq!(misc.len(), 2);
     assert_eq!(misc["corrupted"].option, "true");
     assert_eq!(misc["identified"].option, "false");
@@ -521,8 +490,6 @@ fn detailed_query_snapshot() {
                 max: None,
             }],
             price,
-            // Pin the general-shape snapshot to plain per-stat filters; the
-            // fungible/total grouping has its own focused tests below.
             resistance_mode: ResistanceMode::Specific,
             ..Default::default()
         },
@@ -537,22 +504,19 @@ fn fungible_query(stats: Vec<StatSelection>) -> trade_api::SearchRequest {
         &items(),
         &DetailedFilters {
             stats,
-            ..Default::default() // Fungible is the default mode.
+            ..Default::default()
         },
     )
 }
 
 #[test]
 fn fungible_single_resistance_becomes_one_count_group() {
-    // One Fire roll → a single count group requiring ≥1 of the three elements at
-    // that value (any element satisfies it — resistances are interchangeable).
     let req = fungible_query(vec![sel(FIRE_RES, 30.0)]);
 
     assert_eq!(req.query.stats.len(), 1);
     let group = &req.query.stats[0];
     assert_eq!(group.type_, "count");
     assert_eq!(min_i64(group.value.as_ref()), Some(1));
-    // All three element pseudo-totals, each thresholded at the rolled value.
     let ids: Vec<&str> = group.filters.iter().map(|f| f.id.as_str()).collect();
     assert!(ids.contains(&"pseudo.pseudo_total_fire_resistance"));
     assert!(ids.contains(&"pseudo.pseudo_total_cold_resistance"));
@@ -565,8 +529,6 @@ fn fungible_single_resistance_becomes_one_count_group() {
 
 #[test]
 fn fungible_two_resistances_use_cumulative_counts() {
-    // 42 Fire / 22 Cold → two count groups: {≥42, count 1} and {≥22, count 2}.
-    // The cumulative count stops a single big roll from posing as two.
     let req = fungible_query(vec![sel(FIRE_RES, 42.0), sel(COLD_RES, 22.0)]);
 
     assert_eq!(req.query.stats.len(), 2);
@@ -584,7 +546,6 @@ fn fungible_two_resistances_use_cumulative_counts() {
 
 #[test]
 fn fungible_same_value_resistances_collapse_to_one_group() {
-    // 30 Fire / 30 Lightning (same value) → a single {≥30, count 2} group.
     let req = fungible_query(vec![sel(FIRE_RES, 30.0), sel(LIGHTNING_RES, 30.0)]);
 
     assert_eq!(req.query.stats.len(), 1);
@@ -593,7 +554,6 @@ fn fungible_same_value_resistances_collapse_to_one_group() {
 
 #[test]
 fn total_mode_sums_resistances_into_one_pseudo_filter() {
-    // 42 Fire / 22 Cold under Total → one pseudo total-elemental filter at 64.
     let item = parse_item(RARE_RING).unwrap();
     let req = build_detailed_query(
         &item,
@@ -615,8 +575,6 @@ fn total_mode_sums_resistances_into_one_pseudo_filter() {
 
 #[test]
 fn fungible_keeps_non_resistance_stats_in_an_and_group() {
-    // A resistance + a non-resistance stat → a count group AND a plain `and`
-    // group holding the non-resistance filter.
     let req = fungible_query(vec![
         sel(FIRE_RES, 30.0),
         sel("explicit.stat_2144192055", 200.0),

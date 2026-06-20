@@ -1,22 +1,9 @@
-//! Rate-limit bucket tracking.
-//!
-//! The trade API advertises limits via `X-Rate-Limit-<Rule>` headers and live
-//! usage via `…-<Rule>-State`. A rule is a comma-separated list of
-//! `max:window:penalty` triples (seconds), e.g. `5:10:60,15:60:300,30:300:1800`
-//! ("5 requests per 10s else a 60s ban, …"); the state header reads
-//! `hits:window:active_penalty`.
-//!
-//! We track the timestamps of requests we send and, before the next, project
-//! whether it would breach any bucket; if so we report how long to wait.
-//! Server-side penalties (state header's third field, or a 429 `Retry-After`)
-//! are honoured as hard waits on top.
+//! Rate-limit bucket tracking from `X-Rate-Limit-*` headers.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-/// One advertised limit: at most [`max`](Bucket::max) requests per
-/// [`window`](Bucket::window); breaching it earns a [`penalty`](Bucket::penalty)
-/// ban.
+/// One advertised limit: at most `max` requests per `window`, else `penalty` ban.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bucket {
     pub max: u32,
@@ -24,8 +11,7 @@ pub struct Bucket {
     pub penalty: Duration,
 }
 
-/// Tracks our request history against the buckets advertised by the API and
-/// computes how long to wait before the next request is safe.
+/// Tracks request history against advertised buckets to compute safe wait times.
 #[derive(Debug, Default)]
 pub struct RateLimiter {
     buckets: Vec<Bucket>,
@@ -41,18 +27,15 @@ impl RateLimiter {
         Self::default()
     }
 
-    /// The buckets currently known from the most recent response.
     pub fn buckets(&self) -> &[Bucket] {
         &self.buckets
     }
 
-    /// The policy name (e.g. `trade-search-request-limit`), if seen.
     pub fn policy(&self) -> Option<&str> {
         self.policy.as_deref()
     }
 
-    /// Fold a response's rate-limit headers into our state. `headers` is a list
-    /// of `(name, value)` pairs; names are matched case-insensitively.
+    /// Fold a response's rate-limit headers into our state.
     pub fn observe(&mut self, headers: &[(String, String)], now: Instant) {
         if let Some(policy) = header(headers, "x-rate-limit-policy") {
             self.policy = Some(policy.to_string());
@@ -84,7 +67,6 @@ impl RateLimiter {
             self.buckets = buckets;
         }
 
-        // A 429 carries the authoritative wait directly.
         if let Some(retry) = header(headers, "retry-after").and_then(parse_retry_after) {
             max_penalty = max_penalty.max(retry);
         }
@@ -98,14 +80,12 @@ impl RateLimiter {
         }
     }
 
-    /// Record that we've just sent a request at `now`.
     pub fn on_request(&mut self, now: Instant) {
         self.hits.push_back(now);
         self.prune(now);
     }
 
-    /// How long to wait before the next request is safe. `Duration::ZERO` means
-    /// fire now.
+    /// How long to wait before the next request is safe; `ZERO` means fire now.
     pub fn delay_before_next(&self, now: Instant) -> Duration {
         let mut wait = Duration::ZERO;
 
@@ -117,7 +97,6 @@ impl RateLimiter {
 
         for bucket in &self.buckets {
             let window_start = now.checked_sub(bucket.window).unwrap_or(now);
-            // Our hits still inside this bucket's window, oldest first.
             let in_window: Vec<Instant> = self
                 .hits
                 .iter()
@@ -126,7 +105,6 @@ impl RateLimiter {
                 .collect();
             let count = in_window.len() as u32;
             if count >= bucket.max {
-                // We must let enough requests age out to drop below `max`.
                 let to_expire = (count - bucket.max + 1) as usize;
                 let ready = in_window[to_expire - 1] + bucket.window;
                 if ready > now {
@@ -138,7 +116,7 @@ impl RateLimiter {
         wait
     }
 
-    /// Drop hits older than the widest window — they can't affect any bucket.
+    /// Drop hits older than the widest window.
     fn prune(&mut self, now: Instant) {
         let max_window = self
             .buckets
@@ -165,7 +143,6 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
-/// Parse a limit spec like `5:10:60,15:60:300` into buckets.
 fn parse_buckets(spec: &str) -> Vec<Bucket> {
     spec.split(',')
         .filter_map(|part| {
@@ -182,7 +159,6 @@ fn parse_buckets(spec: &str) -> Vec<Bucket> {
         .collect()
 }
 
-/// Parse a state spec like `1:10:0,2:60:0` into `(hits, window, active_penalty)`.
 fn parse_state(spec: &str) -> Vec<(u32, Duration, Duration)> {
     spec.split(',')
         .filter_map(|part| {
@@ -199,7 +175,6 @@ fn parse_state(spec: &str) -> Vec<(u32, Duration, Duration)> {
         .collect()
 }
 
-/// `Retry-After` is "delta-seconds" in the trade API's usage.
 fn parse_retry_after(value: &str) -> Option<Duration> {
     value.trim().parse::<u64>().ok().map(Duration::from_secs)
 }

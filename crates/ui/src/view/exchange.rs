@@ -1,11 +1,5 @@
-//! The pricing view for stackables (currency/runes/fragments/…).
-//!
-//! The value comes from **poe2scout**'s economy index, shown as an info card
-//! (current value in Exalted *and* Divine, a recent range, and an "as of"
-//! note). The official bulk currency exchange — whose cheapest-listing prices
-//! are the unreliable source we moved away from — is kept only as an "open on
-//! the trade site" link, and as an automatic fallback when poe2scout has no
-//! data for the item.
+//! The pricing view for stackables (currency/runes/fragments/…), priced from
+//! poe2scout with the official bulk exchange kept only as a fallback.
 
 use std::fmt::Write as _;
 
@@ -20,12 +14,9 @@ use super::listings::{results_table, RowData};
 use super::percent_encode;
 use super::theme::accent_gold;
 
-/// In-game-style warning gold, for the fallback/provenance notes.
 const WARN_GOLD: Color32 = Color32::from_rgb(0xff, 0xc8, 0x4b);
-/// A soft blue for the secondary (Divine) figure, so it reads as a conversion.
 const DIVINE_BLUE: Color32 = Color32::from_rgb(0x9f, 0xb4, 0xff);
 
-/// Currencies offered in the official-exchange fallback "pay with" selector.
 const PAY_CURRENCIES: &[(&str, &str)] = &[
     ("exalted", "Exalted"),
     ("divine", "Divine"),
@@ -33,8 +24,7 @@ const PAY_CURRENCIES: &[(&str, &str)] = &[
 ];
 
 impl QuickModeApp {
-    /// Render the stackable pricing view: the poe2scout info card when we have
-    /// economy data, otherwise the official-exchange fallback.
+    /// Render the stackable pricing view: poe2scout card, else the exchange fallback.
     pub(super) fn exchange_content(
         &mut self,
         ui: &mut egui::Ui,
@@ -50,8 +40,6 @@ impl QuickModeApp {
                 });
             }
             ScoutPhase::Done(price) => {
-                // `scout_card` only reads `self`, so the shared borrow of
-                // `self.scout_phase` can coexist with it — no clone needed.
                 self.scout_card(ui, price, open_trade);
             }
             ScoutPhase::NotFound => {
@@ -82,9 +70,7 @@ impl QuickModeApp {
         }
     }
 
-    /// The poe2scout info card: current value in both Exalted and Divine, the
-    /// recent range, a liquidity hint, provenance/freshness, and the link out to
-    /// the official exchange.
+    /// The poe2scout info card: value, recent range, freshness, exchange link.
     fn scout_card(&self, ui: &mut egui::Ui, price: &ScoutPrice, open_trade: &mut Option<String>) {
         if let Some(name) = price.text.as_deref() {
             ui.label(RichText::new(name).strong());
@@ -105,8 +91,6 @@ impl QuickModeApp {
             }
         });
 
-        // A recent low–high to convey movement — poe2scout exposes no true
-        // buy/sell spread, so this is the closest signal of volatility.
         if let (Some(lo), Some(hi)) = (price.low, price.high) {
             if hi > lo {
                 ui.label(
@@ -127,7 +111,6 @@ impl QuickModeApp {
             );
         }
 
-        // Provenance + freshness on one muted line.
         let mut meta = String::from("via poe2scout economy");
         if let Some(rate) = price.divine_price {
             let _ = write!(meta, " · {} ex / div", fmt_amount(rate));
@@ -155,9 +138,7 @@ impl QuickModeApp {
         }
     }
 
-    /// The official bulk-exchange listings, shown only as a fallback when
-    /// poe2scout has nothing. Player listings here are often stale/bait — the
-    /// reason we price from poe2scout in the first place.
+    /// The official bulk-exchange listings, shown only when poe2scout has nothing.
     fn exchange_fallback(
         &mut self,
         ui: &mut egui::Ui,
@@ -233,7 +214,6 @@ impl QuickModeApp {
                 );
                 ui.add_space(6.0);
                 let rows = exchange_rows(ex.cheapest(SHOWN), pay);
-                // Exchange offers never carry a hideout teleport token.
                 results_table(ui, &rows, copied, &mut None);
                 ui.add_space(6.0);
                 if ui
@@ -248,7 +228,6 @@ impl QuickModeApp {
     }
 }
 
-/// Compact "N seconds/minutes ago" for the freshness note.
 fn fmt_ago(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s ago")
@@ -264,8 +243,7 @@ fn pay_label(id: &str) -> &str {
         .map_or("Exalted", |(_, l)| *l)
 }
 
-/// Link to the official currency exchange page for a league (no saved search —
-/// we no longer run a bulk-exchange query just to deep-link).
+/// Link to the official currency exchange page for a league.
 fn exchange_page_url(league: &str) -> String {
     format!(
         "https://www.pathofexile.com/trade2/exchange/poe2/{}",
@@ -273,7 +251,6 @@ fn exchange_page_url(league: &str) -> String {
     )
 }
 
-/// Deep link to the bulk-exchange page for a saved-search result (fallback view).
 fn exchange_url(league: &str, id: &str) -> String {
     format!(
         "https://www.pathofexile.com/trade2/exchange/poe2/{}/{}",
@@ -282,7 +259,6 @@ fn exchange_url(league: &str, id: &str) -> String {
     )
 }
 
-/// Build the results-table rows for bulk-exchange offers (no item preview).
 fn exchange_rows(offers: &[ExchangeOffer], pay: &str) -> Vec<RowData> {
     offers
         .iter()

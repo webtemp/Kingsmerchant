@@ -1,14 +1,5 @@
-//! Colours shared across the views.
-//!
-//! Two kinds live here:
-//!
-//! - **User-themeable accents** ([`Theme`]) — gold/affix/online/header plus the
-//!   popup fill & border. The active palette is stashed in a thread-local
-//!   (egui renders single-threaded), set once per frame by the surface entry
-//!   points, and read through the [`accent_gold`] / [`affix_blue`] / … helpers
-//!   so the deep view call-tree needn't thread a `&Theme` everywhere.
-//! - **Fixed in-game colours** ([`rarity_color`], [`frame_color`]) — these
-//!   mirror POE2's own item colours and are deliberately *not* themeable.
+//! Colours shared across the views: user-themeable accents ([`Theme`], read via
+//! a per-frame thread-local) and fixed in-game colours ([`rarity_color`], [`frame_color`]).
 
 use std::cell::Cell;
 
@@ -17,25 +8,19 @@ use parser::Rarity;
 
 use crate::config::ThemeConfig;
 
-/// Resolved, render-ready accent palette (parsed from [`ThemeConfig`], with the
-/// opacity already baked into the fill/border alpha). `Copy` so it can live in a
-/// thread-local `Cell` and be handed to the overlay by value.
+/// Resolved, render-ready accent palette with opacity baked into the fill/border alpha.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Theme {
     pub accent_gold: Color32,
     pub affix_blue: Color32,
     pub online_dot: Color32,
     pub header_bg: Color32,
-    /// Popup background fill, alpha already scaled by `opacity`.
     pub overlay_fill: Color32,
-    /// Popup border, alpha already scaled by `opacity`.
     pub overlay_stroke: Color32,
 }
 
 impl Theme {
-    /// Resolve a config block into render-ready colours. A malformed hex string
-    /// falls back to that field's default colour, and `opacity` is clamped to
-    /// `0.0..=1.0` and folded into the fill/border alpha.
+    /// Resolve a config block into render-ready colours, falling back per-field on bad hex.
     pub(crate) fn from_config(cfg: &ThemeConfig) -> Self {
         let d = Theme::default();
         let opacity = cfg.opacity.clamp(0.0, 1.0);
@@ -70,15 +55,13 @@ impl Default for Theme {
     }
 }
 
-/// Apply an `0.0..=1.0` opacity to a colour's alpha (unmultiplied → egui
-/// premultiplies on use).
+/// Apply an `0.0..=1.0` opacity to a colour's alpha.
 fn with_opacity(c: Color32, opacity: f32) -> Color32 {
     let a = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
-/// Parse `#rrggbb` / `rrggbb` (case-insensitive) into an opaque colour. Returns
-/// `None` for anything else, so the caller can fall back to a default.
+/// Parse `#rrggbb` / `rrggbb` into an opaque colour; `None` for anything else.
 pub(crate) fn parse_hex(s: &str) -> Option<Color32> {
     let h = s.strip_prefix('#').unwrap_or(s);
     if h.len() != 6 {
@@ -94,46 +77,38 @@ pub(crate) fn to_hex(c: Color32) -> String {
 }
 
 thread_local! {
-    /// The palette the accent helpers read. Defaults to the built-in colours
-    /// until a surface sets the user's resolved theme via [`set_active`].
+    /// The palette the accent helpers read until a surface calls [`set_active`].
     static ACTIVE: Cell<Theme> = Cell::new(Theme::default());
 }
 
-/// Install the active palette for the current frame. Call at the top of each
-/// surface body before any accent helper is read.
+/// Install the active palette for the current frame, before any accent helper is read.
 pub(crate) fn set_active(theme: Theme) {
     ACTIVE.with(|t| t.set(theme));
 }
 
-/// Gold accent (headline median price) — the active theme's value.
 pub(super) fn accent_gold() -> Color32 {
     ACTIVE.with(|t| t.get().accent_gold)
 }
 
-/// Rolled-mod ("affix") text colour — the active theme's value.
 pub(super) fn affix_blue() -> Color32 {
     ACTIVE.with(|t| t.get().affix_blue)
 }
 
-/// Green "online"/valid indicator — the active theme's value.
 pub(super) fn online_dot() -> Color32 {
     ACTIVE.with(|t| t.get().online_dot)
 }
 
-/// Dark backing for inset item/preview cards — the active theme's value.
 pub(super) fn header_bg() -> Color32 {
     ACTIVE.with(|t| t.get().header_bg)
 }
 
-/// A built-in theme the user can apply with one click in Settings (label +
-/// the colours it sets). The first is the default look.
+/// A built-in theme applied with one click in Settings; the first is the default.
 pub(crate) struct Preset {
     pub name: &'static str,
     pub theme: ThemeConfig,
 }
 
-/// The shipped presets, in display order. "Default Gold" reproduces the
-/// original look; the others are alternative starting points.
+/// The shipped presets, in display order.
 pub(crate) fn presets() -> Vec<Preset> {
     vec![
         Preset {
@@ -218,9 +193,9 @@ mod tests {
     #[test]
     fn parse_hex_rejects_malformed() {
         assert_eq!(parse_hex(""), None);
-        assert_eq!(parse_hex("#fff"), None); // shorthand not supported
+        assert_eq!(parse_hex("#fff"), None);
         assert_eq!(parse_hex("#gggggg"), None);
-        assert_eq!(parse_hex("#e6c25a00"), None); // 8 chars
+        assert_eq!(parse_hex("#e6c25a00"), None);
     }
 
     #[test]
@@ -236,7 +211,6 @@ mod tests {
             ..ThemeConfig::default()
         };
         let theme = Theme::from_config(&cfg);
-        // Accents stay fully opaque; only the surface fill/border carry opacity.
         assert_eq!(theme.accent_gold.a(), 0xff);
         assert_eq!(theme.overlay_fill.a(), 128);
         assert_eq!(theme.overlay_stroke.a(), 128);
@@ -251,6 +225,6 @@ mod tests {
         };
         let theme = Theme::from_config(&cfg);
         assert_eq!(theme.accent_gold, Theme::default().accent_gold);
-        assert_eq!(theme.overlay_fill.a(), 0xff); // clamped to 1.0
+        assert_eq!(theme.overlay_fill.a(), 0xff);
     }
 }

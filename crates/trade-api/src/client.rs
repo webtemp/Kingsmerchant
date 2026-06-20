@@ -1,5 +1,4 @@
-//! The trade client: ties query building, the HTTP seam, rate-limit gating and
-//! response parsing into search + fetch + price-check operations.
+//! The trade client: search + fetch + price-check operations.
 
 use std::collections::HashMap;
 use std::sync::{Mutex as StdMutex, RwLock};
@@ -18,25 +17,15 @@ use crate::query::{build_detailed_query, build_search_query, DetailedFilters, Qu
 use crate::rate_limit::RateLimiter;
 use crate::scout::{self, ScoutPrice};
 
-/// The trade API only ever hands back ≤ 10 listings per fetch.
 pub const FETCH_BATCH: usize = 10;
 
-/// How long a poe2scout lookup stays fresh. poe2scout is an unofficial,
-/// community-funded API and its economy numbers move slowly (the in-game
-/// exchange itself updates on the order of minutes), so we cache hard.
 const SCOUT_TTL: Duration = Duration::from_mins(10);
 
-/// Where and how to talk to the trade API.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
-    /// Scheme + host, no trailing slash. Defaults to the official site.
     pub base_url: String,
-    /// League id, e.g. `Mirage` (populated from the leagues API).
     pub league: String,
-    /// Realm (`pc` / `sony` / `xbox`); anonymous queries are realm-aware.
     pub realm: Option<String>,
-    /// poe2scout API host (scheme + host, no trailing slash) — the currency
-    /// economy source. Defaults to [`scout::DEFAULT_BASE_URL`].
     pub scout_base_url: String,
 }
 
@@ -51,8 +40,6 @@ impl ClientConfig {
     }
 }
 
-/// A finished price check: the listings plus the query handle that produced
-/// them (so the UI can deep-link back to the trade site).
 #[derive(Debug, Clone)]
 pub struct PriceCheck {
     pub query_id: String,
@@ -61,33 +48,23 @@ pub struct PriceCheck {
 }
 
 impl PriceCheck {
-    /// Median asking price over the modal currency.
     pub fn median_price(&self) -> Option<Price> {
         price::median_price(&self.listings)
     }
 
-    /// The cheapest `n` priced listings.
     pub fn cheapest(&self, n: usize) -> Vec<&ResultEntry> {
         price::cheapest(&self.listings, n)
     }
 }
 
-/// How a pasted `POESESSID` looks, judged with no network round-trip — drives
-/// the instant Settings feedback before the live check can confirm it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionIdFormat {
-    /// Blank — no session set (anonymous pricing, which is all most users need).
     Empty,
-    /// 32 hexadecimal characters — the shape POE's `POESESSID` cookie takes.
     WellFormed,
-    /// Non-empty but not 32 hex chars: a bad paste (the whole `POESESSID=…`
-    /// cookie, surrounding quotes, extra characters, …). Never sent.
     Malformed,
 }
 
-/// Classify a raw `POESESSID` for instant UI feedback. Pure; no network. The
-/// 32-hex shape POE uses doubles as a header-safety guard — hex is printable
-/// ASCII, so a well-formed value can never break the `Cookie` header.
+/// Classify a raw `POESESSID`. The 32-hex shape doubles as a header-safety guard.
 #[must_use]
 pub fn poesessid_format(raw: &str) -> SessionIdFormat {
     let trimmed = raw.trim();
@@ -100,52 +77,30 @@ pub fn poesessid_format(raw: &str) -> SessionIdFormat {
     }
 }
 
-/// Outcome of a live `POESESSID` validation against pathofexile.com.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {
-    /// The server accepted the session; `account` is the logged-in name when the
-    /// profile response exposed it.
     Valid { account: Option<String> },
-    /// The server rejected the session (401/403) — wrong, expired, or logged out.
     Invalid,
-    /// Couldn't determine validity (offline, or an unexpected status). The
-    /// session may still be fine; we just couldn't confirm it.
     Unknown(String),
 }
 
-/// Cached poe2scout lookups, refreshed lazily on a [`SCOUT_TTL`] timer. Guarded
-/// by a plain `std` mutex: only ever locked to read/clone or to store, never
-/// across an await.
 #[derive(Default)]
 struct ScoutCache {
-    /// The Divine rate (Exalted per Divine) and when it was fetched, tagged with
-    /// the league it belongs to (so a league switch re-resolves it).
     divine_price: Option<(f64, Instant)>,
     divine_league: String,
-    /// Per-slug currency lookups, each with its fetch time.
     currencies: HashMap<String, (ScoutPrice, Instant)>,
 }
 
 pub struct TradeClient<T: HttpTransport> {
     transport: T,
     config: ClientConfig,
-    /// Active league, behind a lock so the UI can switch at runtime without
-    /// rebuilding the client (definitions are league-independent).
     league: RwLock<String>,
-    /// Optional `POESESSID` session cookie. When set, gated requests carry
-    /// `Cookie: POESESSID=…` so fetch responses include the per-listing
-    /// `hideout_token` needed to teleport to Instant Buyout sellers.
     poesessid: RwLock<Option<String>>,
     stats: StatDefinitions,
     items: ItemDefinitions,
-    /// Bulk-exchange currency catalogue (`data/static`), for pricing stackables.
     currencies: CurrencyDefinitions,
-    /// Cached poe2scout currency economy lookups (the value source for stackables).
     scout_cache: StdMutex<ScoutCache>,
     limiter: Mutex<RateLimiter>,
-    /// When the next request may fire, if rate-limit-delayed; polled by
-    /// [`retry_in`](Self::retry_in) for the "retrying in Ns" note. Plain `std`
-    /// mutex: locked only briefly, never across an await.
     retry_at: StdMutex<Option<Instant>>,
 }
 
@@ -171,30 +126,20 @@ impl<T: HttpTransport> TradeClient<T> {
         }
     }
 
-    /// How long until the next request is allowed to fire, if currently
-    /// rate-limit-throttled (else `None`). For the "retrying in Ns" UI note.
     pub fn retry_in(&self) -> Option<Duration> {
         let at = *self.retry_at.lock().expect("retry_at lock");
         at.and_then(|t| t.checked_duration_since(Instant::now()))
     }
 
-    /// The league searches currently target.
     pub fn league(&self) -> String {
         self.league.read().expect("league lock").clone()
     }
 
-    /// Switch the league future searches target. Cheap — definitions are
-    /// league-independent, so no rebuild.
     pub fn set_league(&self, league: impl Into<String>) {
         *self.league.write().expect("league lock") = league.into();
     }
 
-    /// Set (or clear, with `None`) the `POESESSID` session cookie. Only a
-    /// well-formed value (32 hex chars — see [`poesessid_format`]) is stored;
-    /// anything else (empty, or a bad paste) clears it. This is the guard that
-    /// keeps a malformed value out of the `Cookie` header, where it would
-    /// otherwise brick *every* request — anonymous search included — with a
-    /// reqwest "Builder error". Cheap; takes effect on the next request.
+    /// Only a well-formed value is stored; anything else clears it (keeps a bad value out of the Cookie header).
     pub fn set_poesessid(&self, sessid: Option<String>) {
         let normalized = sessid
             .filter(|s| poesessid_format(s) == SessionIdFormat::WellFormed)
@@ -202,13 +147,10 @@ impl<T: HttpTransport> TradeClient<T> {
         *self.poesessid.write().expect("poesessid lock") = normalized;
     }
 
-    /// Whether a `POESESSID` is currently set (so the UI can enable/disable the
-    /// teleport button and explain why).
     pub fn has_poesessid(&self) -> bool {
         self.poesessid.read().expect("poesessid lock").is_some()
     }
 
-    /// The `Cookie:` header value for authenticated requests, if a session is set.
     fn cookie_header(&self) -> Option<String> {
         self.poesessid
             .read()
@@ -217,12 +159,7 @@ impl<T: HttpTransport> TradeClient<T> {
             .map(|s| format!("POESESSID={s}"))
     }
 
-    /// Validate the configured `POESESSID` against pathofexile.com by fetching
-    /// the account profile (auth-gated, side-effect-free): 2xx ⇒ valid, 401/403
-    /// ⇒ rejected (wrong/expired), anything else ⇒ couldn't confirm. Goes
-    /// straight through the transport (not the trade rate-limiter — different
-    /// endpoint, different budget); the transport still attaches the user-agent.
-    /// Returns [`SessionStatus::Invalid`] when no session is set to validate.
+    /// Validate the configured `POESESSID` against the account-profile endpoint.
     pub async fn validate_session(&self) -> SessionStatus {
         let Some(cookie) = self.cookie_header() else {
             return SessionStatus::Invalid;
@@ -258,8 +195,6 @@ impl<T: HttpTransport> TradeClient<T> {
         &self.items
     }
 
-    /// The bulk-exchange currency catalogue (`data/static`). The UI uses it to
-    /// decide whether an item is a stackable priced via the exchange.
     pub fn currencies(&self) -> &CurrencyDefinitions {
         &self.currencies
     }
@@ -272,8 +207,6 @@ impl<T: HttpTransport> TradeClient<T> {
     pub async fn search(&self, request: &SearchRequest) -> Result<SearchResponse, Error> {
         let body =
             serde_json::to_string(request).map_err(|e| Error::decode("search request", e))?;
-        // The league is a path segment and can contain spaces ("Runes of
-        // Aldur"), so it must be percent-encoded.
         let url = self.with_realm(format!(
             "{}/api/trade2/search/{}",
             self.config.base_url,
@@ -291,8 +224,7 @@ impl<T: HttpTransport> TradeClient<T> {
         serde_json::from_str(&resp.body).map_err(|e| Error::decode("search response", e))
     }
 
-    /// Fetch listing details for `ids`, batching at [`FETCH_BATCH`]. Null
-    /// entries (ids that went stale) are dropped; order is preserved.
+    /// Fetch listing details for `ids`, batching at [`FETCH_BATCH`]; null entries dropped, order preserved.
     pub async fn fetch(&self, ids: &[String], query_id: &str) -> Result<Vec<ResultEntry>, Error> {
         let mut out = Vec::new();
         for chunk in ids.chunks(FETCH_BATCH) {
@@ -321,8 +253,7 @@ impl<T: HttpTransport> TradeClient<T> {
         Ok(out)
     }
 
-    /// End-to-end quick-mode price check: build the query from the item, search,
-    /// then fetch up to `max_listings` (capped at [`FETCH_BATCH`] for one round).
+    /// Quick-mode price check: build query from the item, search, then fetch up to `max_listings`.
     pub async fn price_check(
         &self,
         item: &Item,
@@ -333,8 +264,7 @@ impl<T: HttpTransport> TradeClient<T> {
         self.run_query(&request, max_listings).await
     }
 
-    /// Detailed-mode price check: the filters (per-stat, equipment, price) come
-    /// from the UI instead of the quick query's base-type defaults.
+    /// Detailed-mode price check: filters come from the UI instead of base-type defaults.
     pub async fn price_check_detailed(
         &self,
         item: &Item,
@@ -345,16 +275,12 @@ impl<T: HttpTransport> TradeClient<T> {
         self.run_query(&request, max_listings).await
     }
 
-    /// Price a stackable item via the bulk **exchange**: one POST, no fetch
-    /// round. `want_id` is the `data/static` currency id; `pay` is the currency
-    /// to price in (e.g. `exalted`). Offers come back cheapest-first.
+    /// Price a stackable item via the bulk exchange: one POST, no fetch round, cheapest-first.
     pub async fn price_check_exchange(
         &self,
         want_id: &str,
         pay: &str,
     ) -> Result<ExchangeCheck, Error> {
-        // The exchange has no "instant buyout" notion — every offer is a buyout
-        // ratio — so we just ask for live (online) sellers.
         let body = crate::exchange::exchange_body(want_id, pay, "online")?;
         let url = self.with_realm(format!(
             "{}/api/trade2/exchange/{}",
@@ -373,23 +299,7 @@ impl<T: HttpTransport> TradeClient<T> {
         crate::exchange::parse_exchange(&resp.body, want_id, pay)
     }
 
-    /// Price a stackable currency from **poe2scout** — the value source for
-    /// currency, far closer to the in-game Currency Exchange than the official
-    /// bulk listings (which read off the cheapest, often-bait, offer).
-    ///
-    /// poe2scout's `ApiId` is the official `data/static` exchange id — confirmed
-    /// to match for every currency poe2scout indexes — so we key on
-    /// `exchange_id`, with the slugified `name` as a cheap secondary in case a
-    /// future item ever diverges. Prices come back in Exalted; we derive Divine
-    /// ourselves from the league's Divine rate, so one fetch covers both display
-    /// currencies. Both the rate and the per-currency lookup are cached (keyed
-    /// by `exchange_id`) for `SCOUT_TTL`.
-    ///
-    /// `Ok(None)` when poe2scout doesn't index the currency (runes, verisium,
-    /// reliquary keys, …), so the caller falls back to the official exchange;
-    /// `Err` only on transport/HTTP/decode failures. The scout requests go
-    /// straight through the transport (no GGG rate-limiter — a different host
-    /// with its own budget).
+    /// Price a stackable currency from poe2scout. `Ok(None)` when it doesn't index the currency.
     pub async fn scout_price(
         &self,
         exchange_id: &str,
@@ -400,13 +310,9 @@ impl<T: HttpTransport> TradeClient<T> {
         }
 
         let league = self.league();
-        // The Divine rate for the current league (cached; a failure here is
-        // non-fatal — we just can't show the Divine figure).
         let divine_price = self.scout_divine_price(&league).await;
         let base = &self.config.scout_base_url;
 
-        // Candidate ApiIds, most-likely first: the official exchange id, then the
-        // slugified display name (only tried if it actually differs).
         let slug = scout::slugify(name);
         let mut candidates = vec![exchange_id.to_string()];
         if !slug.is_empty() && slug != exchange_id {
@@ -427,8 +333,6 @@ impl<T: HttpTransport> TradeClient<T> {
         };
 
         let price = scout::price_from_currency(&raw, divine_price);
-        // Cache under the caller's stable key so the next lookup short-circuits
-        // regardless of which candidate resolved it.
         self.scout_cache
             .lock()
             .expect("scout cache lock")
@@ -437,7 +341,6 @@ impl<T: HttpTransport> TradeClient<T> {
         Ok(Some(price))
     }
 
-    /// A fresh cached scout price for `api_id`, if one is within [`SCOUT_TTL`].
     fn cached_scout(&self, api_id: &str) -> Option<ScoutPrice> {
         let cache = self.scout_cache.lock().expect("scout cache lock");
         cache
@@ -447,10 +350,7 @@ impl<T: HttpTransport> TradeClient<T> {
             .map(|(price, _)| price.clone())
     }
 
-    /// The cached Divine rate (Exalted per Divine) for `league`, refreshing it
-    /// from poe2scout when missing, stale, or fetched for a different league.
-    /// `None` when poe2scout is unreachable or reports no rate — the caller then
-    /// shows Exalted only.
+    /// The cached Divine rate (Exalted per Divine) for `league`, refreshed from poe2scout.
     async fn scout_divine_price(&self, league: &str) -> Option<f64> {
         {
             let cache = self.scout_cache.lock().expect("scout cache lock");
@@ -479,14 +379,7 @@ impl<T: HttpTransport> TradeClient<T> {
         rate
     }
 
-    /// Teleport into an Instant Buyout seller's hideout, as the trade site's
-    /// button does. `token` is a listing's
-    /// [`hideout_token`](crate::model::Listing::hideout_token) from an
-    /// authenticated fetch; it expires ≈5 min, so call promptly. Needs a
-    /// `POESESSID` (else 401).
-    ///
-    /// **Has an in-game effect**: pulls your character into the seller's
-    /// hideout. Fire only on explicit user action.
+    /// Teleport into a seller's hideout. Has an in-game effect; fire only on explicit user action.
     pub async fn teleport_to_hideout(&self, token: &str) -> Result<(), Error> {
         let url = format!("{}/api/trade2/whisper", self.config.base_url);
         let body = serde_json::json!({ "token": token }).to_string();
@@ -494,7 +387,6 @@ impl<T: HttpTransport> TradeClient<T> {
             .send(HttpRequest {
                 method: Method::Post,
                 url,
-                // Match the trade site's XHR so GGG accepts the request.
                 headers: vec![
                     ("X-Requested-With".to_string(), "XMLHttpRequest".to_string()),
                     ("Origin".to_string(), self.config.base_url.clone()),
@@ -510,7 +402,6 @@ impl<T: HttpTransport> TradeClient<T> {
         Ok(())
     }
 
-    /// Search then fetch the cheapest `max_listings` for a built request.
     async fn run_query(
         &self,
         request: &SearchRequest,
@@ -527,8 +418,6 @@ impl<T: HttpTransport> TradeClient<T> {
     }
 
     /// Secondary ML price estimate from poeprices.info (detailed mode only).
-    /// Takes raw clipboard `item_text`. Not gated by the GGG rate limiter — a
-    /// different service with its own limits, handled inside.
     pub async fn price_estimate(
         &self,
         item_text: &str,
@@ -547,8 +436,6 @@ impl<T: HttpTransport> TradeClient<T> {
     /// Send one request through the rate-limit gate, retrying through a 429.
     async fn send(&self, mut request: HttpRequest) -> Result<HttpResponse, Error> {
         const MAX_ATTEMPTS: u32 = 3;
-        // Attach the session cookie (if set) for authenticated-only fields
-        // (e.g. `hideout_token`); don't clobber a caller-supplied Cookie.
         if let Some(cookie) = self.cookie_header() {
             if !request
                 .headers
@@ -566,7 +453,6 @@ impl<T: HttpTransport> TradeClient<T> {
                     "rate limited, retrying in {}s",
                     delay.as_secs()
                 );
-                // Expose the wait to the UI for the duration of the sleep.
                 *self.retry_at.lock().expect("retry_at lock") = Some(Instant::now() + delay);
                 tokio::time::sleep(delay).await;
             }
@@ -582,7 +468,6 @@ impl<T: HttpTransport> TradeClient<T> {
                 tracing::warn!("got 429, honouring rate-limit headers and retrying");
                 continue;
             }
-            // No longer waiting on the limiter.
             *self.retry_at.lock().expect("retry_at lock") = None;
             return Ok(response);
         }
@@ -590,15 +475,13 @@ impl<T: HttpTransport> TradeClient<T> {
     }
 }
 
-/// Fetch the live `trade2/data/stats` + `data/items` snapshots (refreshed on
-/// app start). Anonymous; no auth required.
+/// Fetch the live `trade2/data/stats` + `data/items` + `data/static` snapshots.
 pub async fn fetch_definitions<T: HttpTransport>(
     transport: &T,
     base_url: &str,
 ) -> Result<(StatDefinitions, ItemDefinitions, CurrencyDefinitions), Error> {
     let stats_json = get_body(transport, &format!("{base_url}/api/trade2/data/stats")).await?;
     let items_json = get_body(transport, &format!("{base_url}/api/trade2/data/items")).await?;
-    // The bulk-exchange currency catalogue (currency/runes/fragments/…).
     let static_json = get_body(transport, &format!("{base_url}/api/trade2/data/static")).await?;
     Ok((
         StatDefinitions::from_json(&stats_json)?,
@@ -610,9 +493,7 @@ pub async fn fetch_definitions<T: HttpTransport>(
 /// A trade league as offered by `trade2/data/leagues`.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct League {
-    /// League id used as the search path segment (e.g. `Runes of Aldur`).
     pub id: String,
-    /// Human label for the dropdown (usually the same as `id`).
     pub text: String,
 }
 
@@ -659,9 +540,8 @@ mod tests {
 
     #[test]
     fn well_formed_poesessid_is_32_hex() {
-        let sid = "0123456789abcdef0123456789ABCDEF"; // 32 hex, mixed case
+        let sid = "0123456789abcdef0123456789ABCDEF";
         assert_eq!(poesessid_format(sid), SessionIdFormat::WellFormed);
-        // Surrounding whitespace is tolerated (trimmed).
         assert_eq!(
             poesessid_format("  0123456789abcdef0123456789abcdef \n"),
             SessionIdFormat::WellFormed
@@ -676,19 +556,17 @@ mod tests {
 
     #[test]
     fn bad_paste_is_malformed() {
-        // Common bad pastes: the whole cookie, wrong length, non-hex chars, an
-        // embedded newline — none should ever reach the Cookie header.
         assert_eq!(
             poesessid_format("POESESSID=0123456789abcdef0123456789abcdef"),
             SessionIdFormat::Malformed
         );
-        assert_eq!(poesessid_format("deadbeef"), SessionIdFormat::Malformed); // too short
+        assert_eq!(poesessid_format("deadbeef"), SessionIdFormat::Malformed);
         assert_eq!(
-            poesessid_format("0123456789abcdef0123456789abcdeg"), // 'g' isn't hex
+            poesessid_format("0123456789abcdef0123456789abcdeg"),
             SessionIdFormat::Malformed
         );
         assert_eq!(
-            poesessid_format("0123456789abcdef\n0123456789abcde"), // embedded newline
+            poesessid_format("0123456789abcdef\n0123456789abcde"),
             SessionIdFormat::Malformed
         );
     }

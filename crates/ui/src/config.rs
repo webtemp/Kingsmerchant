@@ -1,121 +1,73 @@
-//! Persistent settings. Read on startup, rewritten when the user changes a
-//! setting (currently just the league) so the choice survives restarts.
-//!
-//! Lives at `$XDG_CONFIG_HOME/kingsmerchant/config.json`. Hand-editable JSON; a
-//! missing or malformed file falls back to defaults. A file watcher hot-reloads
-//! edits (see the `watchers` module), so writes are atomic to avoid the watcher
-//! observing a half-written file.
+//! Persistent settings at `$XDG_CONFIG_HOME/kingsmerchant/config.json`.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// User settings persisted across runs.
+pub(crate) const DEFAULT_CACHE_TTL_SECS: u32 = 30;
+pub(crate) const MAX_CACHE_TTL_SECS: u32 = 120;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Trade league id (e.g. `Runes of Aldur`). Empty = "auto": the current
-    /// non-HC league is resolved from the live GGG list at startup. See
-    /// [`league_pinned`](Self::league_pinned).
+    /// Trade league id; empty = auto-resolve current non-HC league at startup.
     pub league: String,
-    /// `true` once the user explicitly picks a league in the selector. While
-    /// `false`, `league` is (re)derived from the live GGG list on every startup
-    /// so it follows league rollovers; once `true`, the saved `league` is
-    /// respected and never auto-changed.
+    /// True once the user picks a league; while false it's re-derived each startup.
     pub league_pinned: bool,
     /// Realm (`pc` / `sony` / `xbox`); `None` = pc.
     pub realm: Option<String>,
-    /// Start implicit-mod filters unticked in the detailed panel (they're rarely
-    /// the point and would over-constrain a search). Hand-editable.
     pub implicits_off_by_default: bool,
-    /// Stat filters whose label contains any of these (case-insensitive)
-    /// substrings start unticked — low-value "noise" mods. Hand-editable list.
+    /// Stat filters whose label contains any of these substrings start unticked.
     pub filters_off_by_default: Vec<String>,
-    /// Filter mins are seeded at this percentage of the item's rolled value
-    /// (100 = exact roll; 90 = 10% below, a looser default search). 1..=100.
+    /// Filter mins seeded at this percentage of the rolled value. 1..=100.
     pub filter_min_percent: u32,
-    /// Chat command typed into POE2 when the macro hotkey is pressed (via a
-    /// uinput virtual keyboard: opens chat, types this, sends). `null` disables it.
+    /// Cache lifetime in seconds; `0` disables, capped at [`MAX_CACHE_TTL_SECS`].
+    pub cache_ttl_secs: u32,
+    /// Chat command for the macro hotkey; `null` disables it.
     pub f5_command: Option<String>,
-    /// Second chat macro (default `/exit`, on F2) — same mechanism as
-    /// [`f5_command`](Self::f5_command). `null` disables it.
+    /// Second chat macro (default `/exit`, on F2); `null` disables it.
     pub macro2_command: Option<String>,
-    /// Rebindable hotkeys. Strings like `"Ctrl+C"`, `"F5"`, `"Escape"` —
-    /// modifiers `Ctrl`/`Alt`/`Shift` + one key.
+    /// Rebindable hotkeys, e.g. `"Ctrl+C"`, `"F5"`, `"Escape"`.
     pub hotkey_quick: String,
     pub hotkey_macro: String,
     pub hotkey_macro2: String,
     pub hotkey_close: String,
-    /// Opens the settings surface. Default `Ctrl+Alt+S` — a non-movement combo,
-    /// and (unlike the others) it fires regardless of which window is focused, so
-    /// you can open settings after tabbing out of the game.
+    /// Opens settings; fires regardless of focused window.
     pub hotkey_settings: String,
-    /// Logging verbosity (a `tracing` filter level). One of `auto`, `off`,
-    /// `error`, `warn`, `info`, `debug`, `trace`. `auto` (the default) picks by
-    /// build: `error` in release, `debug` in development. The `RUST_LOG`
-    /// environment variable, if set, overrides this. Applied at startup — a
-    /// change takes effect on the next launch.
+    /// `tracing` level: `auto`/`off`/`error`/`warn`/`info`/`debug`/`trace`. `RUST_LOG` overrides.
     pub log_level: String,
-    /// Only fire the price-check / macro hotkeys while Path of Exile is the
-    /// focused window (so Ctrl+C in other apps isn't hijacked, and the macro
-    /// never types into the wrong window). Set false if focus detection
-    /// misbehaves on your setup and blocks the hotkeys.
+    /// Only fire price-check / macro hotkeys while POE2 is focused.
     pub require_poe2_focus: bool,
-    /// Which listings to search: `securable` (Instant Buyout — default),
-    /// `online` (In Person), `available` (both), or `any`.
+    /// `securable` (default) / `online` / `available` / `any`.
     pub trade_status: String,
-    /// Where the popup appears:
-    /// - `center` — centered on the output (default).
-    /// - `fixed` — at [`fixed_x`](Self::fixed_x) / [`fixed_y`](Self::fixed_y).
-    /// - `at-cursor` — next to the cursor (not yet implemented; falls back to
-    ///   `center`).
+    /// `center` (default) / `fixed` / `at-cursor` (unimplemented, falls back to center).
     pub position_mode: String,
     /// Fixed-mode top-left position, in output-logical pixels from the top-left.
     pub fixed_x: i32,
     pub fixed_y: i32,
-    /// Emit the per-second overlay performance log (frame rate / max frame time
-    /// / resize count, on the `perf` tracing target). Off by default — it's a
-    /// diagnostic aid, toggled from Settings; plain runs stay quiet.
+    /// Emit the per-second overlay performance log.
     pub perf_metrics: bool,
-    /// Your `POESESSID` trade-site session cookie (32-hex). `null` = not set.
-    ///
-    /// Optional; only needed for the **Teleport** button on Instant Buyout
-    /// listings, whose teleport token the trade API returns only to an
-    /// authenticated request. Sent ONLY to pathofexile.com; grants trade-API
-    /// access to your account, so treat it like a password.
+    /// `POESESSID` cookie (32-hex); sent only to pathofexile.com. Treat like a password.
     pub poesessid: Option<String>,
-    /// Visual theme: accent colours + popup opacity. See [`ThemeConfig`].
     pub theme: ThemeConfig,
 }
 
-/// User-tunable look of the popup. Colours are `#rrggbb` hex strings so the
-/// file stays hand-editable; a malformed colour falls back to its default. The
-/// rarity/frame colours are intentionally *not* here — they mirror the in-game
-/// item colours players rely on to recognise items at a glance.
+/// Hex `#rrggbb` colours (malformed → default); rarity/frame colours stay in-game.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
-    /// Headline median-price / accent colour (the gold matching the app icon).
     pub accent_gold: String,
-    /// Rolled-mod ("affix") text colour.
     pub affix_blue: String,
-    /// "Online"/valid indicator dot.
     pub online_dot: String,
-    /// Dark backing for the inset item/preview cards.
     pub header_bg: String,
-    /// The popup's background fill (behind everything).
     pub overlay_fill: String,
-    /// The popup's 1px border.
     pub overlay_stroke: String,
-    /// Popup background opacity, `0.0`..=`1.0`. Lower = more see-through to the
-    /// game behind it; `1.0` is fully solid. Applies to the fill and border.
+    /// Popup background opacity, `0.0`..=`1.0`.
     pub opacity: f32,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
-        // These mirror the original hardcoded constants, so an upgrade is a
-        // no-op visually until the user actually changes something.
         ThemeConfig {
             accent_gold: "#e6c25a".to_string(),
             affix_blue: "#8a8af0".to_string(),
@@ -140,6 +92,7 @@ impl Default for Config {
                 "Light Radius".to_string(),
             ],
             filter_min_percent: 100,
+            cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
             f5_command: Some("/hideout".to_string()),
             macro2_command: Some("/exit".to_string()),
             hotkey_quick: "Ctrl+C".to_string(),
@@ -161,8 +114,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Whether a stat filter with this `label` should start unticked, per config
-    /// (implicits and the noise-mod list).
+    /// Whether a stat filter with this `label` should start unticked.
     pub fn filter_off_by_default(&self, label: &str, is_implicit: bool) -> bool {
         if is_implicit && self.implicits_off_by_default {
             return true;
@@ -187,11 +139,7 @@ impl Config {
         base.join("kingsmerchant").join("config.json")
     }
 
-    /// Load from disk, falling back to defaults on a missing or invalid file.
-    ///
-    /// Always written back out, so the file is seeded on first run and
-    /// backfilled with any newly-added fields — otherwise new settings would
-    /// apply at runtime but never be visible/editable in the file.
+    /// Load from disk (defaults on missing/invalid), written back to seed/backfill the file.
     pub fn load() -> Self {
         let path = Self::path();
         let config = Self::load_no_write();
@@ -201,8 +149,15 @@ impl Config {
         config
     }
 
-    /// Load from disk WITHOUT the backfill write-back. Used by the hot-reload
-    /// watcher, which must not re-trigger itself by writing the file.
+    /// Clamp hand-edited values into their valid ranges.
+    fn normalize(&mut self) {
+        self.filter_min_percent = self.filter_min_percent.clamp(1, 100);
+        // Out-of-range TTL falls back to the default rather than clamping to the cap.
+        if !(0..=MAX_CACHE_TTL_SECS).contains(&self.cache_ttl_secs) {
+            self.cache_ttl_secs = DEFAULT_CACHE_TTL_SECS;
+        }
+    }
+
     pub fn load_no_write() -> Self {
         let path = Self::path();
         let mut config = match std::fs::read_to_string(&path) {
@@ -212,27 +167,19 @@ impl Config {
             }),
             Err(_) => Config::default(),
         };
-        // The file is hand-editable; keep an out-of-range percent (e.g. a typo'd
-        // `0`, which would seed every filter min at 0) inside the documented 1..=100.
-        config.filter_min_percent = config.filter_min_percent.clamp(1, 100);
+        config.normalize();
         config
     }
 
-    /// Write back to disk (creating the directory if needed).
-    ///
-    /// Writes to a sibling temp file and atomically `rename`s it into place, so
-    /// a concurrent reader (the hot-reload watcher) never sees a truncated file
-    /// and parses it as "invalid → defaults", silently wiping live settings.
+    /// Write back to disk via a temp file + atomic rename (so readers never see a truncated file).
     pub fn save(&self) -> anyhow::Result<()> {
         let path = Self::path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        // Per-pid temp name so two instances don't clobber each other's temp.
         let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
         std::fs::write(&tmp, json)?;
-        // On a failed rename, don't leave the temp file behind to accumulate.
         if let Err(e) = std::fs::rename(&tmp, &path) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.into());
@@ -248,10 +195,7 @@ mod tests {
     #[test]
     fn filter_off_by_default_matches_implicits_and_noise_substrings() {
         let cfg = Config::default();
-        // Implicits start off (default `implicits_off_by_default = true`)...
         assert!(cfg.filter_off_by_default("anything", true));
-        // ...but explicit mods only when they hit the noise list (case-insensitive,
-        // substring).
         assert!(cfg.filter_off_by_default("increased Light Radius", false));
         assert!(cfg.filter_off_by_default("LIGHT RADIUS bonus", false));
         assert!(!cfg.filter_off_by_default("+50 to maximum Life", false));
@@ -259,15 +203,35 @@ mod tests {
 
     #[test]
     fn config_round_trips_through_json() {
-        // Guards the save → load contract: a serialized default must deserialize
-        // back unchanged, so backfilling the file never drops or renames a field.
         let json = serde_json::to_string(&Config::default()).expect("serialize");
         let back: Config = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(
             back.filter_min_percent,
             Config::default().filter_min_percent
         );
+        assert_eq!(back.cache_ttl_secs, DEFAULT_CACHE_TTL_SECS);
         assert_eq!(back.hotkey_quick, "Ctrl+C");
         assert_eq!(back.trade_status, "securable");
+    }
+
+    #[test]
+    fn normalize_keeps_valid_values_and_repairs_bad_ones() {
+        let normalized = |ttl, pct| {
+            let mut c = Config {
+                cache_ttl_secs: ttl,
+                filter_min_percent: pct,
+                ..Config::default()
+            };
+            c.normalize();
+            c
+        };
+        assert_eq!(normalized(0, 50).cache_ttl_secs, 0);
+        assert_eq!(
+            normalized(MAX_CACHE_TTL_SECS, 50).cache_ttl_secs,
+            MAX_CACHE_TTL_SECS
+        );
+        assert_eq!(normalized(999, 50).cache_ttl_secs, DEFAULT_CACHE_TTL_SECS);
+        assert_eq!(normalized(30, 0).filter_min_percent, 1);
+        assert_eq!(normalized(30, 250).filter_min_percent, 100);
     }
 }

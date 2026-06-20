@@ -1,9 +1,4 @@
 //! Dev tool: read item text from stdin, print the parsed [`Item`].
-//!
-//! ```sh
-//! # after copying an item in POE2 (the X11 clipboard holds it):
-//! xclip -selection clipboard -o | cargo run -p parser --example parse_stdin
-//! ```
 
 use std::io::Read;
 

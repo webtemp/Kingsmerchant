@@ -1,24 +1,4 @@
-//! Manual end-to-end harness for the trade-api crate (Phase 2 has no UI yet).
-//!
-//! Reads a POE2 item from stdin, fetches the live stat/item definitions, builds
-//! the search query (printing it and the stat mapping so you can eyeball them),
-//! then runs the real search + fetch and prints the median + cheapest listings.
-//!
-//! ```text
-//!   # copy an item in-game with Ctrl+C (advanced text), then:
-//!   wl-paste | POE_LEAGUE=Mirage cargo run -p trade-api --example price_check
-//!   #   X11 clipboard instead of Wayland:  xclip -o -selection clipboard | …
-//!   #   from a saved file:                 cargo run … < some_item.txt
-//!
-//! Env vars:
-//!   POE_LEAGUE   league id (default: Standard). MUST be a POE2 trade league id
-//!                from `trade2/data/leagues` — e.g. "Runes of Aldur". A bad
-//!                league id is what produces a 400 "Invalid query".
-//!   POE_REALM    pc | sony | xbox (optional).
-//!   POE_COOKIE   full Cookie header (optional; not needed — anonymous search
-//!                works). Reserved for later authenticated features.
-//!   POE_UA       override the User-Agent (be polite: include contact info).
-//! ```
+//! Manual end-to-end harness: reads a POE2 item from stdin, fetches live defs, builds the query, runs search + fetch.
 
 use std::io::Read;
 
@@ -32,7 +12,6 @@ const BASE: &str = "https://www.pathofexile.com";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Read the item the way the real app will: from the clipboard, piped in.
     let mut item_text = String::new();
     std::io::stdin().read_to_string(&mut item_text)?;
     let item = match parser::parse_item(&item_text) {
@@ -52,7 +31,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         item.modifiers.len()
     );
 
-    // 2. Fetch the live definition snapshots (anonymous; these always work).
     let ua = std::env::var("POE_UA")
         .unwrap_or_else(|_| "kingsmerchant/0.1 (+manual test harness)".to_string());
     let mut transport = ReqwestTransport::new(ua)?;
@@ -69,7 +47,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         items.base_count()
     );
 
-    // 3. Show the stat-text → GGG-id mapping, so you can see it work.
     if !item.modifiers.is_empty() {
         println!("── stat mapping ──");
         for m in &item.modifiers {
@@ -87,7 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
-    // 4. Build and print the search query body.
     let opts = QueryOptions::default();
     let request = build_search_query(&item, &stats, &items, opts);
     println!(
@@ -95,7 +71,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string_pretty(&request)?
     );
 
-    // 5. Run the real search + fetch through the client.
     let league = std::env::var("POE_LEAGUE").unwrap_or_else(|_| "Standard".to_string());
     let mut config = ClientConfig::new(&league);
     config.realm = std::env::var("POE_REALM").ok();
@@ -150,7 +125,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Minimal GET through the transport, for the public definition endpoints.
 async fn get(
     transport: &ReqwestTransport,
     path: &str,

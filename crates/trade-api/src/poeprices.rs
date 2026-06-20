@@ -1,11 +1,4 @@
-//! Secondary ML price estimate from poeprices.info, used only in detailed mode
-//! for rares where the official exact-match search is too narrow.
-//!
-//! `GET https://www.poeprices.info/api?l={league}&i={base64(item text)}` returns
-//! a predicted `min`/`max`/`currency` plus a confidence score. Its `error` flag
-//! (non-zero when it can't price the item) and its own rate limits are handled
-//! gracefully: a decline is `Ok(None)`, only transport/HTTP/decoding problems
-//! surface as `Err` (the UI shows no badge either way, but can log the cause).
+//! Secondary ML price estimate from poeprices.info, for detailed-mode rares.
 
 use serde::Deserialize;
 
@@ -14,21 +7,17 @@ use crate::http::{HttpRequest, HttpResponse, HttpTransport, Method};
 
 const BASE_URL: &str = "https://www.poeprices.info";
 
-/// A poeprices.info ML price prediction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PriceEstimate {
     pub min: f64,
     pub max: f64,
-    /// Currency the bounds are in (e.g. `exalted`, `divine`).
     pub currency: String,
-    /// Confidence percentage (0–100), when reported.
     pub confidence: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawEstimate {
-    /// 0 on success; non-zero means poeprices declined (bad item, not enough
-    /// data, rate limited, …).
+    /// 0 on success; non-zero means poeprices declined.
     #[serde(default)]
     error: i64,
     #[serde(default)]
@@ -43,9 +32,7 @@ struct RawEstimate {
     pred_confidence_score: Option<f64>,
 }
 
-/// Fetch an ML price estimate for `item_text` (the raw clipboard text) in
-/// `league`. `Ok(None)` when poeprices can't price it; `Err` only on
-/// transport/HTTP/decoding failures.
+/// `Ok(None)` when poeprices can't price it; `Err` only on transport failures.
 pub async fn price_estimate<T: HttpTransport>(
     transport: &T,
     league: &str,
@@ -67,8 +54,6 @@ pub async fn price_estimate<T: HttpTransport>(
     parse_estimate(&resp)
 }
 
-/// Parse a poeprices response: HTTP errors → `Err`, an `error` flag → `Ok(None)`,
-/// a complete prediction → `Ok(Some(..))`.
 fn parse_estimate(resp: &HttpResponse) -> Result<Option<PriceEstimate>, Error> {
     if !resp.is_success() {
         return Err(Error::Api {
@@ -89,13 +74,11 @@ fn parse_estimate(resp: &HttpResponse) -> Result<Option<PriceEstimate>, Error> {
             currency,
             confidence: raw.pred_confidence_score,
         })),
-        // Success flag but missing fields — treat as "no estimate".
         _ => Ok(None),
     }
 }
 
-/// Standard base64 (with padding) of `input`. Hand-rolled to avoid a dependency
-/// for the one place we need it (the poeprices `i` parameter).
+/// Standard base64 (with padding) of `input`.
 fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);

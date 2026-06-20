@@ -1,7 +1,4 @@
-//! The Wayland trait impls for [`App`] (compositor / layer-shell / seat /
-//! pointer / relative-pointer / keyboard / output / registry) plus the
-//! `delegate_*!` and `registry_handlers!` macro wiring that routes events into
-//! them. Each event is dispatched to whichever surface owns it.
+//! Wayland trait impls for [`App`] and the `delegate_*!` macro wiring.
 
 use std::num::NonZeroU32;
 
@@ -106,8 +103,6 @@ impl LayerShellHandler for App {
                 surf.height = configure.new_size.1;
             }
             if let Some(gl) = surf.gl.as_ref() {
-                // `width`/`height` are seeded non-zero in `WinSurface::new` and a
-                // zero `new_size` is ignored above, so both stay non-zero.
                 gl.gl_surface.resize(
                     &gl.context,
                     NonZeroU32::new(surf.width).expect("surface width is non-zero"),
@@ -133,8 +128,6 @@ impl SeatHandler for App {
     ) {
         if capability == Capability::Pointer && self.pointer.is_none() {
             if let Ok(pointer) = self.seat_state.get_pointer(qh, &seat) {
-                // Raw motion deltas for Alt drag (immune to the surface moving
-                // under the cursor).
                 self.relative_pointer = self
                     .relative_pointer_state
                     .get_relative_pointer(&pointer, qh)
@@ -178,9 +171,6 @@ impl PointerHandler for App {
         _: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        // Where the popup ended an Alt-drag this frame — persisted as the fixed
-        // position after the loop (avoids borrowing `self.quick` while a surface
-        // is borrowed).
         let mut popup_dropped: Option<(i32, i32)> = None;
         for event in events {
             let Some(which) = self.which(&event.surface) else {
@@ -191,8 +181,6 @@ impl PointerHandler for App {
             let surf = self.surf_mut(which);
             match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
-                    // While dragging, the relative pointer drives the move; don't
-                    // also feed motion to egui.
                     if !surf.dragging {
                         surf.events.push(egui::Event::PointerMoved(pos));
                     }
@@ -201,11 +189,9 @@ impl PointerHandler for App {
                     surf.events.push(egui::Event::PointerGone);
                 }
                 PointerEventKind::Press { button, .. } => {
-                    // Alt + left button starts a window drag (consumed, not
-                    // forwarded to egui).
                     if button == BTN_LEFT && alt {
                         surf.dragging = true;
-                        surf.dragged = true; // stop re-placement, keep current pos
+                        surf.dragged = true;
                     } else if let Some(b) = map_button(button) {
                         surf.events.push(egui::Event::PointerButton {
                             pos,
@@ -218,7 +204,6 @@ impl PointerHandler for App {
                 PointerEventKind::Release { button, .. } => {
                     if button == BTN_LEFT && surf.dragging {
                         surf.dragging = false;
-                        // Remember where the popup was dropped → fixed position.
                         if which == Which::Popup {
                             popup_dropped = Some((surf.margin_left, surf.margin_top));
                         }
@@ -243,7 +228,6 @@ impl PointerHandler for App {
                 }
             }
         }
-        // Persist the dropped popup position (switches Settings to Fixed at x/y).
         if let Some((x, y)) = popup_dropped {
             self.quick.set_fixed_position(x, y);
         }
@@ -259,7 +243,6 @@ impl RelativePointerHandler for App {
         _: &wl_pointer::WlPointer,
         event: RelativeMotionEvent,
     ) {
-        // Apply the raw cursor delta to whichever surface is being dragged.
         let dx = event.delta.0.round() as i32;
         let dy = event.delta.1.round() as i32;
         let surf = if self.popup.dragging {
@@ -308,9 +291,7 @@ impl KeyboardHandler for App {
         if self.focused == Some(which) {
             self.focused = None;
         }
-        // The popup auto-closes when focus leaves it (user clicked back into
-        // POE2), so no Esc needed. Settings stays open — close it via its X /
-        // the tray.
+        // Popup auto-closes when focus leaves; settings stays open.
         if which == Which::Popup && self.popup.shown {
             tracing::info!("popup keyboard focus lost → closing");
             self.popup.shown = false;
@@ -325,10 +306,7 @@ impl KeyboardHandler for App {
         event: KeyEvent,
     ) {
         let modifiers = self.kbd_modifiers;
-        // Click-to-record hotkey capture (Settings): grab the whole combo for the
-        // row being recorded instead of routing the key into egui. Esc cancels;
-        // modifier-only presses (Ctrl/Alt/Shift) yield no key name, so we keep
-        // listening until a real key lands.
+        // Click-to-record hotkey capture: grab the whole combo; Esc cancels.
         if self.quick.is_recording_hotkey() {
             if event.keysym == Keysym::Escape {
                 self.quick.cancel_hotkey_recording();
@@ -341,11 +319,7 @@ impl KeyboardHandler for App {
         let Some(which) = self.focused else {
             return;
         };
-        // Ctrl+V: egui never reads the system clipboard itself — we must turn
-        // the shortcut into an `Event::Paste` so text fields can be pasted into.
-        // Use the Wayland-first paste read (not the X11 POE2-item read), so
-        // pasting e.g. a POESESSID copied from a browser doesn't yield the last
-        // item left in POE2's X11 clipboard.
+        // Ctrl+V: turn the shortcut into an `Event::Paste` (Wayland-first read).
         if modifiers.ctrl
             && !modifiers.alt
             && (event.keysym == Keysym::v || event.keysym == Keysym::V)
@@ -368,8 +342,7 @@ impl KeyboardHandler for App {
                 modifiers,
             });
         }
-        // Printable text — not while Ctrl/Alt are held (shortcuts) and not
-        // control chars (Backspace etc. also arrive as utf8).
+        // Printable text only: skip while Ctrl/Alt held and skip control chars.
         if !modifiers.ctrl && !modifiers.alt {
             if let Some(text) = event.utf8 {
                 if !text.is_empty() && !text.chars().any(char::is_control) {

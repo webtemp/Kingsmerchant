@@ -1,15 +1,4 @@
-//! POE2 bulk currency **exchange**.
-//!
-//! Stackables (currency, runes, fragments, essences, waystones, …) aren't sold
-//! as individual listings, so the per-item `search` finds nothing. They trade
-//! through `POST /api/trade2/exchange/{league}` with a `want` currency id and
-//! the `have` currencies you'll pay with. Each result is an *offer* (a ratio),
-//! so unit price is `pay_amount / get_amount`.
-//!
-//! Names map to exchange ids via `trade2/data/static` ([`CurrencyDefinitions`]).
-//! We query one pay currency at a time (default Exalted) so every offer is in
-//! one currency and trivially sortable, sidestepping exalted-vs-divine
-//! normalisation.
+//! POE2 bulk currency exchange: price stackables via `POST /api/trade2/exchange/{league}`.
 
 use std::collections::HashMap;
 
@@ -18,15 +7,12 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use crate::model::{Account, Status};
 
-/// The `trade2/data/static` snapshot: the bulk-exchange currency catalogue.
-/// Maps an item's display name (e.g. `Exalted Orb`, `Farrul's Rune of the
-/// Chase`) to its short exchange id (`exalted`, `farruls-rune-of-the-chase`).
+/// The `trade2/data/static` snapshot: display name → short exchange id.
 #[derive(Debug, Default)]
 pub struct CurrencyDefinitions {
     by_name: HashMap<String, CurrencyEntry>,
 }
 
-/// One exchangeable currency: its short id and display text.
 #[derive(Debug, Clone)]
 pub struct CurrencyEntry {
     pub id: String,
@@ -53,7 +39,6 @@ struct StaticEntry {
 }
 
 impl CurrencyDefinitions {
-    /// Parse the `trade2/data/static` JSON into a name → entry lookup.
     pub fn from_json(json: &str) -> Result<Self, Error> {
         let doc: StaticDoc =
             serde_json::from_str(json).map_err(|e| Error::decode("data/static", e))?;
@@ -70,8 +55,7 @@ impl CurrencyDefinitions {
         Ok(CurrencyDefinitions { by_name })
     }
 
-    /// Exchange entry for an item display name, if it's a known exchangeable
-    /// currency (so the caller routes it to the exchange instead of `search`).
+    /// Exchange entry for an item display name, if it's a known exchangeable currency.
     pub fn lookup(&self, name: &str) -> Option<&CurrencyEntry> {
         self.by_name.get(name.trim())
     }
@@ -84,8 +68,6 @@ impl CurrencyDefinitions {
         self.by_name.is_empty()
     }
 }
-
-// ---- Request -------------------------------------------------------------
 
 #[derive(Serialize)]
 struct ExchangeRequest {
@@ -106,8 +88,7 @@ struct ExchangeSort {
     have: String,
 }
 
-/// Serialised request body for `POST /api/trade2/exchange/{league}`: price
-/// `want_id` paying in `pay` currency, cheapest first.
+/// Serialised request body for `POST /api/trade2/exchange/{league}`, cheapest first.
 pub fn exchange_body(want_id: &str, pay: &str, status_option: &str) -> Result<String, Error> {
     let request = ExchangeRequest {
         query: ExchangeQuery {
@@ -122,8 +103,6 @@ pub fn exchange_body(want_id: &str, pay: &str, status_option: &str) -> Result<St
     };
     serde_json::to_string(&request).map_err(|e| Error::decode("exchange request", e))
 }
-
-// ---- Response ------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct ExchangeResponse {
@@ -165,44 +144,32 @@ struct RawSide {
     whisper: Option<String>,
 }
 
-/// A priced bulk-exchange result: offers for one item, in one pay currency,
-/// sorted cheapest-first.
+/// A priced bulk-exchange result: offers for one item, in one pay currency, cheapest-first.
 #[derive(Debug, Clone)]
 pub struct ExchangeCheck {
-    /// The exchange saved-search hash, for the trade-site deep link
-    /// (`/trade2/exchange/poe2/{league}/{id}`).
     pub id: String,
-    /// The currency id we priced (the `want`).
     pub want_id: String,
-    /// The currency offers are priced in (the `have`).
     pub pay_currency: String,
-    /// Offers, cheapest unit price first.
     pub offers: Vec<ExchangeOffer>,
 }
 
 /// One bulk-exchange offer (a single seller's ratio).
 #[derive(Debug, Clone)]
 pub struct ExchangeOffer {
-    /// Price per unit of the wanted item, in the pay currency
-    /// (the seller's pay-amount divided by their get-amount).
     pub unit_price: f64,
-    /// How many units the seller has in stock.
     pub stock: Option<f64>,
     pub account: String,
     pub character: Option<String>,
     pub online: bool,
     pub indexed: Option<String>,
-    /// Ready-to-paste whisper (placeholders already filled).
     pub whisper: Option<String>,
 }
 
 impl ExchangeCheck {
-    /// Median unit price across all offers (they're all in the pay currency).
     pub fn median_unit_price(&self) -> Option<f64> {
         if self.offers.is_empty() {
             return None;
         }
-        // offers is already sorted ascending by unit_price.
         let mid = self.offers.len() / 2;
         Some(if self.offers.len().is_multiple_of(2) {
             f64::midpoint(self.offers[mid - 1].unit_price, self.offers[mid].unit_price)
@@ -211,14 +178,12 @@ impl ExchangeCheck {
         })
     }
 
-    /// The cheapest `n` offers.
     pub fn cheapest(&self, n: usize) -> &[ExchangeOffer] {
         &self.offers[..n.min(self.offers.len())]
     }
 }
 
-/// Parse an exchange response, keeping only offers in the `pay` currency and
-/// sorting them cheapest-first.
+/// Parse an exchange response, keeping only `pay`-currency offers, cheapest-first.
 pub fn parse_exchange(json: &str, want_id: &str, pay: &str) -> Result<ExchangeCheck, Error> {
     let resp: ExchangeResponse =
         serde_json::from_str(json).map_err(|e| Error::decode("exchange response", e))?;
@@ -230,7 +195,6 @@ pub fn parse_exchange(json: &str, want_id: &str, pay: &str) -> Result<ExchangeCh
         let account = listing.account.name.clone();
         let character = listing.account.last_character_name.clone();
         for offer in &listing.offers {
-            // Only offers priced in our chosen pay currency (single-`have`).
             if offer.exchange.currency != pay || offer.item.amount <= 0.0 {
                 continue;
             }
@@ -245,8 +209,7 @@ pub fn parse_exchange(json: &str, want_id: &str, pay: &str) -> Result<ExchangeCh
             });
         }
     }
-    // Cheapest first; account name as a stable tiebreaker (the result map's
-    // iteration order isn't deterministic).
+    // Cheapest first; account name as a stable tiebreaker.
     offers.sort_by(|a, b| {
         a.unit_price
             .partial_cmp(&b.unit_price)
@@ -262,9 +225,7 @@ pub fn parse_exchange(json: &str, want_id: &str, pay: &str) -> Result<ExchangeCh
     })
 }
 
-/// Build the ready-to-paste whisper from the exchange templates. The outer
-/// whisper has `{0}` (item) and `{1}` (price); each is itself a template with
-/// `{0}` for the amount.
+/// Build the ready-to-paste whisper from the exchange templates.
 fn build_whisper(template: Option<&str>, item: &RawSide, pay: &RawSide) -> Option<String> {
     let template = template?;
     let item_part = item
@@ -282,7 +243,6 @@ fn build_whisper(template: Option<&str>, item: &RawSide, pay: &RawSide) -> Optio
     )
 }
 
-/// Format a currency amount: whole numbers without a decimal point.
 fn fmt_amount(amount: f64) -> String {
     if amount.fract() == 0.0 {
         format!("{}", amount as i64)
@@ -329,13 +289,10 @@ mod tests {
 
     #[test]
     fn parses_real_exchange_response_fixture() {
-        // A trimmed real `trade2/exchange` capture (3 listings), so the parser
-        // is exercised against the live shape (extra fields, unicode whispers).
         let json = include_str!("../tests/fixtures/api/exchange_response.json");
         let check = parse_exchange(json, "farruls-rune-of-the-chase", "exalted").unwrap();
         assert_eq!(check.id, "5n2ORePVta");
         assert!(!check.offers.is_empty());
-        // Cheapest-first, all priced in exalted, with a filled whisper.
         assert!(check
             .offers
             .windows(2)
@@ -367,17 +324,15 @@ mod tests {
         }}"#;
         let check = parse_exchange(json, "rune", "exalted").unwrap();
         assert_eq!(check.id, "AbC123");
-        // The divine offer is dropped (we pay exalted); two remain, cheapest first.
         assert_eq!(check.offers.len(), 2);
         assert_eq!(check.offers[0].unit_price, 1.0);
         assert_eq!(check.offers[1].unit_price, 3.0);
         assert_eq!(check.median_unit_price(), Some(2.0));
-        // Whisper placeholders filled: item {0}=1, pay {0}=1.
         assert_eq!(
             check.offers[0].whisper.as_deref(),
             Some("@Aay hi 1 Rune for 1 Exalted Orb")
         );
-        assert!(!check.offers[0].online); // afk
-        assert!(check.offers[1].online); // plain online
+        assert!(!check.offers[0].online);
+        assert!(check.offers[1].online);
     }
 }

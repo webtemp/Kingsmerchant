@@ -1,9 +1,4 @@
 //! A thin, mockable HTTP seam so the client can be driven offline in tests.
-//!
-//! The trade client speaks only [`HttpTransport`]; production wires in
-//! [`ReqwestTransport`] (reqwest + rustls), tests wire in a recorded-response
-//! fake. Keeping the seam at "request in, response out" means the rate-limit
-//! and orchestration logic is exercised without a network.
 
 use async_trait::async_trait;
 
@@ -42,20 +37,16 @@ pub trait HttpTransport: Send + Sync {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, Error>;
 }
 
-/// Production transport: `reqwest` configured for rustls (not openssl).
+/// Production transport: `reqwest` configured for rustls.
 pub struct ReqwestTransport {
     client: reqwest::Client,
     user_agent: String,
-    /// Optional `Cookie:` header value, reserved for later auth (e.g. a
-    /// `POESESSID=…`). Anonymous queries work for search and fetch.
     cookie: Option<String>,
 }
 
 impl ReqwestTransport {
     pub fn new(user_agent: impl Into<String>) -> Result<Self, Error> {
         let client = reqwest::Client::builder()
-            // Bound every request so a stalled trade/poeprices/poe2scout endpoint
-            // can't hang a price check forever (caught by `is_timeout` below).
             .timeout(std::time::Duration::from_secs(15))
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
@@ -67,7 +58,6 @@ impl ReqwestTransport {
         })
     }
 
-    /// Attach a `Cookie:` header value sent with every request.
     #[must_use]
     pub fn with_cookie(mut self, cookie: impl Into<String>) -> Self {
         self.cookie = Some(cookie.into());
@@ -119,11 +109,7 @@ impl HttpTransport for ReqwestTransport {
     }
 }
 
-/// Turn a `reqwest::Error` into an [`Error::Transport`] whose message both names
-/// the failure mode and includes the underlying cause. reqwest's own `Display`
-/// is often unhelpfully terse — a malformed header surfaces only as "builder
-/// error" — because the real reason sits in the error's `source()` chain, which
-/// `to_string()` drops. We name the kind and walk that chain.
+/// Turn a `reqwest::Error` into an [`Error::Transport`], naming the kind and walking the cause chain.
 fn transport_error(e: &reqwest::Error) -> Error {
     let kind = if e.is_builder() {
         "could not build the request (a header or URL was invalid)"
@@ -139,8 +125,6 @@ fn transport_error(e: &reqwest::Error) -> Error {
         "the request failed"
     };
 
-    // Walk the cause chain so a wrapped reason (e.g. "failed to parse header
-    // value" behind a builder error) actually reaches the message.
     let mut detail = String::new();
     let mut source = std::error::Error::source(e);
     while let Some(cause) = source {
@@ -158,10 +142,7 @@ fn transport_error(e: &reqwest::Error) -> Error {
     }
 }
 
-/// Percent-encode a string for use in a URL path segment or query value
-/// (RFC 3986 unreserved chars pass through; everything else becomes `%XX`).
-/// League ids like `Runes of Aldur` carry spaces that would otherwise produce
-/// an invalid URL.
+/// Percent-encode a string for a URL path segment or query value (RFC 3986 unreserved pass through).
 pub(crate) fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -184,9 +165,6 @@ mod tests {
 
     #[test]
     fn builder_error_message_names_the_cause() {
-        // A header value with a newline is what a malformed POESESSID paste used
-        // to produce — reqwest reports it as a terse "builder error". Build one
-        // for real and check our message says more than that.
         let err = reqwest::Client::new()
             .get("http://example.invalid/")
             .header("cookie", "POESESSID=bad\nvalue")
@@ -197,12 +175,10 @@ mod tests {
         let Error::Transport(msg) = transport_error(&err) else {
             panic!("expected a Transport error");
         };
-        // Names the failure mode...
         assert!(
             msg.contains("could not build the request"),
             "message should name the failure mode, got: {msg}"
         );
-        // ...and surfaces the underlying cause rather than just "builder error".
         assert!(
             msg.to_lowercase().contains("header"),
             "message should include the underlying cause, got: {msg}"

@@ -1,15 +1,5 @@
-//! All egui rendering for [`QuickModeApp`], split by surface:
-//!
-//! - [`mod@theme`] — shared in-game-style colours.
-//! - [`item_card`] — the item tooltip + per-listing hover preview.
-//! - [`listings`] — the shared results table and its chat-action buttons.
-//! - [`filters`] — the detailed-mode filter panel + poeprices estimate badge.
-//! - [`exchange`] — the bulk-exchange view for stackables.
-//! - [`settings`] — the settings surface.
-//! - [`actions`] — the chat-injection plumbing the buttons/macros fire.
-//!
-//! This module itself hosts the popup body ([`QuickModeApp::content`]) that
-//! dispatches into those surfaces, plus the league selector and trade-site link.
+//! All egui rendering for [`QuickModeApp`], split by surface. This module hosts
+//! the popup body ([`QuickModeApp::content`]) that dispatches into those surfaces.
 
 mod actions;
 mod exchange;
@@ -32,21 +22,16 @@ use item_card::item_card;
 use listings::show_results;
 
 impl QuickModeApp {
-    /// Render the popup body into the given `Ui`. No panels — the overlay
-    /// frames it in an auto-sizing translucent `Area`. Call
-    /// [`pump`](Self::pump) first.
+    /// Render the popup body into the given `Ui`. Call [`pump`](Self::pump) first.
     pub fn content(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        // Install the user's palette for this frame so the accent helpers
-        // (`theme::accent_gold()`, …) read it across the whole view tree.
+        // Install the user's palette for this frame so the accent helpers read it.
         theme::set_active(self.theme);
 
-        // Header: title (left) + league selector & close button (right). Same
-        // text size so they share a baseline. Dismissed by X / Esc / click-out.
+        // Header: title (left) + league selector & close button (right).
         ui.horizontal(|ui| {
             ui.label(RichText::new("Kingsmerchant").strong());
-            // Build version — confirms a fresh build runs (the overlay is a
-            // persistent process; rebuilding doesn't restart it).
+            // Build version — confirms a fresh build runs.
             ui.label(
                 RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
                     .weak()
@@ -68,8 +53,7 @@ impl QuickModeApp {
         });
         ui.add_space(4.0);
 
-        // View toggle (Item ⇄ Text). Pricing is driven by Ctrl+C / the filters,
-        // so there's no manual "price check" button any more.
+        // View toggle (Item ⇄ Text); pricing is driven by Ctrl+C / the filters.
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.view, View::Item, format!("{} Item", ph::SHIELD));
             ui.selectable_value(
@@ -88,8 +72,7 @@ impl QuickModeApp {
             });
         });
 
-        // Instant feedback while reading the clipboard after Ctrl+C, so the
-        // popup isn't silent. Non-destructive: shown item/results stay visible.
+        // Instant feedback while reading the clipboard after Ctrl+C.
         if self.awaiting_copy {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -118,8 +101,7 @@ impl QuickModeApp {
                 );
             }
             View::Item => {
-                // Render from the already-parsed item — re-parsing the text
-                // every frame lagged the continuously-redrawn overlay.
+                // Render from the already-parsed item; re-parsing every frame lagged.
                 if let Some(item) = &self.item {
                     item_card(ui, item, self.icon_url.as_deref());
                 } else if self.item_text.trim().is_empty() {
@@ -140,8 +122,7 @@ impl QuickModeApp {
 
         ui.add_space(6.0);
 
-        // Rate-limit feedback: tell the user we're waiting on the trade API's
-        // bucket instead of firing blindly.
+        // Rate-limit feedback while waiting on the trade API's bucket.
         if let Some(wait) = self.client.retry_in() {
             let secs = (wait.as_millis() as u64).div_ceil(1000);
             ui.colored_label(
@@ -154,12 +135,9 @@ impl QuickModeApp {
         let mut open_trade: Option<String> = None;
         let mut teleport: Option<String> = None;
         match self.mode {
-            // Stackables (currency/runes/…) price via the bulk exchange.
             PriceMode::Exchange => self.exchange_content(ui, &ctx, &mut copied, &mut open_trade),
-            // Normal items: the stat-filter panel + per-item listings.
             PriceMode::Item => {
-                // The filter panel between the item and listings. Edits re-run
-                // the search after a debounce; "Apply now" is immediate.
+                // Filter panel; edits re-run the search after a debounce, "Apply now" is immediate.
                 {
                     ui.add_space(6.0);
                     let apply_now = self.filter_panel(ui);
@@ -178,7 +156,6 @@ impl QuickModeApp {
                         ui.label("searching…");
                     });
                 }
-                // poeprices.info ML estimate badge (rares).
                 self.estimate_badge(ui);
                 ui.separator();
                 match &self.phase {
@@ -200,8 +177,7 @@ impl QuickModeApp {
         }
         if let Some(url) = open_trade {
             match platform_linux::open_url(&url) {
-                // Hide the popup so the browser comes forward — we're an
-                // always-on-top overlay that would cover it.
+                // Hide the popup so the browser comes forward over our overlay.
                 Ok(()) => self.close_requested = true,
                 Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
             }
@@ -219,8 +195,7 @@ impl QuickModeApp {
         }
     }
 
-    /// The league dropdown. Switching re-prices the loaded item under the new
-    /// league. Falls back to a plain label if the leagues list failed to load.
+    /// The league dropdown; switching re-prices the loaded item under the new league.
     fn league_selector(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if self.leagues.is_empty() {
             ui.label(RichText::new(&self.config.league).weak());
@@ -239,21 +214,16 @@ impl QuickModeApp {
             self.config.league.clone_from(&chosen);
             // An explicit pick pins the league (stops auto-resolve on restart).
             self.config.league_pinned = true;
-            // Persist the choice so it sticks across restarts (no env var).
             if let Err(e) = self.config.save() {
                 tracing::warn!(error = %e, "could not save config");
             }
             self.client.set_league(chosen);
-            // Re-price the currently loaded item under the new league, keeping
-            // any detailed-mode filters in place.
+            // Re-price under the new league, keeping any detailed-mode filters.
             self.rerun_query(ctx);
         }
     }
 
-    /// Deep link to Craft of Exile's crafting simulator, pre-loaded with the
-    /// opened item. CoE's `eimport` parameter takes the raw in-game clipboard
-    /// text (the same text we copied with Ctrl+C), URL-encoded; `game=poe2`
-    /// pins the POE2 dataset so it doesn't open in whatever mode CoE last used.
+    /// Deep link to Craft of Exile, pre-loaded with the item via the `eimport` param.
     fn craft_of_exile_url(&self) -> String {
         format!(
             "https://www.craftofexile.com/?game=poe2&eimport={}",
@@ -261,10 +231,8 @@ impl QuickModeApp {
         )
     }
 
-    /// Deep link to the official trade site for the current item + filters.
-    /// Encodes the whole query in `?q=` (not a saved-search id) so every filter,
-    /// including disabled ones, shows on the site as in the popup (greyed, not
-    /// missing).
+    /// Deep link to the trade site, encoding the whole query in `?q=` so disabled
+    /// filters show greyed rather than missing.
     fn trade_url(&self) -> String {
         let base = format!(
             "https://www.pathofexile.com/trade2/search/poe2/{}",

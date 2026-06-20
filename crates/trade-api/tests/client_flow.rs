@@ -1,6 +1,4 @@
-//! End-to-end client flow over a mocked HTTP transport:
-//! search → fetch → aggregate, request shapes, fetch batching, and 429 retry.
-//! Nothing here touches the network.
+//! End-to-end client flow over a mocked HTTP transport.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -21,7 +19,6 @@ Topaz Ring
 { Implicit Modifier - Elemental, Lightning, Resistance }
 +30(20-30)% to Lightning Resistance";
 
-/// Captured real rate-limit headers, attached to every mocked response.
 fn rate_headers() -> Vec<(String, String)> {
     vec![
         (
@@ -48,8 +45,6 @@ fn ok(body: &str) -> HttpResponse {
     }
 }
 
-/// A transport that hands back queued responses in order and records every
-/// request it was given.
 struct MockTransport {
     responses: Mutex<VecDeque<HttpResponse>>,
     requests: Arc<Mutex<Vec<HttpRequest>>>,
@@ -111,15 +106,13 @@ async fn price_check_searches_then_fetches_and_aggregates() {
     assert_eq!(pc.total, 137);
     assert_eq!(pc.listings.len(), 5);
     assert_eq!(pc.median_price().unwrap().amount, 3.0);
-    assert_eq!(pc.cheapest(5).len(), 4); // the null-price listing is excluded
+    assert_eq!(pc.cheapest(5).len(), 4);
 
-    // Exactly one search POST then one fetch GET.
     let reqs = requests.lock().unwrap();
     assert_eq!(reqs.len(), 2);
 
     assert_eq!(reqs[0].method, Method::Post);
     assert!(reqs[0].url.ends_with("/api/trade2/search/Mirage"));
-    // Rares search by category, not the exact base type.
     let body = reqs[0].body.as_ref().unwrap();
     assert!(body.contains("accessory.ring"));
     assert!(!body.contains("Topaz Ring"));
@@ -127,7 +120,6 @@ async fn price_check_searches_then_fetches_and_aggregates() {
     assert_eq!(reqs[1].method, Method::Get);
     assert!(reqs[1].url.contains("/api/trade2/fetch/"));
     assert!(reqs[1].url.contains("query=kA2eGYh9"));
-    // All five result ids batched into the one fetch.
     assert!(reqs[1]
         .url
         .contains("a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00"));
@@ -136,7 +128,6 @@ async fn price_check_searches_then_fetches_and_aggregates() {
 #[tokio::test]
 async fn fetch_batches_ids_in_groups_of_ten() {
     let empty = r#"{"result":[]}"#;
-    // 23 ids → 3 batches (10 + 10 + 3) → 3 GET requests.
     let (transport, requests) = MockTransport::new(vec![ok(empty), ok(empty), ok(empty)]);
     let (stats, items) = defs();
     let client = TradeClient::new(
@@ -154,7 +145,6 @@ async fn fetch_batches_ids_in_groups_of_ten() {
     let reqs = requests.lock().unwrap();
     assert_eq!(reqs.len(), 3);
     assert!(reqs.iter().all(|r| r.method == Method::Get));
-    // First batch carries ten ids, last carries three.
     assert_eq!(reqs[0].url.matches("id").count(), 10);
     assert_eq!(reqs[2].url.matches("id").count(), 3);
 }
@@ -163,7 +153,6 @@ async fn fetch_batches_ids_in_groups_of_ten() {
 async fn realm_is_appended_to_search_and_fetch_urls() {
     let (transport, requests) = MockTransport::new(vec![ok(r#"{"id":"q","result":[],"total":0}"#)]);
     let (stats, items) = defs();
-    // A real POE2 league id with spaces must be percent-encoded in the URL.
     let mut config = ClientConfig::new("Runes of Aldur");
     config.realm = Some("poe2".to_string());
     let client = TradeClient::new(
@@ -181,8 +170,6 @@ async fn realm_is_appended_to_search_and_fetch_urls() {
         .unwrap();
 
     let reqs = requests.lock().unwrap();
-    // No results → no fetch; just the search, with the league encoded and the
-    // realm query param appended.
     assert_eq!(reqs.len(), 1);
     assert!(reqs[0]
         .url
@@ -193,7 +180,6 @@ async fn realm_is_appended_to_search_and_fetch_urls() {
 async fn retries_through_a_429_then_succeeds() {
     let throttled = HttpResponse {
         status: 429,
-        // No penalty/Retry-After, so the retry fires immediately.
         headers: rate_headers(),
         body: r#"{"error":{"code":3,"message":"Rate limit exceeded"}}"#.to_string(),
     };
@@ -217,7 +203,7 @@ async fn retries_through_a_429_then_succeeds() {
     );
     let resp = client.search(&req).await.unwrap();
     assert_eq!(resp.id, "q2");
-    assert_eq!(requests.lock().unwrap().len(), 2); // one 429, one success
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -261,9 +247,6 @@ fn client_with(transport: MockTransport) -> TradeClient<MockTransport> {
     )
 }
 
-/// A malformed paste (the whole `POESESSID=…` cookie, here) must be dropped, not
-/// stored — otherwise it bricks the Cookie header and every request with it. A
-/// well-formed value sticks and rides along as a `Cookie` on outgoing requests.
 #[tokio::test]
 async fn malformed_poesessid_is_dropped_well_formed_is_sent() {
     let (transport, requests) = MockTransport::new(vec![ok(r#"{"id":"q","result":[],"total":0}"#)]);
@@ -336,9 +319,6 @@ async fn validate_session_without_a_session_does_not_call_the_network() {
 
 #[tokio::test]
 async fn scout_price_resolves_divine_rate_then_prices_currency() {
-    // poe2scout flow: GET /poe2/Leagues (for the Divine rate), then
-    // GET .../Currencies/{slug}. The mock client's league is "Mirage", which
-    // isn't in the fixture, so the rate comes from the IsCurrent league (327).
     let leagues = include_str!("fixtures/api/scout_leagues.json");
     let currency = include_str!("fixtures/api/scout_currency.json");
     let (transport, requests) = MockTransport::new(vec![ok(leagues), ok(currency)]);
@@ -352,10 +332,8 @@ async fn scout_price_resolves_divine_rate_then_prices_currency() {
 
     assert_eq!(price.api_id, "preserved-cranium");
     assert_eq!(price.exalted, 654.0);
-    // 654 ex / 327 (ex per div) = 2 div.
     assert_eq!(price.divine, Some(2.0));
     assert_eq!(price.divine_price, Some(327.0));
-    // Recent low/high span the price logs (nulls skipped).
     assert_eq!(price.low, Some(640.0));
     assert_eq!(price.high, Some(668.0));
 
@@ -368,8 +346,6 @@ async fn scout_price_resolves_divine_rate_then_prices_currency() {
 
 #[tokio::test]
 async fn scout_price_caches_within_ttl() {
-    // Two lookups of the same currency must hit the network once: the leagues +
-    // currency pair on the first call, nothing on the second (served from cache).
     let leagues = include_str!("fixtures/api/scout_leagues.json");
     let currency = include_str!("fixtures/api/scout_currency.json");
     let (transport, requests) = MockTransport::new(vec![ok(leagues), ok(currency)]);
@@ -384,15 +360,11 @@ async fn scout_price_caches_within_ttl() {
         .await
         .unwrap();
     assert_eq!(first, second);
-    // No further requests beyond the initial leagues + currency fetch.
     assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
 async fn scout_price_returns_none_when_not_indexed() {
-    // poe2scout doesn't index everything (runes, verisium, reliquary keys, …):
-    // the id lookup 400/404s → Ok(None), so the UI falls back to the official
-    // exchange. (A 400 is what an unknown ApiId actually returns.)
     let unknown = HttpResponse {
         status: 400,
         headers: rate_headers(),
@@ -409,6 +381,5 @@ async fn scout_price_returns_none_when_not_indexed() {
         .await
         .unwrap();
     assert!(result.is_none());
-    // Exactly the leagues fetch + one id lookup — no wasteful category sweep.
     assert_eq!(requests.lock().unwrap().len(), 2);
 }

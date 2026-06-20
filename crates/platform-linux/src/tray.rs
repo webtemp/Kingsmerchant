@@ -1,16 +1,6 @@
-//! KDE/freedesktop system-tray icon via the StatusNotifierItem protocol,
-//! using `ksni` (NOT the legacy XEmbed tray).
-//!
-//! The tray runs on its own background thread (ksni's blocking service). It
-//! talks to the app two ways:
-//!  - **out**: menu clicks (Open Settings / Quit) are pushed as [`TrayAction`]s
-//!    down an mpsc channel the UI drains every frame.
-//!  - **in**: the UI pushes the current [`TrayState`] (Listening / Rate-limited
-//!    / API error) back via [`TrayHandle::set_state`], which updates the
-//!    tooltip shown on hover.
-//!
-//! Keeping the tray here (alongside clipboard/window/input) keeps the D-Bus
-//! dependency out of the `ui` crate, matching the platform-integration split.
+//! KDE/freedesktop system-tray icon via StatusNotifierItem (`ksni`), on its own
+//! background thread. Menu clicks come out as [`TrayAction`]s; the UI pushes
+//! [`TrayState`] in via [`TrayHandle::set_state`] to update the tooltip.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -20,25 +10,21 @@ use ksni::{menu::StandardItem, Category, Icon, MenuItem, ToolTip};
 /// A menu action the user triggered from the tray.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
-    /// "Open Settings" — show the settings surface.
     OpenSettings,
-    /// "Quit" — exit the app.
     Quit,
 }
 
 /// What the tooltip should report (Listening / Rate limited / API error).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayState {
-    /// Idle, watching for the price-check hotkey.
     Listening,
-    /// Throttled by the trade API's rate limiter; `secs` until the next request.
+    /// `secs` until the next allowed request.
     RateLimited(u64),
-    /// The last price check failed; carries a short reason for the tooltip.
+    /// Short reason for the tooltip.
     Error(String),
 }
 
 impl TrayState {
-    /// One-line description for the tooltip body.
     fn description(&self) -> String {
         match self {
             TrayState::Listening => "Listening — Ctrl+C on an item in POE2".to_string(),
@@ -48,8 +34,6 @@ impl TrayState {
     }
 }
 
-/// The ksni tray object. Holds the current state (for the tooltip) and the
-/// sender menu clicks are pushed down.
 struct PoeTray {
     state: TrayState,
     actions: Sender<TrayAction>,
@@ -68,9 +52,6 @@ impl ksni::Tray for PoeTray {
         Category::ApplicationStatus
     }
 
-    /// Freedesktop icon name first (resolves once the .desktop icon is
-    /// installed); the embedded pixmap is the fallback so the tray is visible
-    /// even before install.
     fn icon_name(&self) -> String {
         "kingsmerchant".into()
     }
@@ -110,7 +91,7 @@ impl ksni::Tray for PoeTray {
         ]
     }
 
-    /// Left-click also opens settings (the most useful default action).
+    /// Left-click also opens settings.
     fn activate(&mut self, _x: i32, _y: i32) {
         let _ = self.actions.send(TrayAction::OpenSettings);
     }
@@ -119,14 +100,12 @@ impl ksni::Tray for PoeTray {
 /// A handle for pushing state updates to the running tray (tooltip text).
 pub struct TrayHandle {
     handle: Handle<PoeTray>,
-    /// Last state we pushed, so `set_state` is a no-op (no D-Bus traffic) when
-    /// the state hasn't actually changed.
+    /// Last pushed state, so `set_state` is a no-op when unchanged.
     last: TrayState,
 }
 
 impl TrayHandle {
-    /// Update the tooltip to reflect the current app state. Cheap and
-    /// idempotent — skips the D-Bus round-trip when the state is unchanged.
+    /// Update the tooltip; skips the D-Bus round-trip when the state is unchanged.
     pub fn set_state(&mut self, state: TrayState) {
         if self.last == state {
             return;
@@ -136,11 +115,8 @@ impl TrayHandle {
     }
 }
 
-/// Spawn the tray on its own background thread. Returns a handle for tooltip
-/// updates and a receiver of menu actions (Open Settings / Quit).
-///
-/// Errors if the StatusNotifierItem service can't be reached (no SNI host /
-/// D-Bus) — the caller logs and carries on without a tray.
+/// Spawn the tray on its own background thread, returning a tooltip handle and a
+/// receiver of menu actions. Errors if StatusNotifierItem can't be reached.
 pub fn spawn_tray() -> anyhow::Result<(TrayHandle, Receiver<TrayAction>)> {
     let (tx, rx) = channel();
     let tray = PoeTray {
@@ -159,10 +135,8 @@ pub fn spawn_tray() -> anyhow::Result<(TrayHandle, Receiver<TrayAction>)> {
     ))
 }
 
-/// The app icon as ARGB32 pixmaps, so the tray is visible without relying on an
-/// installed theme icon. Pre-rasterised from `assets/kingsmerchant.svg` (the Chaos-orb
-/// nebula) at the sizes a KDE tray is likely to request; the host picks the
-/// closest. Regenerate with `assets/tray/regen.sh`.
+/// The app icon as ARGB32 pixmaps, pre-rasterised from `assets/kingsmerchant.svg`.
+/// Regenerate with `assets/tray/regen.sh`.
 fn app_icon() -> Vec<Icon> {
     macro_rules! pixmap {
         ($size:expr) => {

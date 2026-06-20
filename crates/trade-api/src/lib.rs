@@ -1,20 +1,4 @@
-//! POE2 trade API client.
-//!
-//! Takes a parsed [`parser::Item`] and prices it against the official trade
-//! API: build a search query, `POST .../trade2/search/{league}` for a query id
-//! + result hashes, then `GET .../trade2/fetch/{ids}` in batches of ten.
-//!
-//! Three concerns each live in their own module and are unit-tested in
-//! isolation against recorded fixtures — no test touches the network:
-//!
-//! * [`definitions`] + [`stat_text`] — map the parser's raw stat text (e.g.
-//!   `+118(100-119) to maximum Life`) to GGG stat ids + filter values, using
-//!   the `trade2/data/stats` / `data/items` snapshots, and split magic bases.
-//! * [`query`] — assemble a [`SearchRequest`] from an [`Item`](parser::Item).
-//! * [`rate_limit`] — track the `X-Rate-Limit-*` headers into per-window
-//!   buckets and report how long to wait before the next request is safe.
-//!
-//! [`TradeClient`] wires them together over a mockable [`HttpTransport`].
+//! POE2 trade API client: prices a parsed [`parser::Item`] against the official trade API.
 
 pub mod client;
 pub mod definitions;

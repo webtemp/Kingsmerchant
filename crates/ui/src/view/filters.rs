@@ -1,5 +1,4 @@
-//! The detailed-mode filter panel (price range + per-stat rows) and the
-//! poeprices.info ML estimate badge.
+//! The detailed-mode filter panel and the poeprices.info ML estimate badge.
 
 use std::time::Instant;
 
@@ -13,7 +12,6 @@ use crate::QuickModeApp;
 
 use super::theme::affix_blue;
 
-/// Resistance-mode options for the detailed-filter dropdown, with hover help.
 const RESISTANCE_MODES: &[(ResistanceMode, &str, &str)] = &[
     (
         ResistanceMode::Fungible,
@@ -33,10 +31,8 @@ const RESISTANCE_MODES: &[(ResistanceMode, &str, &str)] = &[
     ),
 ];
 
-/// Width of each min/max filter field.
 const FILTER_FIELD_W: f32 = 60.0;
 
-/// Currencies offered in the price-range dropdown (id, label). Empty id = any.
 const PRICE_CURRENCIES: &[(&str, &str)] = &[
     ("", "any"),
     ("exalted", "exalted"),
@@ -44,7 +40,6 @@ const PRICE_CURRENCIES: &[(&str, &str)] = &[
     ("chaos", "chaos"),
 ];
 
-/// Rarity options for the detailed-filter dropdown (`type_filters.rarity` id).
 /// `any` emits no rarity filter (search every rarity), matching the trade site.
 const RARITIES: &[(&str, &str)] = &[
     ("any", "Any"),
@@ -55,18 +50,14 @@ const RARITIES: &[(&str, &str)] = &[
 ];
 
 impl QuickModeApp {
-    /// The detailed-mode filter panel: a price range plus a toggleable row per
-    /// mapped stat. Returns `true` when the user asked to re-run the search.
+    /// The detailed-mode filter panel. Returns `true` to re-run the search.
     pub(super) fn filter_panel(&mut self, ui: &mut egui::Ui) -> bool {
         let mut requery = false;
         let mut changed = false;
         egui::CollapsingHeader::new(RichText::new(format!("{} Filters", ph::FUNNEL)).strong())
             .default_open(true)
             .show(ui, |ui| {
-                // Split the filters across two tabs so the panel doesn't get
-                // crowded: "General" holds the bulk (price, defences, modifiers,
-                // …) and "Miscellaneous" holds the boolean attribute toggles. The
-                // Misc tab shows its active-filter count alongside the label.
+                // Two tabs: General holds the bulk, Misc the boolean toggles (with count).
                 let active_misc = self
                     .misc
                     .iter()
@@ -83,13 +74,10 @@ impl QuickModeApp {
                 });
                 ui.separator();
 
-                // Pad the active tab up to the tallest tab seen for this item so
-                // switching General/Miscellaneous keeps a constant height — the
-                // auto-sized window otherwise jumps as the body grows/shrinks.
+                // Pad the active tab to the tallest seen so switching keeps a constant height.
                 let body = ui.scope(|ui| {
                     ui.set_min_height(self.filter_body_h);
                     if self.filter_tab == FilterTab::General {
-                        // Price range, right-aligned.
                         hover_row(ui, |ui| {
                             ui.label("Price");
                             ui.with_layout(
@@ -127,11 +115,8 @@ impl QuickModeApp {
                             );
                         });
 
-                        // Item level (type_filters.ilvl) — default-on for Normal bases
-                        // only. And item quality (type_filters.quality).
                         changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
                         changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
-                        // Waystone tier (map_filters.map_tier) — only for waystones.
                         let is_waystone = self
                             .item
                             .as_ref()
@@ -141,7 +126,6 @@ impl QuickModeApp {
                                 min_filter_row(ui, "Waystone tier ≥", &mut self.waystone_filter);
                         }
 
-                        // Rarity (type_filters.rarity), defaulting to the item's own.
                         hover_row(ui, |ui| {
                             ui.label("Rarity");
                             ui.with_layout(
@@ -164,8 +148,7 @@ impl QuickModeApp {
                             );
                         });
 
-                        // Defences / equipment properties (armour / evasion / ES / …),
-                        // built from the item's stats block, not its affix mods.
+                        // Defences, built from the item's stats block, not its affix mods.
                         if !self.equipment.is_empty() {
                             ui.add_space(6.0);
                             ui.label(RichText::new("Defences").strong());
@@ -183,8 +166,7 @@ impl QuickModeApp {
                             ui.label(RichText::new("Modifiers").strong());
                         }
 
-                        // Resistance-search mode — only meaningful when the item carries
-                        // a Fire/Cold/Lightning roll, so hide it otherwise.
+                        // Resistance-search mode — only when the item carries an ele roll.
                         if self.filters.iter().any(|r| is_elemental_resistance(&r.id)) {
                             hover_row(ui, |ui| {
                                 ui.label("Resistances");
@@ -235,9 +217,7 @@ impl QuickModeApp {
                                 });
                         }
 
-                        // Mods with no GGG trade filter (e.g. a tablet's "Map contains N
-                        // additional Rare Chests" — GGG has no searchable variant).
-                        // Shown read-only so they don't silently vanish from the panel.
+                        // Mods with no trade filter, shown read-only so they don't vanish.
                         if !self.unfilterable_mods.is_empty() {
                             ui.add_space(6.0);
                             ui.label(
@@ -253,19 +233,14 @@ impl QuickModeApp {
                             }
                         }
                     } else {
-                        // Miscellaneous tab: one row per boolean attribute, each with a
-                        // three-state Any / Yes / No segmented control. The row under
-                        // the cursor gets a faint hover wash so the pointer target is
-                        // obvious; the selected Yes/No segment carries its own
-                        // (stronger) built-in highlight.
+                        // Misc tab: one row per boolean attribute, three-state Any/Yes/No.
                         for m in &mut self.misc {
                             hover_row(ui, |ui| {
                                 ui.label(m.label);
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        // Right-to-left: add in reverse so the
-                                        // segments read Any | Yes | No left→right.
+                                        // RTL: add in reverse to read Any | Yes | No.
                                         changed |= ui
                                             .selectable_value(
                                                 &mut m.state,
@@ -299,27 +274,21 @@ impl QuickModeApp {
                     {
                         requery = true;
                     }
-                    // External links, pinned to the right edge of the window. In
-                    // this right-to-left layout the first added sits rightmost, so
-                    // the trade-site link leads and Craft of Exile follows to its left.
+                    // External links, pinned right (RTL: trade-site first, then CoE).
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .button(format!("{} Open on trade site", ph::MAGNIFYING_GLASS))
                             .on_hover_text("Opens your browser with this exact search")
                             .clicked()
                         {
-                            // Built only on click — encoding the full query is too
-                            // costly to rebuild every frame.
+                            // Built only on click — encoding the full query is costly.
                             let url = self.trade_url();
                             match platform_linux::open_url(&url) {
-                                // Hide the popup so the browser comes forward — we're
-                                // an always-on-top overlay that would cover it.
+                                // Hide the popup so the browser comes forward over us.
                                 Ok(()) => self.close_requested = true,
                                 Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
                             }
                         }
-                        // Craft of Exile crafting simulator, pre-loaded with the
-                        // opened item (only meaningful when one is parsed).
                         if self.item.is_some()
                             && ui
                                 .button(format!("{} Craft of Exile", ph::HAMMER))
@@ -338,8 +307,7 @@ impl QuickModeApp {
                 });
             });
 
-        // Any edit (re)starts the debounce timer; the caller fires the re-query
-        // once it elapses.
+        // Any edit (re)starts the debounce timer; the caller fires the re-query.
         if changed {
             self.filter_dirty = true;
             self.filter_changed_at = Instant::now();
@@ -347,8 +315,7 @@ impl QuickModeApp {
         requery
     }
 
-    /// The poeprices.info ML estimate badge: a spinner while it loads, then the
-    /// predicted range + confidence, or nothing if poeprices declined.
+    /// The poeprices.info ML estimate badge.
     pub(super) fn estimate_badge(&self, ui: &mut egui::Ui) {
         if self.estimate_loading {
             ui.horizontal(|ui| {
@@ -383,12 +350,10 @@ impl QuickModeApp {
     }
 }
 
-/// A modifier-row label, width-capped so it truncates with an ellipsis instead
-/// of eating the row and shoving the right-pinned min/max fields out of their
-/// column (long unique mods overflowed and overlapped the fields). The cap
-/// reserves room for the two fields; the full text is available on hover.
+/// A modifier-row label, width-capped to truncate instead of shoving the min/max
+/// fields out of column; full text on hover.
 fn stat_filter_label(ui: &mut egui::Ui, text: &str) {
-    // Two fields plus the gaps around them — keep in sync with `min_max_fields`.
+    // Two fields plus gaps — keep in sync with `min_max_fields`.
     let reserved = 2.0 * FILTER_FIELD_W + 3.0 * ui.spacing().item_spacing.x;
     let label_w = (ui.available_width() - reserved).max(40.0);
     ui.allocate_ui_with_layout(
@@ -401,16 +366,13 @@ fn stat_filter_label(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// Right-aligned min + max fields (they hug the right edge of the row so the
-/// columns line up and the row fills the width). Returns whether either changed.
+/// Right-aligned min + max fields. Returns whether either changed.
 fn min_max_fields(ui: &mut egui::Ui, min: &mut String, max: &mut String) -> bool {
     let mut changed = false;
-    // Fixed size (not just `desired_width`, which egui shrinks under pressure):
-    // on rows with long, truncated labels the leftmost field used to get
-    // squeezed narrower than the right one. `add_sized` pins both to one width.
+    // Fixed size so a long label can't squeeze the leftmost field narrower.
     let size = egui::vec2(FILTER_FIELD_W, ui.spacing().interact_size.y);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        // In a right-to-left layout the first item is rightmost, so max first.
+        // RTL: first item is rightmost, so max first.
         changed |= ui
             .add_sized(size, egui::TextEdit::singleline(max).hint_text("max"))
             .changed();
@@ -421,11 +383,9 @@ fn min_max_fields(ui: &mut egui::Ui, min: &mut String, max: &mut String) -> bool
     changed
 }
 
-/// Lay out one filter row (a horizontal strip) via `add_row`, painting a faint
-/// hover wash behind it while the cursor is over the row so the pointer target
-/// is obvious. Used by every interactive filter row for a consistent highlight.
+/// Lay out one filter row, painting a faint hover wash behind it.
 fn hover_row<R>(ui: &mut egui::Ui, add_row: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    // Reserve a slot so the wash paints *behind* the row content, not over it.
+    // Reserve a slot so the wash paints behind the row content, not over it.
     let bg = ui.painter().add(egui::Shape::Noop);
     let inner = ui.horizontal(add_row);
     let rect = inner.response.rect;
@@ -439,8 +399,7 @@ fn hover_row<R>(ui: &mut egui::Ui, add_row: impl FnOnce(&mut egui::Ui) -> R) -> 
     inner.inner
 }
 
-/// A checkbox + label for a single-value (min-only) filter, with the min field
-/// right-aligned to fill the row width. Returns whether it changed.
+/// A checkbox + label for a single-value (min-only) filter. Returns whether it changed.
 fn min_filter_row(ui: &mut egui::Ui, label: &str, filter: &mut MinFilter) -> bool {
     let mut changed = false;
     hover_row(ui, |ui| {
@@ -474,7 +433,6 @@ fn implicit_pill(ui: &mut egui::Ui) {
         });
 }
 
-/// Label for the price-currency dropdown's current id.
 fn currency_label(id: &str) -> &str {
     PRICE_CURRENCIES
         .iter()
@@ -482,7 +440,6 @@ fn currency_label(id: &str) -> &str {
         .map_or("any", |(_, label)| *label)
 }
 
-/// Display label for a resistance-search mode.
 fn resistance_label(mode: ResistanceMode) -> &'static str {
     RESISTANCE_MODES
         .iter()
@@ -490,7 +447,6 @@ fn resistance_label(mode: ResistanceMode) -> &'static str {
         .map_or("Fungible", |(_, label, _)| *label)
 }
 
-/// Label for the rarity dropdown's current id (empty id = the item's own rarity).
 fn rarity_label(id: &str) -> &str {
     RARITIES
         .iter()

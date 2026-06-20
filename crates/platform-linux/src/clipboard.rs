@@ -1,25 +1,12 @@
-//! Clipboard reads for POE2 interop.
-//!
-//! POE2 runs under Proton, so it's an X11 client on XWayland; its Ctrl+C writes
-//! the X11 CLIPBOARD selection. Reading that directly (X11→X11) is reliable and
-//! instant, and avoids KWin's fragile X11→Wayland selection bridge.
-//!
-//! X11 CLIPBOARD reads aren't focus-gated, so this works without window focus.
-//! We only ever read — POE2 keeps ownership. That's load-bearing: if anything
-//! grabs selection ownership, POE2's next copy can't reliably reclaim it and
-//! reads go stale. So: read only, never write/clear.
-//!
-//! Shells out to `xclip`; `DISPLAY` is inherited.
+//! Clipboard reads for POE2 interop. Reads POE2's X11 CLIPBOARD directly via
+//! `xclip`; read-only so POE2 keeps selection ownership.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
 
-/// Read the X11 CLIPBOARD selection as UTF-8 text.
-///
-/// Returns `Ok(None)` when the clipboard is empty or holds no text target
-/// (`xclip` exits non-zero / prints nothing) — normal states, not errors.
+/// Read the X11 CLIPBOARD selection as UTF-8 text. `Ok(None)` when empty/no text.
 pub fn read_clipboard_text() -> anyhow::Result<Option<String>> {
     let output = Command::new("xclip")
         .args(["-selection", "clipboard", "-out", "-target", "UTF8_STRING"])
@@ -27,8 +14,6 @@ pub fn read_clipboard_text() -> anyhow::Result<Option<String>> {
         .context("failed to run `xclip` (is it installed and is DISPLAY set?)")?;
 
     if !output.status.success() {
-        // xclip exits non-zero when the selection is empty or the UTF8_STRING
-        // target isn't offered — treat as "nothing to read".
         return Ok(None);
     }
 
@@ -39,18 +24,8 @@ pub fn read_clipboard_text() -> anyhow::Result<Option<String>> {
     Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
 }
 
-/// Read clipboard text for pasting *into our own* text fields (e.g. the
-/// POESESSID setting).
-///
-/// This is the opposite situation from [`read_clipboard_text`]: there we read
-/// POE2's X11 CLIPBOARD on purpose; here the user is pasting something they
-/// copied from an ordinary desktop app — typically a Wayland-native browser —
-/// which lands on the *Wayland* clipboard. Reading only X11 would hand back the
-/// last POE2 item still sitting in that selection instead of what they copied.
-///
-/// So try the Wayland clipboard first via `wl-paste` (part of `wl-clipboard`),
-/// then fall back to the X11 clipboard so in-app copies and X11 browsers still
-/// work even without `wl-clipboard` installed.
+/// Read clipboard text for pasting into our own fields: Wayland clipboard first
+/// (`wl-paste`), falling back to X11.
 pub fn read_paste_text() -> anyhow::Result<Option<String>> {
     if let Some(text) = wl_paste_text() {
         if !text.is_empty() {
@@ -60,9 +35,7 @@ pub fn read_paste_text() -> anyhow::Result<Option<String>> {
     read_clipboard_text()
 }
 
-/// Read the Wayland clipboard via `wl-paste`. `None` if `wl-clipboard` isn't
-/// installed, the clipboard is empty, or it holds no text — all fall-through
-/// cases that defer to the X11 read.
+/// Read the Wayland clipboard via `wl-paste`; `None` falls through to the X11 read.
 fn wl_paste_text() -> Option<String> {
     let output = Command::new("wl-paste")
         .args(["--no-newline", "--type", "text/plain"])
@@ -74,8 +47,7 @@ fn wl_paste_text() -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Open a URL in the user's default browser via `xdg-open`. Fire-and-forget:
-/// `xdg-open` detaches the browser and returns immediately.
+/// Open a URL in the user's default browser via `xdg-open`.
 pub fn open_url(url: &str) -> anyhow::Result<()> {
     let child = Command::new("xdg-open")
         .arg(url)
@@ -83,8 +55,7 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
         .stderr(Stdio::null())
         .spawn()
         .context("failed to run `xdg-open` (is xdg-utils installed?)")?;
-    // Reap the short-lived `xdg-open` off-thread so it doesn't linger as a
-    // zombie in this long-running process, without blocking the UI.
+    // Reap off-thread so the short-lived xdg-open doesn't linger as a zombie.
     std::thread::spawn(move || {
         let mut child = child;
         let _ = child.wait();
@@ -93,14 +64,7 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
 }
 
 /// Write UTF-8 text to the X11 CLIPBOARD selection (for the chat-paste buttons).
-///
-/// Breaks the "read only" rule above, deliberately: POE2 reads the X11 clipboard
-/// so we must write there (egui's clipboard goes to Wayland, which KWin's flaky
-/// bridge usually fails to deliver). Bounded — a one-shot action right before
-/// pasting, and POE2 reclaims ownership on its next copy.
-///
-/// `xclip -in` forks a helper to serve the selection and returns, so this call
-/// doesn't block.
+/// POE2 reads X11 so we must write there; one-shot, POE2 reclaims on its next copy.
 pub fn write_clipboard_text(text: &str) -> anyhow::Result<()> {
     let mut child = Command::new("xclip")
         .args(["-selection", "clipboard", "-in"])
@@ -116,8 +80,7 @@ pub fn write_clipboard_text(text: &str) -> anyhow::Result<()> {
         .write_all(text.as_bytes())
         .context("failed to write to xclip stdin")?;
     let status = child.wait().context("xclip did not exit cleanly")?;
-    // A non-zero exit (e.g. DISPLAY unset) means the selection wasn't taken —
-    // fail loudly, else the caller pastes whatever stale text was there before.
+    // Non-zero exit means the selection wasn't taken; fail loudly to avoid stale paste.
     anyhow::ensure!(
         status.success(),
         "xclip exited with {status} while writing the clipboard"

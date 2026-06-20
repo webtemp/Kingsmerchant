@@ -1,5 +1,4 @@
-//! The shared results table (item listings and exchange offers) and the
-//! per-row chat-action buttons.
+//! The shared results table and its per-row chat-action buttons.
 
 use egui::{Color32, RichText};
 use egui_phosphor::regular as ph;
@@ -12,7 +11,6 @@ use super::actions::send_chat_to_poe2;
 use super::item_card::{item_preview, show_item_preview_at_cursor, ItemPreview};
 use super::theme::{accent_gold, online_dot as online_dot_color};
 
-/// Height of a results-table row.
 const ROW_H: f32 = 26.0;
 
 /// One row of the results table (an item listing or an exchange offer).
@@ -23,11 +21,9 @@ pub(super) struct RowData {
     pub(super) seller_hover: Option<String>,
     pub(super) whisper: Option<String>,
     pub(super) character: Option<String>,
-    /// Instant Buyout teleport token (authenticated fetch only). When present the
-    /// Hideout button becomes a one-click teleport into the seller's hideout.
+    /// Instant Buyout teleport token; turns Hideout into a one-click teleport.
     pub(super) hideout_token: Option<String>,
-    /// The actual item for this listing (icon + mods), for the hover preview.
-    /// `None` for currency-exchange offers.
+    /// The listing's item for the hover preview; `None` for exchange offers.
     pub(super) item: Option<ItemPreview>,
 }
 
@@ -82,9 +78,8 @@ pub(super) fn show_results(
     results_table(ui, &rows, copied, teleport);
 }
 
-/// The shared results table (item listings and exchange offers): striped,
-/// full-width columns — price (auto) · seller (fills, truncates) · actions
-/// (auto). `vscroll(false)` so it sizes to content in the auto-height popup.
+/// The shared results table: striped price · seller · actions columns,
+/// `vscroll(false)` so it sizes to content.
 pub(super) fn results_table(
     ui: &mut egui::Ui,
     rows: &[RowData],
@@ -95,8 +90,7 @@ pub(super) fn results_table(
     if rows.is_empty() {
         return;
     }
-    // Hovering anywhere on a row shows the item preview, anchored above-left of
-    // the cursor so it doesn't cover the action buttons.
+    // Hovering a row shows the item preview, anchored above the cursor.
     let ctx = ui.ctx().clone();
     TableBuilder::new(ui)
         .striped(true)
@@ -115,8 +109,7 @@ pub(super) fn results_table(
                     row.col(|ui| {
                         online_dot(ui, r.online);
                         let lbl = ui.add(egui::Label::new(&r.seller).truncate());
-                        // Seller hover (listed-date / stock) only when there's no
-                        // item preview competing with it (exchange offers).
+                        // Seller hover only when no item preview competes with it.
                         if r.item.is_none() {
                             if let Some(h) = &r.seller_hover {
                                 lbl.on_hover_text(h);
@@ -135,9 +128,7 @@ pub(super) fn results_table(
                         );
                     });
                     if let Some(item) = &r.item {
-                        // contains_pointer() triggers anywhere on the row;
-                        // hovered() can be false when a child widget is the
-                        // hover target.
+                        // contains_pointer() triggers anywhere on the row, unlike hovered().
                         if row.response().contains_pointer() {
                             show_item_preview_at_cursor(&ctx, item);
                         }
@@ -147,8 +138,7 @@ pub(super) fn results_table(
         });
 }
 
-/// A painted online-status dot (the glyph renders as tofu, so paint it
-/// directly). Green = online, grey = offline.
+/// A painted online-status dot: green online, grey offline.
 fn online_dot(ui: &mut egui::Ui, online: bool) {
     let color = if online {
         online_dot_color()
@@ -159,8 +149,7 @@ fn online_dot(ui: &mut egui::Ui, online: bool) {
     ui.painter().circle_filled(rect.center(), 4.0, color);
 }
 
-/// The four chat-action buttons (Whisper / Invite / Hideout / Trade) shared by
-/// item listings and exchange offers — Phosphor icons with hover labels.
+/// The four chat-action buttons (Whisper / Invite / Hideout / Trade).
 fn action_buttons(
     ui: &mut egui::Ui,
     whisper: Option<&str>,
@@ -190,9 +179,7 @@ fn action_buttons(
         character.map(|c| format!("/invite {c}")),
         copied,
     );
-    // Hideout: an Instant Buyout listing carries a teleport token → one-click
-    // travel into the seller's hideout. Otherwise fall back to the
-    // `/hideout <char>` chat command.
+    // A teleport token gives one-click travel; else fall back to `/hideout <char>`.
     if let Some(token) = hideout_token {
         if ui
             .button(ph::HOUSE)
@@ -220,9 +207,7 @@ fn action_buttons(
     );
 }
 
-/// An icon button that sends a chat `command` into POE2. `name` is the hover
-/// label. Disabled (greyed) when we couldn't build a command (e.g. the listing
-/// has no character name).
+/// An icon button that sends a chat `command` into POE2; disabled when `command` is None.
 fn chat_button(
     ui: &mut egui::Ui,
     icon: &str,

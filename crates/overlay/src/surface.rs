@@ -1,7 +1,4 @@
-//! The EGL/egui/glutin rendering layer: one [`WinSurface`] per `wlr-layer-shell`
-//! overlay surface, with its own GL context and `egui::Context`, plus the
-//! per-frame [`Shared`] borrow and the rendering constants. [`App`] owns the two
-//! surfaces and routes events to them.
+//! The EGL/egui/glutin rendering layer: one [`WinSurface`] per overlay surface.
 
 use std::num::NonZeroU32;
 use std::ptr::NonNull;
@@ -31,25 +28,18 @@ use wayland_client::{protocol::wl_output, Connection, Proxy, QueueHandle};
 
 use crate::App;
 
-/// Initial popup width before the content measurement grows it to
-/// [`QuickModeApp::surface_width`]; the settings surface is a fixed width.
+/// Initial popup width before content measurement grows it; settings is fixed.
 pub(crate) const POPUP_INIT_WIDTH: u32 = 470;
 pub(crate) const SETTINGS_WIDTH: u32 = 540;
-/// Starting height before the first content measurement.
 const INITIAL_HEIGHT: u32 = 200;
-/// Vertical space egui lays the content out in while we measure it. The surface
-/// is then shrunk to the measured height (clamped to `MAX_HEIGHT`).
+/// Vertical space egui lays content out in while measuring; then shrunk to fit.
 const LAYOUT_HEIGHT: f32 = 1600.0;
 const MIN_HEIGHT: u32 = 80;
 const MAX_HEIGHT: u32 = 1300;
-/// Don't shrink for height drops smaller than this — a deadband so measurement
-/// jitter doesn't thrash `set_size`.
+/// Deadband so measurement jitter doesn't thrash `set_size`.
 const HEIGHT_DEADBAND: u32 = 8;
-/// Corner radius of the popup card.
 const CORNER_RADIUS: f32 = 14.0;
 
-// ---- perf instrumentation (gated by the Settings "Performance metrics" toggle,
-// off by default — see `config.perf_metrics`) -------------------------------
 struct Perf {
     frames: u32,
     shown_frames: u32,
@@ -58,11 +48,9 @@ struct Perf {
     since: Instant,
 }
 
-/// Whether to emit the per-second `perf` log. Synced each tick from
-/// `config.perf_metrics` via [`set_perf_metrics_enabled`]; default off.
+/// Whether to emit the per-second `perf` log; default off.
 static PERF_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Toggle the overlay performance log on/off (driven by the Settings toggle).
 pub(crate) fn set_perf_metrics_enabled(on: bool) {
     PERF_ENABLED.store(on, Ordering::Relaxed);
 }
@@ -122,9 +110,8 @@ fn perf_note_frame(shown: bool, ms: f32) {
     }
 }
 
-/// Seconds since the process started — fed to egui as `RawInput::time` so its
-/// click-interval timing (double/triple-click) is measured against a real
-/// monotonic clock rather than an assumed per-frame delta.
+/// Seconds since process start, fed to egui as `RawInput::time` for click
+/// interval timing.
 fn elapsed_seconds() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
@@ -132,10 +119,7 @@ fn elapsed_seconds() -> f64 {
 
 /// How many of a surface's first visible frames pre-warm the font atlas.
 const WARMUP_FRAMES: u8 = 3;
-/// Characters laid out invisibly during warm-up to bake them into the font atlas
-/// up front: printable Latin-1 Supplement + Latin Extended-A. Covers the
-/// accented letters in POE2 item/player names (ö, é, ü, …) that otherwise
-/// rendered as boxes on first appearance.
+/// Accented-Latin range baked into the font atlas up front to avoid tofu boxes.
 const WARMUP_TEXT: &str = "\
 \u{00A1}\u{00A2}\u{00A3}\u{00A4}\u{00A5}\u{00A6}\u{00A7}\u{00A8}\u{00A9}\u{00AA}\u{00AB}\u{00AC}\u{00AD}\u{00AE}\u{00AF}\u{00B0}\u{00B1}\u{00B2}\u{00B3}\u{00B4}\u{00B5}\u{00B6}\u{00B7}\u{00B8}\u{00B9}\u{00BA}\u{00BB}\u{00BC}\u{00BD}\u{00BE}\u{00BF}\
 ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\
@@ -144,14 +128,12 @@ const WARMUP_TEXT: &str = "\
 /// Where to place a surface on its output.
 #[derive(Clone, Copy)]
 pub(crate) enum Placement {
-    /// Centered on the output (default; also the `at-cursor` fallback for now).
     Center,
     /// Fixed top-left position in output-logical pixels.
     Fixed { x: i32, y: i32 },
 }
 
-/// GL state for one surface, created lazily on the first configure (once
-/// mapped). The EGL [`Display`] is shared and lives on [`App`].
+/// GL state for one surface, created lazily on the first configure.
 pub(crate) struct Gl {
     pub(crate) context: PossiblyCurrentContext,
     pub(crate) gl_surface: Surface<WindowSurface>,
@@ -159,11 +141,7 @@ pub(crate) struct Gl {
 }
 
 impl Drop for Gl {
-    /// Free the painter's GL objects on teardown. `egui_glow::Painter` issues GL
-    /// calls in `destroy`, so the context must be current first; without this it
-    /// leaks every texture/buffer/program it allocated (and logs a warning). The
-    /// make-current is best-effort — if it fails the process is exiting anyway,
-    /// and the EGL display/context are torn down by their own `Drop`s after this.
+    /// Free the painter's GL objects; context must be current first. Best-effort.
     fn drop(&mut self) {
         if self.context.make_current(&self.gl_surface).is_ok() {
             self.painter.destroy();
@@ -171,8 +149,7 @@ impl Drop for Gl {
     }
 }
 
-/// Shared, per-frame resources a surface needs to draw, borrowed from [`App`]
-/// (so the two surfaces can be drawn without aliasing the whole `App`).
+/// Shared, per-frame resources a surface needs to draw, borrowed from [`App`].
 pub(crate) struct Shared<'a> {
     pub(crate) conn: &'a Connection,
     pub(crate) compositor: &'a CompositorState,
@@ -181,17 +158,15 @@ pub(crate) struct Shared<'a> {
     pub(crate) kbd_modifiers: egui::Modifiers,
 }
 
-/// One `wlr-layer-shell` overlay surface (the popup or the settings panel) with
-/// its own GL context and egui context.
+/// One `wlr-layer-shell` overlay surface (popup or settings panel) with its own
+/// GL context and egui context.
 pub(crate) struct WinSurface {
-    /// Short identity for logs ("popup" / "settings"), since the two surfaces
-    /// emit the same messages (e.g. "overlay GL surface ready").
+    /// Short identity for logs ("popup" / "settings").
     label: &'static str,
     pub(crate) layer: LayerSurface,
     pub(crate) egui_ctx: egui::Context,
     pub(crate) gl: Option<Gl>,
     pub(crate) events: Vec<egui::Event>,
-    /// Whether this surface currently holds keyboard focus.
     pub(crate) kbd_focus: bool,
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -201,38 +176,26 @@ pub(crate) struct WinSurface {
     pub(crate) current_output: Option<wl_output::WlOutput>,
     pub(crate) margin_left: i32,
     pub(crate) margin_top: i32,
-    /// Whether the user has Alt-dragged this show (suppresses re-placement).
+    /// User has Alt-dragged this show (suppresses re-placement).
     pub(crate) dragged: bool,
-    /// Whether an Alt drag is in progress (left button held).
+    /// An Alt drag is in progress (left button held).
     pub(crate) dragging: bool,
-    /// Whether the surface is visible.
     pub(crate) shown: bool,
-    /// Whether this surface is currently in its redraw loop (requested the next
-    /// frame callback on its last draw). Used to know when a surface that should
-    /// be redrawing has gone quiet and needs a kick (see `App::tick`).
+    /// Currently in its redraw loop; goes quiet → needs a kick (see `App::tick`).
     pub(crate) spinning: bool,
-    /// Kept alive until the next commit so the compositor reads the region
-    /// before it's destroyed.
+    /// Kept alive until the next commit so the compositor reads the region.
     input_region: Option<Region>,
-    /// Last applied (shown, width, height) so we only touch the input region on
-    /// change.
+    /// Last applied (shown, width, height) to skip no-op input region updates.
     applied_input: Option<(bool, u32, u32)>,
-    /// Last applied keyboard-interactivity `shown` state (toggle on change).
     applied_kbd: Option<bool>,
-    /// Remaining frames to pre-warm the font atlas (see [`WARMUP_FRAMES`]). egui
-    /// adds glyphs lazily, and in this custom egui_glow integration glyphs
-    /// uploaded after the initial atlas rendered as tofu boxes; warming the
-    /// accented-Latin range up front avoids that.
+    /// Remaining frames to pre-warm the font atlas (see [`WARMUP_FRAMES`]).
     warm_frames: u8,
-    /// Last frame's measured target height. We only commit a `set_size` once the
-    /// height has *settled* (two frames agree), so animation/reflow wobble can't
-    /// drive a configure↔set_size storm.
+    /// Last frame's measured target height; resize only once it has settled.
     last_want_h: u32,
 }
 
 impl WinSurface {
-    /// Create a hidden layer surface (no keyboard focus, empty input region →
-    /// click-through), anchored top-left and committed so it maps.
+    /// Create a hidden, click-through layer surface, anchored top-left.
     pub(crate) fn new(
         compositor: &CompositorState,
         layer_shell: &LayerShell,
@@ -245,11 +208,8 @@ impl WinSurface {
         let surface = compositor.create_surface(qh);
         let layer =
             layer_shell.create_layer_surface(qh, surface, Layer::Overlay, Some(namespace), None);
-        // Keyboard focus is taken on-demand while shown; None while hidden so
-        // POE2 keeps the keyboard.
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        // Anchor top-left; we center via computed margins (KWin doesn't reliably
-        // center an unanchored surface).
+        // Anchor top-left; we center via computed margins.
         layer.set_anchor(Anchor::TOP | Anchor::LEFT);
         layer.set_size(width, INITIAL_HEIGHT);
         layer.commit();
@@ -279,9 +239,8 @@ impl WinSurface {
         }
     }
 
-    /// Build the EGL context + egui painter for this surface, creating the
-    /// shared EGL display on first use. glutin turns the `wl_surface` pointer
-    /// into a `wl_egl_window` internally.
+    /// Build the EGL context + egui painter, creating the shared display on
+    /// first use.
     fn init_gl(&mut self, shared: &mut Shared) -> Result<()> {
         let surface_ptr = self
             .layer
@@ -302,9 +261,8 @@ impl WinSurface {
             let raw_display = RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
                 NonNull::new(display_ptr).context("null wl_display ptr")?,
             ));
-            // SAFETY: `raw_display` wraps the live `wl_display` pointer taken from
-            // the Wayland `Connection` owned by `App`, which outlives every GL
-            // object derived from it; EGL is the correct API for a Wayland display.
+            // SAFETY: `raw_display` wraps the live `wl_display` from `App`'s
+            // `Connection`, which outlives every GL object derived from it.
             let display = unsafe { Display::new(raw_display, DisplayApiPreference::Egl) }
                 .context("create EGL display")?;
             *shared.display = Some(display);
@@ -318,11 +276,8 @@ impl WinSurface {
             .compatible_with_native_window(raw_window)
             .with_alpha_size(8)
             .build();
-        // Prefer a plain 8-bit RGBA config (over deep/float ones) for a normal
-        // translucent overlay.
-        // SAFETY: `display` is the valid EGL display created/reused just above,
-        // and `template` only carries `raw_window`, the live `wl_surface` handle
-        // for this surface.
+        // SAFETY: `display` is the valid EGL display from above; `template`
+        // carries only the live `wl_surface` handle for this surface.
         let config = unsafe { display.find_configs(template) }
             .context("find_configs")?
             .filter(|c| c.alpha_size() == 8)
@@ -330,8 +285,8 @@ impl WinSurface {
             .context("no RGBA8 EGL config")?;
 
         let context_attrs = ContextAttributesBuilder::new().build(Some(raw_window));
-        // SAFETY: `config` was produced by this `display`'s `find_configs`, and
-        // `raw_window` is the live `wl_surface` for this surface.
+        // SAFETY: `config` came from this `display`; `raw_window` is the live
+        // `wl_surface`.
         let not_current = unsafe { display.create_context(&config, &context_attrs) }
             .context("create GL context")?;
 
@@ -340,8 +295,8 @@ impl WinSurface {
             NonZeroU32::new(self.width).expect("surface width is non-zero"),
             NonZeroU32::new(self.height).expect("surface height is non-zero"),
         );
-        // SAFETY: `config` belongs to `display`, and `surf_attrs` carries the live
-        // `raw_window` handle plus the non-zero width/height above.
+        // SAFETY: `config` belongs to `display`; `surf_attrs` carries the live
+        // `raw_window` plus non-zero width/height.
         let gl_surface = unsafe { display.create_window_surface(&config, &surf_attrs) }
             .context("create window surface")?;
 
@@ -349,9 +304,8 @@ impl WinSurface {
             .make_current(&gl_surface)
             .context("make_current")?;
 
-        // SAFETY: the context is current (`make_current` above), so
-        // `get_proc_address` resolves valid GL function pointers for it; glow only
-        // invokes the loader during this construction call.
+        // SAFETY: the context is current, so `get_proc_address` resolves valid
+        // GL function pointers; glow only invokes the loader during construction.
         let glow = unsafe {
             glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s).cast())
         };
@@ -367,11 +321,7 @@ impl WinSurface {
         Ok(())
     }
 
-    /// Lay out, size, place, and paint this surface for one frame, rendering
-    /// `render` into the framed card when shown.
-    // The per-frame inputs (size, placement, spin flag, themeable colours) are
-    // genuinely distinct knobs the caller sets afresh each frame; bundling them
-    // into a struct would only move the noise, so keep them as parameters.
+    /// Lay out, size, place, and paint this surface for one frame.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw(
         &mut self,
@@ -380,8 +330,6 @@ impl WinSurface {
         want_width: u32,
         place: Placement,
         request_next: bool,
-        // Themeable surface colours (alpha carries the user's opacity), read
-        // from the app each frame so a settings change takes effect at once.
         fill: egui::Color32,
         stroke: egui::Color32,
         render: impl FnOnce(&mut egui::Ui),
@@ -393,13 +341,11 @@ impl WinSurface {
 
         self.apply_keyboard_interactivity();
         if !self.shown {
-            // Forget any drag so the next show re-places it.
             self.dragged = false;
             self.dragging = false;
         }
 
-        // Lay the content out in a tall space to measure its natural height,
-        // then shrink the surface to fit.
+        // Lay content out in a tall space to measure natural height, then shrink.
         let raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::pos2(0.0, 0.0),
@@ -408,9 +354,7 @@ impl WinSurface {
             events: std::mem::take(&mut self.events),
             focused: self.kbd_focus,
             modifiers: shared.kbd_modifiers,
-            // Real wall-clock time: egui measures click intervals against this,
-            // so without it double/triple-click (word/select-all in text fields)
-            // never registers.
+            // Real wall-clock time, else double/triple-click never registers.
             time: Some(elapsed_seconds()),
             ..Default::default()
         };
@@ -423,16 +367,13 @@ impl WinSurface {
             self.warm_frames -= 1;
         }
         let mut measured = 0.0_f32;
-        // `ctx.run` wants an `FnMut` but `render` is `FnOnce`; `Option::take`
-        // hands it out at most once.
+        // `ctx.run` wants `FnMut` but `render` is `FnOnce`; `take` hands it out once.
         let mut render = Some(render);
         let full = ctx.run(raw_input, |c| {
             if !shown {
                 return;
             }
-            // Pre-warm the font atlas: lay the accented-Latin range out in a
-            // throwaway, transparent, non-interactable Area so the glyphs enter
-            // this frame's atlas upload without affecting layout or measurement.
+            // Pre-warm the font atlas in a throwaway transparent Area.
             if warm {
                 egui::Area::new(egui::Id::new("atlas-warmup"))
                     .fixed_pos(egui::pos2(0.0, 0.0))
@@ -466,9 +407,7 @@ impl WinSurface {
             measured = resp.response.rect.height();
         });
 
-        // Bridge egui's copy/cut (Copy/Cut on text fields write `copied_text`)
-        // out to the system clipboard — egui never touches the OS clipboard
-        // itself in this custom backend.
+        // Bridge egui's copy/cut out to the system clipboard.
         if !full.platform_output.copied_text.is_empty() {
             if let Err(e) = platform_linux::write_clipboard_text(&full.platform_output.copied_text)
             {
@@ -476,19 +415,11 @@ impl WinSurface {
             }
         }
 
-        // Auto-height: resize the surface to the measured content — not while
-        // dragging, with a deadband on shrink. Every `set_size` triggers a
-        // configure → draw → maybe set_size again, so a 1px jitter must not fire
-        // it (pegs a core and lags the drag).
+        // Auto-height: resize to measured content (not while dragging, with a
+        // shrink deadband), and only once the height has settled across two
+        // frames so reflow wobble can't drive a configure↔set_size feedback loop.
         if shown && measured > 0.0 && !self.dragging {
             let want_h = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
-            // Only commit a resize once the measured height has *settled* — i.e.
-            // this frame's target equals last frame's. egui animations (the Misc
-            // collapser, etc.) and width-fill reflow make the height wobble for a
-            // few frames; calling set_size on each wobble triggers a configure →
-            // redraw → set_size feedback loop that pegs a core and makes every
-            // interaction lag. Waiting for a stable value costs ~16ms and absorbs
-            // the oscillation; the deadband then ignores sub-pixel jitter.
             let settled = want_h == self.last_want_h;
             self.last_want_h = want_h;
             let height_changed = want_h.abs_diff(self.desired_height) > HEIGHT_DEADBAND;
@@ -500,8 +431,7 @@ impl WinSurface {
             }
         }
 
-        // Placement every visible frame (incl. during a drag, so it tracks the
-        // cursor): follow a drag, else apply the configured place.
+        // Placement every visible frame: follow a drag, else apply the place.
         if shown {
             if self.dragged {
                 self.apply_margin();
@@ -536,10 +466,7 @@ impl WinSurface {
             .swap_buffers(&gl.context)
             .context("swap_buffers")?;
 
-        // Schedule the next frame only if this surface should keep redrawing
-        // (`App::should_spin`). Exactly one surface spins at a time so the two
-        // never compete for the vsync swap. A surface going quiet still presents
-        // this frame; `App::tick` kicks the other back into its loop on a switch.
+        // Schedule the next frame only if this surface should keep redrawing.
         self.spinning = request_next;
         if request_next {
             let surface = self.layer.wl_surface();
@@ -550,8 +477,7 @@ impl WinSurface {
         Ok(())
     }
 
-    /// Take keyboard focus on-demand while shown (so text fields are editable),
-    /// and drop it when hidden so POE2 gets the keyboard back.
+    /// Take keyboard focus on-demand while shown, drop it when hidden.
     fn apply_keyboard_interactivity(&mut self) {
         if self.applied_kbd == Some(self.shown) {
             return;
@@ -567,8 +493,8 @@ impl WinSurface {
         self.applied_kbd = Some(self.shown);
     }
 
-    /// Set the input region to the surface bounds when visible (so it catches
-    /// clicks) and to nothing when hidden (so clicks pass through to POE2).
+    /// Input region = surface bounds when visible, empty when hidden (clicks
+    /// pass through).
     fn apply_input_region(&mut self, shared: &Shared) {
         let state = (self.shown, self.width, self.height);
         if self.applied_input == Some(state) {
@@ -578,14 +504,13 @@ impl WinSurface {
             if self.shown {
                 region.add(0, 0, self.width as i32, self.height as i32);
             }
-            // An empty region = no input = clicks pass through to the game.
             self.layer.set_input_region(Some(region.wl_region()));
             self.input_region = Some(region);
             self.applied_input = Some(state);
         }
     }
 
-    /// Center a `w`×`h` surface on its output by setting top/left margins.
+    /// Center a `w`×`h` surface on its output via top/left margins.
     fn center(&mut self, shared: &Shared, w: u32, h: u32) {
         let (ow, oh) = self.output_size(shared);
         self.margin_left = ((ow - w as i32) / 2).max(0);
@@ -593,14 +518,12 @@ impl WinSurface {
         self.apply_margin();
     }
 
-    /// Push the current margins to the surface (committed at end of frame).
     fn apply_margin(&self) {
         self.layer
             .set_margin(self.margin_top, 0, 0, self.margin_left);
     }
 
-    /// Logical size of the output the surface is on (falls back to the first
-    /// output, then a 1080p guess if nothing is known yet).
+    /// Logical size of the output the surface is on (falls back to 1080p).
     fn output_size(&self, shared: &Shared) -> (i32, i32) {
         let output = self
             .current_output

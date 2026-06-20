@@ -1,5 +1,4 @@
-//! Stat-id mapping + base-type splitting against the recorded (real) snapshot
-//! subsets in `tests/fixtures/api/`.
+//! Stat-id mapping + base-type splitting against the recorded snapshot subsets.
 
 use parser::{parse_item, ModKind, ModSource, Modifier};
 use trade_api::{ItemDefinitions, StatDefinitions};
@@ -60,8 +59,6 @@ fn explicit_prefix_evasion_maps_to_explicit_id() {
 #[test]
 fn same_text_resolves_to_different_id_by_affix_type() {
     let defs = stats();
-    // The exact same template, mapped as an implicit vs a normal explicit,
-    // must resolve to the implicit. and explicit. ids respectively.
     let implicit = defs
         .map_stat_line(
             &ModKind::Implicit,
@@ -84,9 +81,6 @@ fn same_text_resolves_to_different_id_by_affix_type() {
 
 #[test]
 fn plural_count_mod_falls_back_to_singular_presence_filter() {
-    // The tablet mod is plural ("3 additional Rare Chests"), but GGG only
-    // exposes the singular presence stat. It must still map — as a presence
-    // filter, with no value to send (GGG's stat has no `#`).
     let defs = stats();
     let m = defs
         .map_stat_line(
@@ -156,16 +150,13 @@ fn hybrid_modifier_maps_each_stat_line() {
     };
     let mapped = defs.map_modifier(&m, trade_api::LocalContext::default());
     assert_eq!(mapped.len(), 2);
-    assert_eq!(mapped[0].id, "explicit.stat_3299347043"); // flat life
+    assert_eq!(mapped[0].id, "explicit.stat_3299347043");
     assert_eq!(mapped[0].values, [118.0]);
-    assert_eq!(mapped[1].id, "explicit.stat_1050105434"); // flat mana
+    assert_eq!(mapped[1].id, "explicit.stat_1050105434");
 }
 
 #[test]
 fn prefer_local_picks_the_local_stat_variant() {
-    // GGG ships two entries sharing display text: the local armour mod (with a
-    // " (Local)" text suffix) and the global passive-tree one. On gear we must
-    // map to the local id or the search returns nothing.
     let json = r##"{"result":[{"id":"explicit","label":"Explicit","entries":[
         {"id":"explicit.stat_124859000","text":"#% increased Evasion Rating (Local)","type":"explicit"},
         {"id":"explicit.stat_2106365538","text":"#% increased Evasion Rating","type":"explicit"}
@@ -182,7 +173,6 @@ fn prefer_local_picks_the_local_stat_variant() {
         .unwrap();
     assert_eq!(local.id, "explicit.stat_124859000");
 
-    // Without the local preference (e.g. on a ring) we get the global id.
     let global = defs
         .map_stat_line(
             &ModKind::Prefix,
@@ -196,8 +186,6 @@ fn prefer_local_picks_the_local_stat_variant() {
 
 #[test]
 fn quiver_accuracy_is_global_not_local() {
-    // Accuracy is local on weapons but global on quivers (they have no accuracy
-    // of their own). map_item must pick the non-local id for a quiver.
     let json = r##"{"result":[{"id":"explicit","entries":[
         {"id":"explicit.stat_803737631","text":"# to Accuracy Rating","type":"explicit"},
         {"id":"explicit.stat_691932474","text":"# to Accuracy Rating (Local)","type":"explicit"}
@@ -240,8 +228,6 @@ fn real_subset_indexes_many_entries() {
     assert!(defs.len() >= 20, "got {}", defs.len());
 }
 
-// ---- base-type splitting (magic bases left None by the parser) -------------
-
 #[test]
 fn splits_magic_base_from_fused_name() {
     let defs = items();
@@ -260,7 +246,6 @@ fn splits_magic_base_from_fused_name() {
 #[test]
 fn prefers_the_longest_matching_base() {
     let defs = items();
-    // "Topaz Ring" must win over a hypothetical bare "Ring" base.
     assert_eq!(
         defs.split_magic_base("Hale Topaz Ring of Grounding")
             .as_deref(),
@@ -279,7 +264,6 @@ fn magic_base_split_returns_none_when_unknown() {
 
 #[test]
 fn resolve_base_strips_display_tier_prefix() {
-    // POE2 shows "Exceptional Crude Bow" but GGG's trade type is "Crude Bow".
     let json = r#"{"result":[{"id":"weapon","entries":[
         {"type":"Crude Bow"},{"type":"Runeforged Crude Bow"},{"type":"Heavy Bow"}
     ]}]}"#;
@@ -289,13 +273,11 @@ fn resolve_base_strips_display_tier_prefix() {
         defs.resolve_base("Exceptional Crude Bow").as_deref(),
         Some("Crude Bow")
     );
-    // An exact known base (even a longer one) is kept intact.
     assert_eq!(
         defs.resolve_base("Runeforged Crude Bow").as_deref(),
         Some("Runeforged Crude Bow")
     );
     assert_eq!(defs.resolve_base("Crude Bow").as_deref(), Some("Crude Bow"));
-    // Nothing known → None (caller falls back to the category filter).
     assert_eq!(defs.resolve_base("Totally Made Up Base"), None);
 }
 
@@ -310,8 +292,6 @@ fn unique_name_resolves_to_base_type() {
 
 #[test]
 fn granted_skill_maps_to_skill_id_with_level_as_value() {
-    // The granted-skill LEVEL is the price driver, so it becomes the filter
-    // value (min level), keyed by the skill's stat id.
     let json = r#"{"result":[{"id":"skill","label":"Skill","entries":[
         {"id":"skill.discipline","text":"Grants Skill: Level # Discipline","type":"skill"},
         {"id":"skill.summon_azmerian_wolf","text":"Grants Skill: Level # Azmerian Wolf","type":"skill"}
@@ -324,14 +304,12 @@ fn granted_skill_maps_to_skill_id_with_level_as_value() {
     assert_eq!(d.id, "skill.discipline");
     assert_eq!(d.filter_value(), Some(19.0));
 
-    // Multi-word skill names work too.
     let w = defs
         .map_granted_skill("Level 20 Azmerian Wolf")
         .expect("azmerian wolf maps");
     assert_eq!(w.id, "skill.summon_azmerian_wolf");
     assert_eq!(w.filter_value(), Some(20.0));
 
-    // Unknown skill / malformed input → None.
     assert!(defs
         .map_granted_skill("Level 19 Not A Real Skill")
         .is_none());

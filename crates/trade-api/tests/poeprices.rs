@@ -1,6 +1,4 @@
-//! poeprices.info ML estimate over a mocked transport: URL
-//! shape (league + base64 item), a successful prediction, a decline, and an
-//! HTTP error. Offline — nothing here touches the network.
+//! poeprices.info ML estimate over a mocked transport.
 
 use std::sync::{Arc, Mutex};
 
@@ -9,7 +7,6 @@ use trade_api::http::{HttpRequest, HttpResponse, HttpTransport, Method};
 use trade_api::poeprices::price_estimate;
 use trade_api::Error;
 
-/// A transport that returns one canned response and records the request.
 struct OneShot {
     response: HttpResponse,
     seen: Arc<Mutex<Vec<HttpRequest>>>,
@@ -57,7 +54,6 @@ async fn successful_prediction_parses_and_builds_the_url() {
     assert_eq!(est.currency, "divine");
     assert_eq!(est.confidence, Some(84.21));
 
-    // base64("Test") = "VGVzdA==", percent-encoded in the query string.
     let req = &seen.lock().unwrap()[0];
     assert_eq!(req.method, Method::Get);
     assert_eq!(

@@ -1,15 +1,8 @@
 //! Turning the parser's raw stat lines into GGG stat-template form.
 //!
-//! The parser leaves stat text verbatim (`+30(20-30)% to Lightning
-//! Resistance`); the trade API keys stats on templates with the *rolled* value
-//! replaced by `#` (`#% to Lightning Resistance`). Two wrinkles:
-//!
-//! 1. **The sign is part of the placeholder.** GGG inconsistently writes
-//!    `#% to …` but `+# to Level of all Skills`. We canonicalise both sides by
-//!    dropping a sign immediately before the placeholder, so they always meet.
-//! 2. **Only rolled numbers become `#`; constants stay literal.** A rolled
-//!    number is the one followed by a `(min-max)` range, so that's what we
-//!    replace; as a fallback we also offer an all-numbers candidate.
+//! The rolled value is replaced by `#` (`#% to Lightning Resistance`). A sign
+//! immediately before the placeholder is dropped on both sides so they match;
+//! only ranged (rolled) numbers become `#`, with an all-numbers fallback.
 
 use std::sync::OnceLock;
 
@@ -18,10 +11,7 @@ use regex::Regex;
 /// A candidate template + the rolled values extracted from the stat line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Normalized {
-    /// Canonicalised template, ready to look up against a canonicalised GGG
-    /// template (see [`canonical_ggg`]).
     pub template: String,
-    /// The displayed (current) value of each rolled number, in order.
     pub values: Vec<f64>,
 }
 
@@ -37,28 +27,19 @@ fn number_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"([+-]?\d+(?:\.\d+)?)(?:\([^)]*\))?").expect("number regex"))
 }
 
-/// Strip a sign that sits immediately before a `#`, so the GGG side matches a
-/// parser candidate whose sign was folded into the placeholder.
+/// Strip a sign immediately before a `#` so both sides match.
 pub fn canonical_ggg(template: &str) -> String {
     template.replace("+#", "#").replace("-#", "#")
 }
 
 /// Candidate normalizations for a parser stat line, most-precise first.
-///
-/// The first candidate replaces only ranged (rolled) numbers; the second
-/// replaces every number. They're deduplicated, so a line whose every number
-/// is ranged — or one with no numbers at all — yields a single candidate.
 pub fn candidates(stat: &str) -> Vec<Normalized> {
-    // POE2 appends " — Unscalable Value" to mods whose shown value is fixed
-    // (e.g. crafted/desecrated mods); the trade stat templates don't include it.
     let stat = strip_value_annotation(stat);
     let mut out = Vec::new();
 
-    // Rolls-only: replace `N(min-max)` with `#`, keep bare constants.
     let ranged = roll_only(stat);
     out.push(ranged);
 
-    // All-numbers fallback.
     let all = all_numbers(stat);
     if !out.iter().any(|c| c.template == all.template) {
         out.push(all);
@@ -67,8 +48,7 @@ pub fn candidates(stat: &str) -> Vec<Normalized> {
     out
 }
 
-/// Strip a trailing `— Unscalable Value` annotation (any dash) that POE2 adds to
-/// fixed-value mods, so the line matches the GGG stat template.
+/// Strip a trailing `— Unscalable Value` annotation (any dash) POE2 adds.
 fn strip_value_annotation(stat: &str) -> &str {
     for dash in ['—', '–', '-'] {
         if let Some(idx) = stat.rfind(dash) {
@@ -143,7 +123,6 @@ mod tests {
 
     #[test]
     fn constant_stays_literal_when_ranged_roll_present() {
-        // The `8` is a constant (no range); only the ranged roll becomes `#`.
         let n = primary("+5(4-6) to maximum Life per 8 Armour on Equipped Helmet");
         assert_eq!(
             n.template,
@@ -155,8 +134,6 @@ mod tests {
     #[test]
     fn all_numbers_fallback_for_unranged_roll() {
         let cands = candidates("+1 to Level of all Tornado Shot Skills");
-        // No range, so the precise candidate keeps the literal `1`; the
-        // fallback turns it into `#` to match GGG's `+# to Level…` template.
         assert!(cands
             .iter()
             .any(|c| c.template == "# to Level of all Tornado Shot Skills"));
@@ -164,12 +141,9 @@ mod tests {
 
     #[test]
     fn strips_unscalable_value_annotation() {
-        // POE2's "— Unscalable Value" suffix must be removed so the line matches
-        // GGG's stat text (e.g. crafted "Minions' Strikes have Melee Splash").
         let n = primary("Minions' Strikes have Melee Splash — Unscalable Value");
         assert_eq!(n.template, "Minions' Strikes have Melee Splash");
         assert!(n.values.is_empty());
-        // A ranged value before the annotation still parses.
         let r = primary("Gains 0.17(0.15-0.20) Charges per Second — Unscalable Value");
         assert_eq!(r.template, "Gains # Charges per Second");
         assert_eq!(r.values, [0.17]);

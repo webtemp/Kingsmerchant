@@ -1,8 +1,4 @@
 //! Snapshot tests against real game-copied item strings.
-//!
-//! Each `tests/items/*.txt` fixture is a verbatim POE2 clipboard capture. We
-//! parse it and snapshot the resulting struct; `cargo insta review` shows any
-//! diff when the parser's output changes.
 
 use parser::parse_item;
 
@@ -16,8 +12,7 @@ fn parses_real_item_fixtures() {
     });
 }
 
-/// POE2 emits both a hyphen and an em dash as the descriptor tag separator
-/// (the same helmet copied twice produced each). They must parse identically.
+/// Hyphen and em-dash tag separators must parse identically.
 #[test]
 fn hyphen_and_emdash_descriptors_are_equivalent() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/items/");
@@ -27,10 +22,7 @@ fn hyphen_and_emdash_descriptors_are_equivalent() {
     assert_eq!(hyphen, emdash);
 }
 
-/// Regression: an Abyss Tablet whose first prefix is "Map contains N additional
-/// Rare Chests" must keep that stat line — it was reported missing. The number
-/// sits mid-line (`contains 3(2-3) additional`), which the descriptor/stat
-/// parsing must not drop.
+/// Regression: a mid-line number (`contains 3(2-3) additional`) must not drop the stat line.
 #[test]
 fn tablet_keeps_map_contains_rare_chests_mod() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/items/");

@@ -1,9 +1,4 @@
-//! The `trade2/data/stats` and `trade2/data/items` snapshots, and the lookups
-//! the query builder needs from them. Refreshed on app start; turns the raw
-//! JSON into:
-//!   * stat text → GGG stat id (+ rolled values), respecting affix type, and
-//!   * magic-item name → base type (the parser leaves magic bases `None`
-//!     because the base is fused with affixes on one line).
+//! The `trade2/data/stats` and `trade2/data/items` snapshots, and the lookups the query builder needs.
 
 use std::collections::{HashMap, HashSet};
 
@@ -12,8 +7,6 @@ use serde::Deserialize;
 
 use crate::error::Error;
 use crate::stat_text::{self, canonical_ggg};
-
-// ---- raw JSON shapes (verbatim from the API) -------------------------------
 
 #[derive(Debug, Deserialize)]
 struct RawDoc<E> {
@@ -37,11 +30,8 @@ struct RawStat {
 struct RawItem {
     #[serde(rename = "type")]
     type_line: String,
-    /// Present only on uniques (the rolled name).
     name: Option<String>,
 }
-
-// ---- stat definitions ------------------------------------------------------
 
 /// A resolved stat filter: the GGG id plus the rolled value(s) from the item.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,12 +39,10 @@ pub struct MappedStat {
     pub id: String,
     pub stat_type: String,
     pub values: Vec<f64>,
-    /// The matched canonical template, for debugging / display.
     pub template: String,
 }
 
 impl MappedStat {
-    /// The value to use as a search filter minimum (first rolled value).
     pub fn filter_value(&self) -> Option<f64> {
         self.values.first().copied()
     }
@@ -63,14 +51,11 @@ impl MappedStat {
 /// The `trade2/data/stats` snapshot, indexed for lookup by affix type + text.
 #[derive(Debug, Default)]
 pub struct StatDefinitions {
-    /// `(stat type, canonical template)` → stat id.
     by_type_text: HashMap<(String, String), String>,
-    /// canonical template → stat id (type-agnostic fallback).
     by_text: HashMap<String, String>,
 }
 
 impl StatDefinitions {
-    /// Parse the raw `trade2/data/stats` JSON.
     pub fn from_json(json: &str) -> Result<Self, Error> {
         let doc: RawDoc<RawStat> =
             serde_json::from_str(json).map_err(|e| Error::decode("data/stats", e))?;
@@ -87,7 +72,6 @@ impl StatDefinitions {
         Ok(defs)
     }
 
-    /// Number of distinct `(type, text)` entries indexed.
     pub fn len(&self) -> usize {
         self.by_type_text.len()
     }
@@ -96,12 +80,7 @@ impl StatDefinitions {
         self.by_type_text.is_empty()
     }
 
-    /// Map all of an item's modifiers to GGG stat filters, deciding the
-    /// local-vs-global stat variant per stat from the item's context.
-    ///
-    /// GGG suffixes the *local* variant with ` (Local)` — same display text,
-    /// different stat id — so searching with the wrong one returns nothing.
-    /// See [`LocalContext`] for the rule.
+    /// Map all of an item's modifiers to GGG stat filters, choosing local-vs-global per stat.
     pub fn map_item(&self, item: &Item) -> Vec<MappedStat> {
         let ctx = LocalContext::for_item(item);
         item.modifiers
@@ -110,11 +89,7 @@ impl StatDefinitions {
             .collect()
     }
 
-    /// Resolve one parsed [`Modifier`]'s stat lines to GGG stat filters.
-    ///
-    /// A hybrid prefix grants several lines, so this returns one [`MappedStat`]
-    /// per mappable line; unmappable lines are silently skipped. The
-    /// local-vs-global choice is made per line from `ctx`.
+    /// Resolve one [`Modifier`]'s stat lines to GGG stat filters; unmappable lines skipped.
     pub fn map_modifier(&self, modifier: &Modifier, ctx: LocalContext) -> Vec<MappedStat> {
         modifier
             .stats
@@ -126,8 +101,7 @@ impl StatDefinitions {
             .collect()
     }
 
-    /// Resolve a single stat line for a given affix slot/source. When
-    /// `prefer_local` is set, the `(Local)` variant of the stat is tried first.
+    /// Resolve a single stat line; when `prefer_local`, the `(Local)` variant is tried first.
     pub fn map_stat_line(
         &self,
         kind: &ModKind,
@@ -146,10 +120,7 @@ impl StatDefinitions {
             if let Some(mapped) = self.lookup(&types, &cand.template, &cand.values) {
                 return Some(mapped);
             }
-            // Count mods like "Map contains # additional Rare Chests" where GGG
-            // only exposes the singular "an additional Rare Chest" presence
-            // filter (it has no plural/`#` variant — unlike Strongboxes). Fall
-            // back to that as a presence filter (no value to send).
+            // Some count mods only expose a singular "an additional X" presence filter.
             if let Some(singular) = singular_additional_variant(&cand.template) {
                 if let Some(mapped) = self.lookup(&types, &singular, &[]) {
                     return Some(mapped);
@@ -159,10 +130,7 @@ impl StatDefinitions {
         None
     }
 
-    /// Explicit (prefix/suffix) stat lines on `item` that matched no trade
-    /// filter, in order — so the UI can show them read-only instead of dropping
-    /// them silently. Implicits are excluded (they're off-by-default noise like
-    /// charge counters). De-duplicates repeated lines.
+    /// Explicit (prefix/suffix) stat lines on `item` that matched no trade filter, de-duplicated.
     pub fn unmapped_explicit_lines(&self, item: &Item) -> Vec<String> {
         let ctx = LocalContext::for_item(item);
         let mut seen = std::collections::HashSet::new();
@@ -173,8 +141,6 @@ impl StatDefinitions {
             .filter(|m| m.kind != ModKind::Implicit)
         {
             for line in &m.stats {
-                // Unrevealed-desecrated placeholders are handled as a hidden-mod
-                // count filter, not shown as unsearchable noise.
                 if is_unrevealed_placeholder(line) {
                     continue;
                 }
@@ -189,10 +155,7 @@ impl StatDefinitions {
         out
     }
 
-    /// Map a `Grants Skill: Level N <Skill>` property to its `skill.*` stat id,
-    /// with the skill LEVEL as the filter value (the level is the price driver,
-    /// so the UI can filter by a minimum granted-skill level). `value` is e.g.
-    /// `Level 19 Discipline`. `None` if the skill isn't a known grantable.
+    /// Map a `Grants Skill: Level N <Skill>` property to its `skill.*` id, with level as the value.
     pub fn map_granted_skill(&self, value: &str) -> Option<MappedStat> {
         let rest = value.trim().strip_prefix("Level ")?;
         let (level, skill) = rest.split_once(' ')?;
@@ -210,8 +173,6 @@ impl StatDefinitions {
         })
     }
 
-    /// Look a canonical `template` up under the preferred stat types, then
-    /// type-agnostically (e.g. an enchant on a slot we mapped as explicit).
     fn lookup(&self, types: &[&str], template: &str, values: &[f64]) -> Option<MappedStat> {
         for ty in types {
             if let Some(id) = self
@@ -240,13 +201,6 @@ impl StatDefinitions {
 }
 
 /// Item context for choosing local-vs-global stat variants.
-///
-/// A stat is *local* when it modifies a property the item type actually has:
-///   * **defence** stats (armour / evasion / ES / block / ward) are local on
-///     armour pieces — but NOT quivers, which carry no defences;
-///   * **weapon** stats (accuracy, attack speed, crit, damage) on weapons.
-///
-/// Everywhere else the same text is the *global* passive-tree stat.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LocalContext {
     is_weapon: bool,
@@ -254,19 +208,16 @@ pub struct LocalContext {
 }
 
 impl LocalContext {
-    /// Derive the context from a parsed item's class.
     pub fn for_item(item: &Item) -> Self {
         match crate::query::category_for(&item.item_class) {
             Some(c) => LocalContext {
                 is_weapon: c.starts_with("weapon."),
-                // Armour slots have local defences; quivers don't.
                 is_armour_piece: c.starts_with("armour.") && c != "armour.quiver",
             },
             None => LocalContext::default(),
         }
     }
 
-    /// Whether the `(Local)` variant should be preferred for this stat line.
     fn prefer_local(self, line: &str) -> bool {
         if is_defence_stat(line) {
             self.is_armour_piece
@@ -276,8 +227,6 @@ impl LocalContext {
     }
 }
 
-/// Whether a stat line is a defence stat (armour / evasion / ES / block / ward),
-/// as opposed to a weapon stat — they take the local variant on different items.
 fn is_defence_stat(line: &str) -> bool {
     line.contains("Armour")
         || line.contains("Evasion Rating")
@@ -286,23 +235,15 @@ fn is_defence_stat(line: &str) -> bool {
         || line.contains("Ward")
 }
 
-/// Placeholder stat lines POE2 prints for an *unrevealed* desecrated affix —
-/// the slot is filled by a desecrated mod whose identity isn't revealed yet, so
-/// it shows this fixed text instead of a real stat.
+/// Placeholder stat lines POE2 prints for an unrevealed desecrated affix.
 const UNREVEALED_PREFIX_LINE: &str = "Desecrated Prefix";
 const UNREVEALED_SUFFIX_LINE: &str = "Desecrated Suffix";
 
-/// Whether a stat line is an unrevealed-desecrated placeholder. Such lines map
-/// to no real stat (their roll is hidden), so they're searched via the
-/// "# Unrevealed Prefix/Suffix Modifiers" pseudo count, not as affix filters.
 pub fn is_unrevealed_placeholder(line: &str) -> bool {
     line == UNREVEALED_PREFIX_LINE || line == UNREVEALED_SUFFIX_LINE
 }
 
-/// Count an item's unrevealed desecrated modifiers as `(prefixes, suffixes)`,
-/// from the placeholder lines above. Used to search by hidden-mod count so a
-/// desecrated-but-unrevealed item matches others in the same hidden state,
-/// rather than items whose desecrated mods are already revealed.
+/// Count an item's unrevealed desecrated modifiers as `(prefixes, suffixes)`.
 pub fn unrevealed_affix_counts(item: &Item) -> (usize, usize) {
     let mut prefixes = 0;
     let mut suffixes = 0;
@@ -321,9 +262,7 @@ fn preferred_types(kind: &ModKind, source: Option<&ModSource>) -> Vec<&'static s
     match source {
         Some(ModSource::Fractured) => vec!["fractured", "explicit"],
         Some(ModSource::Crafted) => vec!["crafted", "explicit"],
-        // Desecrated: `desecrated.*` matches only desecration-sourced mods
-        // (almost nothing on the market), so prefer the plain explicit variant
-        // (same affix for pricing).
+        // `desecrated.*` matches almost nothing on the market; prefer plain explicit.
         Some(ModSource::Desecrated) => vec!["explicit", "desecrated"],
         None => match kind {
             ModKind::Implicit => vec!["implicit", "explicit"],
@@ -334,10 +273,7 @@ fn preferred_types(kind: &ModKind, source: Option<&ModSource>) -> Vec<&'static s
     }
 }
 
-/// Turn a `"… # additional <plural>"` count template into the singular
-/// presence form GGG sometimes exposes instead: `"… an additional <singular>"`
-/// (e.g. `Map contains # additional Rare Chests` → `Map contains an additional
-/// Rare Chest`). `None` if the template isn't of that shape.
+/// Turn a `"… # additional <plural>"` count template into the singular `"… an additional <singular>"` form.
 fn singular_additional_variant(template: &str) -> Option<String> {
     let idx = template.find("# additional ")?;
     let head = &template[..idx];
@@ -351,9 +287,7 @@ fn singular_additional_variant(template: &str) -> Option<String> {
     ))
 }
 
-/// Singularise the last whitespace-separated word of `s` with simple English
-/// rules (enough for trade nouns: Chests→Chest, Strongboxes→Strongbox,
-/// Abysses→Abyss). Leaves the rest untouched.
+/// Singularise the last whitespace-separated word of `s` with simple English rules.
 fn singularize_last_word(s: &str) -> String {
     let (head, last) = match s.rsplit_once(' ') {
         Some((h, l)) => (Some(h), l),
@@ -379,15 +313,10 @@ fn singularize_last_word(s: &str) -> String {
     }
 }
 
-// ---- item definitions ------------------------------------------------------
-
 /// The `trade2/data/items` snapshot: base types and unique → base lookups.
 #[derive(Debug, Default)]
 pub struct ItemDefinitions {
-    /// All distinct base types, longest (by word count) first, so substring
-    /// matching prefers the most specific base.
     bases: Vec<String>,
-    /// Unique item name → its base type.
     unique_base: HashMap<String, String>,
 }
 
@@ -412,7 +341,6 @@ impl ItemDefinitions {
                 }
             }
         }
-        // Longest base name (by word count, then chars) first.
         bases.sort_by(|a, b| {
             word_count(b)
                 .cmp(&word_count(a))
@@ -425,18 +353,12 @@ impl ItemDefinitions {
         self.bases.len()
     }
 
-    /// The base type of a unique by its rolled name (e.g. `Mageblood` →
-    /// `Utility Belt`).
+    /// The base type of a unique by its rolled name.
     pub fn unique_base(&self, name: &str) -> Option<&str> {
         self.unique_base.get(name).map(String::as_str)
     }
 
-    /// Resolve a raw base-type line to a base GGG's trade API recognises.
-    ///
-    /// POE2 prefixes higher-tier bases with a display tier the trade `type`
-    /// omits (`Exceptional Crude Bow` → `Crude Bow`). An exact known base wins
-    /// (so `Runeforged Crude Bow` stays intact); otherwise strip the prefix via
-    /// the longest known base appearing as a whole-word run. `None` if none match.
+    /// Resolve a raw base-type line to a base the trade API recognises.
     pub fn resolve_base(&self, raw: &str) -> Option<String> {
         if self.bases.iter().any(|b| b == raw) {
             return Some(raw.to_string());
@@ -444,9 +366,7 @@ impl ItemDefinitions {
         self.split_magic_base(raw)
     }
 
-    /// Split a magic item's fused name (`Professor's Volatile Wand of
-    /// Expertise`) into its base type (`Volatile Wand`) by finding the longest
-    /// known base that appears as a whole-word run inside the name.
+    /// Split a magic item's fused name into its base type via the longest known whole-word run.
     pub fn split_magic_base(&self, magic_name: &str) -> Option<String> {
         let words: Vec<&str> = magic_name.split_whitespace().collect();
         for base in &self.bases {
@@ -462,7 +382,6 @@ fn word_count(s: &str) -> usize {
     s.split_whitespace().count()
 }
 
-/// Does `base` (as a sequence of whole words) appear contiguously in `words`?
 fn contains_word_run(words: &[&str], base: &str) -> bool {
     let base_words: Vec<&str> = base.split_whitespace().collect();
     if base_words.is_empty() || base_words.len() > words.len() {
@@ -482,8 +401,6 @@ mod tests {
 
     #[test]
     fn counts_unrevealed_desecrated_affixes() {
-        // A unique jewel with two hidden desecrated prefixes and two suffixes:
-        // each shows the placeholder line, not a real roll.
         let text = "Item Class: Jewels\nRarity: Unique\nHeart of the Well\nDiamond\n--------\n\
              Item Level: 82\n--------\n\
              { Prefix Modifier \"\" }\nDesecrated Prefix\n\
@@ -506,7 +423,6 @@ mod tests {
             singularize_last_word("additional Abysses"),
             "additional Abyss"
         );
-        // No trailing plural: unchanged.
         assert_eq!(singularize_last_word("Shrine"), "Shrine");
     }
 
@@ -520,7 +436,6 @@ mod tests {
             singular_additional_variant("Map contains # additional Strongboxes").as_deref(),
             Some("Map contains an additional Strongbox")
         );
-        // Not an "# additional <noun>" template → no variant.
         assert_eq!(
             singular_additional_variant("#% increased Magic Monsters"),
             None

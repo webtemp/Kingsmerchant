@@ -1,12 +1,9 @@
-//! Rate-limit bucket tests: simulated header sequences and request
-//! patterns → expected wait times. The header values mirror a real capture
-//! (`x-rate-limit-ip: 5:10:60,15:60:300,30:300:1800`).
+//! Rate-limit bucket tests: header sequences and request patterns → expected wait times.
 
 use std::time::{Duration, Instant};
 
 use trade_api::rate_limit::RateLimiter;
 
-/// Build the `(name, value)` header list for the `Ip` rule.
 fn ip_headers(limit: &str, state: &str) -> Vec<(String, String)> {
     vec![
         (
@@ -43,7 +40,6 @@ fn under_the_limit_never_waits() {
     let mut rl = RateLimiter::new();
     rl.observe(&ip_headers("5:10:60", "1:10:0"), t0);
 
-    // Four requests against a max of five: still room.
     for i in 0..4 {
         rl.on_request(t0 + Duration::from_secs(i));
     }
@@ -59,17 +55,14 @@ fn fifth_request_in_window_waits_for_the_oldest_to_age_out() {
     let mut rl = RateLimiter::new();
     rl.observe(&ip_headers("5:10:60", "1:10:0"), t0);
 
-    // Five requests at t0 fills the 10s bucket; the oldest ages out at t0+10.
     for _ in 0..5 {
         rl.on_request(t0);
     }
     assert_eq!(rl.delay_before_next(t0), Duration::from_secs(10));
-    // Three seconds later, seven seconds remain.
     assert_eq!(
         rl.delay_before_next(t0 + Duration::from_secs(3)),
         Duration::from_secs(7)
     );
-    // Once the window has fully passed, we're clear.
     assert_eq!(
         rl.delay_before_next(t0 + Duration::from_secs(10)),
         Duration::ZERO
@@ -82,11 +75,9 @@ fn spread_requests_wait_only_until_the_oldest_relevant_one_expires() {
     let mut rl = RateLimiter::new();
     rl.observe(&ip_headers("5:10:60", "1:10:0"), t0);
 
-    // Requests at 0,1,2,3,4s — five within the window as of t0+4.
     for i in 0..5 {
         rl.on_request(t0 + Duration::from_secs(i));
     }
-    // The oldest (t0) ages out at t0+10, i.e. 6s after t0+4.
     assert_eq!(
         rl.delay_before_next(t0 + Duration::from_secs(4)),
         Duration::from_secs(6)
@@ -97,12 +88,10 @@ fn spread_requests_wait_only_until_the_oldest_relevant_one_expires() {
 fn the_tightest_bucket_dominates() {
     let t0 = Instant::now();
     let mut rl = RateLimiter::new();
-    // 2 per 10s, but also 10 per 60s. The per-10s bucket bites first.
     rl.observe(&ip_headers("2:10:60,10:60:300", "0:10:0,0:60:0"), t0);
 
     rl.on_request(t0);
     rl.on_request(t0);
-    // Per-10s bucket full (2/2); per-60s nowhere near (2/10).
     assert_eq!(rl.delay_before_next(t0), Duration::from_secs(10));
 }
 
@@ -110,7 +99,6 @@ fn the_tightest_bucket_dominates() {
 fn active_server_penalty_forces_a_wait() {
     let t0 = Instant::now();
     let mut rl = RateLimiter::new();
-    // State's third field is an active penalty of 30s even though usage is low.
     rl.observe(&ip_headers("5:10:60", "5:10:30"), t0);
     assert_eq!(rl.delay_before_next(t0), Duration::from_secs(30));
     assert_eq!(

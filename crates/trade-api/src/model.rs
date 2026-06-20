@@ -4,9 +4,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-// ---- search request --------------------------------------------------------
-
-/// Body of `POST /api/trade2/search/{league}`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SearchRequest {
     pub query: Query,
@@ -17,11 +14,8 @@ pub struct SearchRequest {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Query {
     pub status: Status,
-    /// Base type (exact match). Set for uniques/normals and for magic items
-    /// once the base has been split out of the fused name.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub type_: Option<String>,
-    /// Rolled name — only uniques have one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -43,21 +37,16 @@ impl Status {
     }
 }
 
-/// A group of stat filters combined with one logical operator.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StatGroup {
     #[serde(rename = "type")]
     pub type_: String,
     pub filters: Vec<StatFilter>,
-    /// Group-level value. For a `count` group this is the count threshold
-    /// (`{ "min": 2 }` = at least two member filters must match); omitted for
-    /// `and` groups.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<StatValue>,
 }
 
 impl StatGroup {
-    /// An `and` group: every member filter must match.
     pub fn and(filters: Vec<StatFilter>) -> Self {
         StatGroup {
             type_: "and".to_string(),
@@ -66,9 +55,7 @@ impl StatGroup {
         }
     }
 
-    /// A `count` group: at least `min` of the member filters must match. Used
-    /// for fungible elemental-resistance searches, where any of Fire/Cold/
-    /// Lightning can satisfy a given value threshold.
+    /// At least `min` of the member filters must match.
     pub fn count(filters: Vec<StatFilter>, min: u32) -> Self {
         StatGroup {
             type_: "count".to_string(),
@@ -95,8 +82,6 @@ pub struct StatValue {
 }
 
 impl StatValue {
-    /// A `{ "min": v }` value, emitting an integer when `v` is whole so the
-    /// request body reads `"min": 30` rather than `"min": 30.0`.
     pub fn min(v: f64) -> Self {
         StatValue {
             min: number(v),
@@ -104,7 +89,6 @@ impl StatValue {
         }
     }
 
-    /// A `{ "min": .., "max": .. }` value from optional bounds (detailed mode).
     pub fn range(min: Option<f64>, max: Option<f64>) -> Self {
         StatValue {
             min: min.and_then(number),
@@ -145,8 +129,6 @@ impl Filters {
     }
 }
 
-/// The `map_filters` group: waystone/map endgame properties. Only the waystone
-/// tier (`map_tier`) is modelled — its dedicated search on the trade site.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MapFilters {
     pub filters: MapFilterFields,
@@ -154,28 +136,20 @@ pub struct MapFilters {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct MapFilterFields {
-    /// `map_tier` — "Waystone Tier", a `{ "min": .., "max": .. }` value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_tier: Option<StatValue>,
 }
 
-/// The `misc_filters` group: boolean item attributes (corrupted, mirrored,
-/// identified, …), keyed by trade filter id, each `{ "option": "true"/"false" }`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MiscFilters {
     pub filters: BTreeMap<String, OptionFilter>,
 }
 
-/// The `equipment_filters` group: an item's defence/offence properties (armour
-/// `ar`, evasion `ev`, energy shield `es`, block, spirit, …), keyed by the
-/// trade filter id. These are item *properties*, not affix mods.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EquipmentFilters {
     pub filters: BTreeMap<String, StatValue>,
 }
 
-/// The `trade_filters` group: seller/price constraints. Used for the
-/// detailed-mode price-range filter.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TradeFilters {
     pub filters: TradeFilterFields,
@@ -187,22 +161,17 @@ pub struct TradeFilterFields {
     pub price: Option<PriceRange>,
 }
 
-/// A `{ "min": .., "max": .., "option": "exalted" }` price filter.
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct PriceRange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min: Option<serde_json::Number>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max: Option<serde_json::Number>,
-    /// Currency the bounds are expressed in (`exalted`, `divine`, …). `None`
-    /// lets the trade site match across currencies (chaos-equivalent).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub option: Option<String>,
 }
 
 impl PriceRange {
-    /// Build from optional float bounds + currency; whole numbers serialize as
-    /// integers. Returns `None` when there are no bounds at all.
     pub fn new(min: Option<f64>, max: Option<f64>, option: Option<String>) -> Option<Self> {
         if min.is_none() && max.is_none() {
             return None;
@@ -226,12 +195,8 @@ pub struct TypeFilterFields {
     pub category: Option<OptionFilter>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rarity: Option<OptionFilter>,
-    /// Item quality (`{min,max}`) — `type_filters` is where the trade API keeps
-    /// it, not `equipment_filters`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<StatValue>,
-    /// Item level (`{min,max}`) — a major price driver (an ilvl-82 base can be
-    /// worth far more than ilvl-81). Also in `type_filters`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ilvl: Option<StatValue>,
 }
@@ -263,9 +228,6 @@ impl Sort {
     }
 }
 
-// ---- responses -------------------------------------------------------------
-
-/// Response of `POST /api/trade2/search/{league}`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SearchResponse {
     pub id: String,
@@ -277,8 +239,7 @@ pub struct SearchResponse {
     pub total: u64,
 }
 
-/// Response of `GET /api/trade2/fetch/{ids}`. Entries can be `null` when an id
-/// has gone stale between search and fetch.
+/// Entries can be `null` when an id has gone stale between search and fetch.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FetchResponse {
     #[serde(default)]
@@ -289,7 +250,6 @@ pub struct FetchResponse {
 pub struct ResultEntry {
     pub id: String,
     pub listing: Listing,
-    /// The item block is kept raw; the UI phase decides what to render.
     #[serde(default)]
     pub item: serde_json::Value,
 }
@@ -303,16 +263,12 @@ pub struct Listing {
     pub price: Option<Price>,
     #[serde(default)]
     pub whisper: Option<String>,
-    /// Short-lived (≈5 min) JWT that teleports you into this seller's hideout
-    /// for an Instant Buyout. Only returned to an **authenticated** fetch
-    /// (POESESSID); absent for anonymous requests and online listings. POST to
-    /// `/api/trade2/whisper` to trigger travel.
+    /// Short-lived JWT for Instant Buyout teleport; only on authenticated fetch.
     #[serde(default)]
     pub hideout_token: Option<String>,
 }
 
 impl Listing {
-    /// Whether the seller is online (and not merely afk/dnd).
     pub fn is_online(&self) -> bool {
         self.account.is_online()
     }
@@ -328,7 +284,6 @@ pub struct Account {
 }
 
 impl Account {
-    /// Whether the account is online (present and not flagged afk/dnd).
     pub fn is_online(&self) -> bool {
         self.online.as_ref().is_some_and(|o| o.status.is_none())
     }
@@ -338,7 +293,6 @@ impl Account {
 pub struct Online {
     #[serde(default)]
     pub league: Option<String>,
-    /// `afk`, `dnd`, … — absent means plainly online.
     #[serde(default)]
     pub status: Option<String>,
 }
