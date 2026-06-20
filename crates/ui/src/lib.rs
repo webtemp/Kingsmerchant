@@ -102,6 +102,7 @@ pub(crate) enum HotkeySlot {
     Macro,
     Macro2,
     Close,
+    Settings,
 }
 
 pub struct QuickModeApp {
@@ -372,6 +373,7 @@ impl QuickModeApp {
             HotkeySlot::Macro => self.config.hotkey_macro = binding,
             HotkeySlot::Macro2 => self.config.hotkey_macro2 = binding,
             HotkeySlot::Close => self.config.hotkey_close = binding,
+            HotkeySlot::Settings => self.config.hotkey_settings = binding,
         }
         // Apply to the running watcher first so the rebind is live even if the
         // disk write fails.

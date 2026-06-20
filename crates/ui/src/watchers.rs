@@ -34,6 +34,7 @@ impl HotkeyHandle {
             &config.hotkey_macro,
             &config.hotkey_macro2,
             &config.hotkey_close,
+            &config.hotkey_settings,
         )
     }
 
@@ -105,6 +106,13 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                 // Escape dismisses — overlay control, not gated to POE2 focus.
                 HotkeyEvent::Close => {
                     let _ = tx.send(Hotkey::Close);
+                    ctx.request_repaint();
+                }
+                // Open settings — deliberately NOT focus-gated (you may have
+                // tabbed away). Idempotent, so duplicate device-node echoes are
+                // harmless; no debounce needed.
+                HotkeyEvent::OpenSettings => {
+                    let _ = tx.send(Hotkey::OpenSettings);
                     ctx.request_repaint();
                 }
                 // Ctrl/Alt state — must be forwarded INSTANTLY (overlay drag/show).

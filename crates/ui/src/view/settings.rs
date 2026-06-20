@@ -24,6 +24,11 @@ const TRADE_STATUSES: &[(&str, &str)] = &[
 /// Popup position modes for the settings dropdown (config id, label).
 const POSITION_MODES: &[(&str, &str)] = &[("center", "Center"), ("fixed", "Fixed")];
 
+/// Shared width for the right-edge button-like controls (the dropdowns and the
+/// hotkey-record buttons) so they form one consistent column. The theme-preset
+/// row is intentionally excluded — it's a multi-button row, not a single control.
+const CONTROL_WIDTH: f32 = 140.0;
+
 impl QuickModeApp {
     /// Render the settings surface body. Call [`pump`](Self::pump) first
     /// (shared with the popup surface).
@@ -62,6 +67,14 @@ impl QuickModeApp {
             .max_height(560.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
+                // egui's default scrollbar is *floating* — it allocates no space
+                // and paints on top of content, so the right-edge controls
+                // (combos/sliders, laid out right-to-left) would sit under it and
+                // get clipped. Reserve the bar's width on the right so they clear
+                // it. `bar_width` is the fully-expanded (hover/scroll) width.
+                let bar = ui.spacing().scroll.bar_width;
+                ui.set_max_width((ui.available_width() - bar).max(0.0));
+
                 // League (live — the client switches without a rebuild).
                 setting_row(ui, "League", |ui| {
                     if self.leagues.is_empty() {
@@ -69,6 +82,7 @@ impl QuickModeApp {
                     } else {
                         let before = self.config.league.clone();
                         egui::ComboBox::from_id_salt("settings-league")
+                            .width(CONTROL_WIDTH)
                             .selected_text(&self.config.league)
                             .show_ui(ui, |ui| {
                                 for lg in &self.leagues {
@@ -99,6 +113,7 @@ impl QuickModeApp {
                         let current = self.config.realm.clone().unwrap_or_else(|| "pc".into());
                         let mut chosen = current.clone();
                         egui::ComboBox::from_id_salt("settings-realm")
+                            .width(CONTROL_WIDTH)
                             .selected_text(&current)
                             .show_ui(ui, |ui| {
                                 for r in ["pc", "sony", "xbox"] {
@@ -117,6 +132,7 @@ impl QuickModeApp {
                 setting_row(ui, "Listings", |ui| {
                     let before = self.config.trade_status.clone();
                     egui::ComboBox::from_id_salt("settings-status")
+                        .width(CONTROL_WIDTH)
                         .selected_text(trade_status_label(&self.config.trade_status))
                         .show_ui(ui, |ui| {
                             for (id, label) in TRADE_STATUSES {
@@ -245,6 +261,7 @@ impl QuickModeApp {
                 setting_row(ui, "Popup position", |ui| {
                     let before = self.config.position_mode.clone();
                     egui::ComboBox::from_id_salt("settings-position")
+                        .width(CONTROL_WIDTH)
                         .selected_text(position_label(&self.config.position_mode))
                         .show_ui(ui, |ui| {
                             for (id, label) in POSITION_MODES {
@@ -373,6 +390,52 @@ impl QuickModeApp {
 
                 ui.separator();
 
+                // Hotkey bindings (pushed live to the evdev watcher by
+                // `commit_hotkey`). Click a row, then press the new combo.
+                ui.label(RichText::new("Hotkeys").strong());
+                ui.label(
+                    RichText::new("Click a hotkey, then press the new combo (Esc cancels).")
+                        .weak()
+                        .small(),
+                );
+                let rows = [
+                    (
+                        HotkeySlot::Quick,
+                        "Price check",
+                        self.config.hotkey_quick.clone(),
+                    ),
+                    (
+                        HotkeySlot::Macro,
+                        "Hideout macro",
+                        self.config.hotkey_macro.clone(),
+                    ),
+                    (
+                        HotkeySlot::Macro2,
+                        "Exit macro",
+                        self.config.hotkey_macro2.clone(),
+                    ),
+                    (
+                        HotkeySlot::Close,
+                        "Close popup",
+                        self.config.hotkey_close.clone(),
+                    ),
+                    (
+                        HotkeySlot::Settings,
+                        "Open settings",
+                        self.config.hotkey_settings.clone(),
+                    ),
+                ];
+                for (slot, label, current) in rows {
+                    let recording = self.recording_hotkey == Some(slot);
+                    if hotkey_record_row(ui, label, &current, recording) {
+                        // Toggle: clicking the active row cancels, otherwise it
+                        // (re)starts recording for that row.
+                        self.recording_hotkey = if recording { None } else { Some(slot) };
+                    }
+                }
+
+                ui.separator();
+
                 // Appearance / theme (live — the overlay reads the resolved
                 // palette each frame, so colour & opacity changes are instant).
                 ui.label(RichText::new("Appearance").strong());
@@ -428,47 +491,6 @@ impl QuickModeApp {
                 if c {
                     changed = true;
                     retheme = true;
-                }
-
-                ui.separator();
-
-                // Hotkey bindings (pushed live to the evdev watcher by
-                // `commit_hotkey`). Click a row, then press the new combo.
-                ui.label(RichText::new("Hotkeys").strong());
-                ui.label(
-                    RichText::new("Click a hotkey, then press the new combo (Esc cancels).")
-                        .weak()
-                        .small(),
-                );
-                let rows = [
-                    (
-                        HotkeySlot::Quick,
-                        "Price check",
-                        self.config.hotkey_quick.clone(),
-                    ),
-                    (
-                        HotkeySlot::Macro,
-                        "Hideout macro",
-                        self.config.hotkey_macro.clone(),
-                    ),
-                    (
-                        HotkeySlot::Macro2,
-                        "Exit macro",
-                        self.config.hotkey_macro2.clone(),
-                    ),
-                    (
-                        HotkeySlot::Close,
-                        "Close popup",
-                        self.config.hotkey_close.clone(),
-                    ),
-                ];
-                for (slot, label, current) in rows {
-                    let recording = self.recording_hotkey == Some(slot);
-                    if hotkey_record_row(ui, label, &current, recording) {
-                        // Toggle: clicking the active row cancels, otherwise it
-                        // (re)starts recording for that row.
-                        self.recording_hotkey = if recording { None } else { Some(slot) };
-                    }
                 }
             });
 
@@ -630,7 +652,7 @@ fn hotkey_record_row(ui: &mut egui::Ui, label: &str, current: &str, recording: b
             } else {
                 RichText::new(current)
             };
-            let mut button = egui::Button::new(text).min_size(egui::vec2(140.0, 0.0));
+            let mut button = egui::Button::new(text).min_size(egui::vec2(CONTROL_WIDTH, 0.0));
             // Tint the active row so it's clear which one is listening.
             if recording {
                 button = button.fill(Color32::from_rgb(0x4b, 0x6b, 0xff));

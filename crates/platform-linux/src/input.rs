@@ -40,6 +40,10 @@ pub enum HotkeyEvent {
     Macro,
     /// F2 — run the second configured chat macro (e.g. `/exit`) via uinput.
     Macro2,
+    /// Open the settings surface (Ctrl+Alt+S by default). Unlike the price-check
+    /// / macro hotkeys this is *not* gated to POE2 focus — it's for when you've
+    /// tabbed away — and it's a non-WASD combo so the leaked key is harmless.
+    OpenSettings,
 }
 
 /// A key plus an exact modifier combination, parsed from a string like
@@ -101,6 +105,7 @@ pub struct HotkeyBindings {
     pub close: Binding,
     pub macro_: Binding,
     pub macro2: Binding,
+    pub settings: Binding,
 }
 
 impl Default for HotkeyBindings {
@@ -130,6 +135,12 @@ impl Default for HotkeyBindings {
                 alt: false,
                 shift: false,
             },
+            settings: Binding {
+                key: Key::KEY_S,
+                ctrl: true,
+                alt: true,
+                shift: false,
+            },
         }
     }
 }
@@ -137,7 +148,13 @@ impl Default for HotkeyBindings {
 impl HotkeyBindings {
     /// Build from config strings, falling back to the default for any that fail
     /// to parse (logged, so a typo'd binding doesn't disable the whole hotkey).
-    pub fn from_strings(quick: &str, macro_: &str, macro2: &str, close: &str) -> Self {
+    pub fn from_strings(
+        quick: &str,
+        macro_: &str,
+        macro2: &str,
+        close: &str,
+        settings: &str,
+    ) -> Self {
         let d = Self::default();
         let one = |s: &str, fallback: Binding| {
             Binding::parse(s).unwrap_or_else(|e| {
@@ -150,6 +167,7 @@ impl HotkeyBindings {
             macro_: one(macro_, d.macro_),
             macro2: one(macro2, d.macro2),
             close: one(close, d.close),
+            settings: one(settings, d.settings),
         }
     }
 
@@ -172,6 +190,8 @@ impl HotkeyBindings {
             Some(HotkeyEvent::Macro)
         } else if self.macro2.matches(key, ctrl, alt, shift) {
             Some(HotkeyEvent::Macro2)
+        } else if self.settings.matches(key, ctrl, alt, shift) {
+            Some(HotkeyEvent::OpenSettings)
         } else {
             None
         }
@@ -525,7 +545,7 @@ mod tests {
     fn from_strings_falls_back_on_invalid_binding() {
         // A garbage `quick` binding falls back to the default Ctrl+C; the rest
         // parse from the given strings.
-        let b = HotkeyBindings::from_strings("not-a-key", "F5", "F2", "Escape");
+        let b = HotkeyBindings::from_strings("not-a-key", "F5", "F2", "Escape", "Ctrl+Alt+S");
         assert_eq!(b.quick, HotkeyBindings::default().quick);
         assert_eq!(
             b.event_for(Key::KEY_C, true, false, false),
@@ -535,8 +555,8 @@ mod tests {
 
     #[test]
     fn from_strings_rebinds_to_custom_keys() {
-        // Args: quick, macro, macro2, close.
-        let b = HotkeyBindings::from_strings("Ctrl+D", "F8", "F9", "Q");
+        // Args: quick, macro, macro2, close, settings.
+        let b = HotkeyBindings::from_strings("Ctrl+D", "F8", "F9", "Q", "Ctrl+Alt+P");
         assert_eq!(
             b.event_for(Key::KEY_D, true, false, false),
             Some(HotkeyEvent::QuickCopy)
@@ -549,6 +569,10 @@ mod tests {
             b.event_for(Key::KEY_Q, false, false, false),
             Some(HotkeyEvent::Close)
         );
+        assert_eq!(
+            b.event_for(Key::KEY_P, true, true, false),
+            Some(HotkeyEvent::OpenSettings)
+        );
     }
 
     #[test]
@@ -556,14 +580,15 @@ mod tests {
         // Default quick is Ctrl+C — POE2 copies on its own.
         assert!(!HotkeyBindings::default().quick_needs_synthetic_copy());
         // Any other binding (e.g. Ctrl+D) needs a synthesized Ctrl+C.
-        let rebound = HotkeyBindings::from_strings("Ctrl+D", "F5", "F2", "Escape");
+        let rebound = HotkeyBindings::from_strings("Ctrl+D", "F5", "F2", "Escape", "Ctrl+Alt+S");
         assert!(rebound.quick_needs_synthetic_copy());
         // Even C without Ctrl, or with extra modifiers, isn't the native copy.
         assert!(
-            HotkeyBindings::from_strings("C", "F5", "F2", "Escape").quick_needs_synthetic_copy()
+            HotkeyBindings::from_strings("C", "F5", "F2", "Escape", "Ctrl+Alt+S")
+                .quick_needs_synthetic_copy()
         );
         assert!(
-            HotkeyBindings::from_strings("Ctrl+Alt+C", "F5", "F2", "Escape")
+            HotkeyBindings::from_strings("Ctrl+Alt+C", "F5", "F2", "Escape", "Ctrl+Alt+S")
                 .quick_needs_synthetic_copy()
         );
     }

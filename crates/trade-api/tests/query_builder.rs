@@ -7,8 +7,7 @@ use parser::parse_item;
 use trade_api::{
     build_detailed_query, build_search_query, category_for, DetailedFilters, EquipmentSelection,
     ItemDefinitions, ListingStatus, MiscSelection, MiscState, PriceFilter, QueryOptions,
-    ResistanceMode,
-    StatDefinitions, StatSelection, StatValue,
+    ResistanceMode, StatDefinitions, StatSelection, StatValue,
 };
 
 /// The three plain single-element resistance stat ids (explicit variant).

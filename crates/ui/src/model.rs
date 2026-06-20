@@ -12,22 +12,31 @@ use trade_api::{
 /// Standard rare-item affix cap: up to three prefixes and three suffixes.
 const MAX_AFFIXES_PER_GROUP: usize = 3;
 
-/// Tablets (Breach/Abyss/… map-device tablets) cap at two prefixes and two
-/// suffixes — four mods total, not six like normal rare gear.
-const MAX_TABLET_AFFIXES_PER_GROUP: usize = 2;
+/// Tablets (Breach/Abyss/… map-device tablets) and jewels cap at two prefixes
+/// and two suffixes — four mods total, not six like normal rare gear.
+const MAX_LOW_AFFIXES_PER_GROUP: usize = 2;
 
 /// Open (empty) prefix and suffix slots on a rare item, as `(prefix, suffix)`.
 /// Only rares can be crafted into, so non-rares always report `(false, false)`.
 /// Counts each `{ Prefix }` / `{ Suffix }` descriptor as one filled slot.
 ///
-/// Tablets use a lower cap (2/2) than normal gear (3/3), so a full tablet
-/// correctly reports no open slots instead of phantom empty rows.
+/// Tablets and jewels use a lower cap (2/2) than normal gear (3/3), so a full
+/// one correctly reports no open slots instead of phantom empty rows.
+///
+/// Jewels and Tablets are the *only* rare-craftable classes with the 2/2 cap
+/// (verified against community references, 2026-06). The other special classes
+/// need no entry here:
+/// - Life/Mana Flasks, Charms and Relics are **Magic-only** — they can never be
+///   Rare, so the rarity guard below already reports them as having no open
+///   slots. Don't add a lower-cap branch for them.
+/// - Waystones are Rare-craftable but use the **standard 3/3** cap, so they fall
+///   through to `MAX_AFFIXES_PER_GROUP` on purpose.
 pub(crate) fn open_affix_slots(item: &Item) -> (bool, bool) {
     if item.rarity != Rarity::Rare {
         return (false, false);
     }
-    let max = if item.item_class == "Tablet" {
-        MAX_TABLET_AFFIXES_PER_GROUP
+    let max = if matches!(item.item_class.as_str(), "Tablet" | "Jewels") {
+        MAX_LOW_AFFIXES_PER_GROUP
     } else {
         MAX_AFFIXES_PER_GROUP
     };
@@ -489,6 +498,52 @@ mod tests {
         assert_eq!(
             open_affix_slots(&item_with_class("Rings", "Rare", 2, 2)),
             (true, true)
+        );
+    }
+
+    #[test]
+    fn jewels_cap_affixes_at_two_per_group() {
+        // Jewels share the tablet 2/2 cap. The reported item — 2 prefixes, 1
+        // suffix — must show NO open prefix and one open suffix (the bug: it
+        // reported a phantom 3rd prefix slot as craftable).
+        assert_eq!(
+            open_affix_slots(&item_with_class("Jewels", "Rare", 2, 1)),
+            (false, true)
+        );
+        // A full jewel (2 + 2) has no open slots.
+        assert_eq!(
+            open_affix_slots(&item_with_class("Jewels", "Rare", 2, 2)),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn magic_only_classes_never_report_open_slots() {
+        // Flasks, charms and relics are Magic-only in PoE2 (verified 2026-06) —
+        // they can never be Rare, so the rarity guard must report nothing
+        // craftable no matter how many mods they carry. This guards against
+        // anyone mistakenly adding a lower-cap branch for them.
+        for class in ["Life Flasks", "Mana Flasks", "Charms", "Relics"] {
+            assert_eq!(
+                open_affix_slots(&item_with_class(class, "Magic", 1, 1)),
+                (false, false),
+                "{class} is Magic-only and must report no open slots"
+            );
+        }
+    }
+
+    #[test]
+    fn waystones_use_the_standard_three_per_group_cap() {
+        // Rare waystones cap at 3/3 like normal gear — NOT the jewel/tablet 2/2.
+        // A 2 + 2 waystone still has room in both groups.
+        assert_eq!(
+            open_affix_slots(&item_with_class("Waystones", "Rare", 2, 2)),
+            (true, true)
+        );
+        // A full 3 + 3 waystone has no open slots.
+        assert_eq!(
+            open_affix_slots(&item_with_class("Waystones", "Rare", 3, 3)),
+            (false, false)
         );
     }
 }
