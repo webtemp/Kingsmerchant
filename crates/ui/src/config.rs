@@ -21,7 +21,7 @@ pub struct Config {
     pub filters_off_by_default: Vec<String>,
     /// Filter mins seeded at this percentage of the rolled value. 1..=100.
     pub filter_min_percent: u32,
-    /// Cache lifetime in seconds; `0` disables, capped at [`MAX_CACHE_TTL_SECS`].
+    /// Cache lifetime in seconds; `0` disables, capped at 120s.
     pub cache_ttl_secs: u32,
     /// Chat command for the macro hotkey; `null` disables it.
     pub f5_command: Option<String>,

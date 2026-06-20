@@ -130,7 +130,10 @@ const WARMUP_TEXT: &str = "\
 pub(crate) enum Placement {
     Center,
     /// Fixed top-left position in output-logical pixels.
-    Fixed { x: i32, y: i32 },
+    Fixed {
+        x: i32,
+        y: i32,
+    },
 }
 
 /// GL state for one surface, created lazily on the first configure.

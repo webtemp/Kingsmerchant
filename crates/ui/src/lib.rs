@@ -46,11 +46,16 @@ pub type Client = TradeClient<ReqwestTransport>;
 pub enum Hotkey {
     /// Price-check combo pressed and POE2 focused — show a "reading…" state.
     CopyStarted,
-    Item { text: String },
+    Item {
+        text: String,
+    },
     /// No item before the timeout — usually POE2 skipping the copy on a static cursor.
     Missed,
     Close,
-    Mods { ctrl: bool, alt: bool },
+    Mods {
+        ctrl: bool,
+        alt: bool,
+    },
     Macro,
     Macro2,
     OpenSettings,
