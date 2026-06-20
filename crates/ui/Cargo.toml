@@ -1,6 +1,6 @@
 [package]
 name = "ui"
-version = "0.14.0"
+version = "0.14.1"
 description = "egui price-check UI for kingsmerchant, windowing-agnostic."
 edition.workspace = true
 license.workspace = true

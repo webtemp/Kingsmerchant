@@ -1,6 +1,6 @@
 [package]
 name = "platform-linux"
-version = "0.6.0"
+version = "0.6.1"
 description = "Linux platform glue for kingsmerchant: evdev hotkeys, X11 clipboard, uinput injection, tray."
 edition.workspace = true
 license.workspace = true
