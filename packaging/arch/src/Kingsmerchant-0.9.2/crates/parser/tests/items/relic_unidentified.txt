@@ -1,9 +1,0 @@
-Item Class: Relics
-Rarity: Unique
-Amphora Relic
---------
-Item Level: 82
---------
-Unidentified
---------
-Place this item on the Relic Altar at the start of the Trial of the Sekhemas

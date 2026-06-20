@@ -1,8 +1,0 @@
-Item Class: Stackable Currency
-Rarity: Currency
-Breach Splinter
---------
-Stack Size: 205/300
---------
-Combine 300 Splinters to create a Revelatory Wombgift.
-Shift click to unstack.

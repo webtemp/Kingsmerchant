@@ -1,7 +1,0 @@
-Item Class: Pinnacle Keys
-Rarity: Currency
-Ancient Crisis Fragment
---------
-A carved piece of something older than the Vaal.
---------
-Can be placed in a door in The Burning Monolith.
