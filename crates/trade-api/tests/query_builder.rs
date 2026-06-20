@@ -6,7 +6,8 @@
 use parser::parse_item;
 use trade_api::{
     build_detailed_query, build_search_query, category_for, DetailedFilters, EquipmentSelection,
-    ItemDefinitions, ListingStatus, MiscSelection, PriceFilter, QueryOptions, ResistanceMode,
+    ItemDefinitions, ListingStatus, MiscSelection, MiscState, PriceFilter, QueryOptions,
+    ResistanceMode,
     StatDefinitions, StatSelection, StatValue,
 };
 
@@ -473,20 +474,25 @@ fn detailed_query_carries_checked_misc_filters() {
             misc: vec![
                 MiscSelection {
                     key: "corrupted".to_string(),
-                    on: true,
+                    state: MiscState::Include,
                 },
                 MiscSelection {
                     key: "mirrored".to_string(),
-                    on: false,
+                    state: MiscState::Any,
+                },
+                MiscSelection {
+                    key: "identified".to_string(),
+                    state: MiscState::Exclude,
                 },
             ],
             ..Default::default()
         },
     );
     let misc = &req.query.filters.misc_filters.as_ref().unwrap().filters;
-    // Only the checked one is emitted, as option "true".
-    assert_eq!(misc.len(), 1);
+    // Include → "true", Exclude → "false", Any → omitted entirely.
+    assert_eq!(misc.len(), 2);
     assert_eq!(misc["corrupted"].option, "true");
+    assert_eq!(misc["identified"].option, "false");
     assert!(!misc.contains_key("mirrored"));
 }
 

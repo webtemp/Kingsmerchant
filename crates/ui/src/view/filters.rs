@@ -6,9 +6,9 @@ use std::time::Instant;
 use egui::{Color32, RichText};
 use egui_phosphor::regular as ph;
 
-use trade_api::{is_elemental_resistance, ResistanceMode};
+use trade_api::{is_elemental_resistance, MiscState, ResistanceMode};
 
-use crate::model::{fmt_amount, MinFilter};
+use crate::model::{fmt_amount, FilterTab, MinFilter};
 use crate::QuickModeApp;
 
 use super::theme::affix_blue;
@@ -63,147 +63,184 @@ impl QuickModeApp {
         egui::CollapsingHeader::new(RichText::new(format!("{} Filters", ph::FUNNEL)).strong())
             .default_open(true)
             .show(ui, |ui| {
-                // Price range, right-aligned.
+                // Split the filters across two tabs so the panel doesn't get
+                // crowded: "General" holds the bulk (price, defences, modifiers,
+                // …) and "Miscellaneous" holds the boolean attribute toggles. The
+                // Misc tab shows its active-filter count alongside the label.
+                let active_misc = self
+                    .misc
+                    .iter()
+                    .filter(|m| m.state != MiscState::Any)
+                    .count();
                 ui.horizontal(|ui| {
-                    ui.label("Price");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let before = self.price_filter.currency.clone();
-                        egui::ComboBox::from_id_salt("price-currency")
-                            .selected_text(currency_label(&self.price_filter.currency))
-                            .show_ui(ui, |ui| {
-                                for (id, label) in PRICE_CURRENCIES {
-                                    ui.selectable_value(
-                                        &mut self.price_filter.currency,
-                                        id.to_string(),
-                                        *label,
-                                    );
-                                }
-                            });
-                        changed |= self.price_filter.currency != before;
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut self.price_filter.max)
-                                    .hint_text("max")
-                                    .desired_width(FILTER_FIELD_W),
-                            )
-                            .changed();
-                        ui.label("–");
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut self.price_filter.min)
-                                    .hint_text("min")
-                                    .desired_width(FILTER_FIELD_W),
-                            )
-                            .changed();
-                    });
+                    ui.selectable_value(&mut self.filter_tab, FilterTab::General, "General");
+                    let misc_label = if active_misc > 0 {
+                        format!("Miscellaneous ({active_misc})")
+                    } else {
+                        "Miscellaneous".to_string()
+                    };
+                    ui.selectable_value(&mut self.filter_tab, FilterTab::Misc, misc_label);
                 });
+                ui.separator();
 
-                // Item level (type_filters.ilvl) — default-on for Normal bases
-                // only. And item quality (type_filters.quality).
-                changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
-                changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
-                // Waystone tier (map_filters.map_tier) — only for waystones.
-                let is_waystone = self
-                    .item
-                    .as_ref()
-                    .is_some_and(|i| i.item_class == "Waystones");
-                if is_waystone {
-                    changed |= min_filter_row(ui, "Waystone tier ≥", &mut self.waystone_filter);
-                }
-
-                // Rarity (type_filters.rarity), defaulting to the item's own.
-                ui.horizontal(|ui| {
-                    ui.label("Rarity");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let before = self.rarity_filter.clone();
-                        egui::ComboBox::from_id_salt("rarity-filter")
-                            .selected_text(rarity_label(&self.rarity_filter))
-                            .show_ui(ui, |ui| {
-                                for (id, label) in RARITIES {
-                                    ui.selectable_value(
-                                        &mut self.rarity_filter,
-                                        (*id).to_string(),
-                                        *label,
-                                    );
-                                }
-                            });
-                        changed |= self.rarity_filter != before;
-                    });
-                });
-
-                // Defences / equipment properties (armour / evasion / ES / …),
-                // built from the item's stats block, not its affix mods.
-                if !self.equipment.is_empty() {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("Defences").strong());
-                    for row in &mut self.equipment {
-                        ui.horizontal(|ui| {
-                            changed |= ui.checkbox(&mut row.enabled, "").changed();
-                            ui.label(RichText::new(&row.label).strong());
-                            changed |= min_max_fields(ui, &mut row.min, &mut row.max);
-                        });
-                    }
-                }
-
-                ui.add_space(6.0);
-                if !self.equipment.is_empty() {
-                    ui.label(RichText::new("Modifiers").strong());
-                }
-
-                // Resistance-search mode — only meaningful when the item carries
-                // a Fire/Cold/Lightning roll, so hide it otherwise.
-                if self.filters.iter().any(|r| is_elemental_resistance(&r.id)) {
-                    ui.horizontal(|ui| {
-                        ui.label("Resistances");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let before = self.resistance_mode;
-                            egui::ComboBox::from_id_salt("resistance-mode")
-                                .selected_text(resistance_label(self.resistance_mode))
-                                .show_ui(ui, |ui| {
-                                    for (mode, label, help) in RESISTANCE_MODES {
-                                        ui.selectable_value(
-                                            &mut self.resistance_mode,
-                                            *mode,
-                                            *label,
+                // Pad the active tab up to the tallest tab seen for this item so
+                // switching General/Miscellaneous keeps a constant height — the
+                // auto-sized window otherwise jumps as the body grows/shrinks.
+                let body = ui.scope(|ui| {
+                    ui.set_min_height(self.filter_body_h);
+                    if self.filter_tab == FilterTab::General {
+                        // Price range, right-aligned.
+                        hover_row(ui, |ui| {
+                            ui.label("Price");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let before = self.price_filter.currency.clone();
+                                    egui::ComboBox::from_id_salt("price-currency")
+                                        .selected_text(currency_label(&self.price_filter.currency))
+                                        .show_ui(ui, |ui| {
+                                            for (id, label) in PRICE_CURRENCIES {
+                                                ui.selectable_value(
+                                                    &mut self.price_filter.currency,
+                                                    id.to_string(),
+                                                    *label,
+                                                );
+                                            }
+                                        });
+                                    changed |= self.price_filter.currency != before;
+                                    changed |= ui
+                                        .add(
+                                            egui::TextEdit::singleline(&mut self.price_filter.max)
+                                                .hint_text("max")
+                                                .desired_width(FILTER_FIELD_W),
                                         )
-                                        .on_hover_text(*help);
-                                    }
-                                });
-                            changed |= self.resistance_mode != before;
+                                        .changed();
+                                    ui.label("–");
+                                    changed |= ui
+                                        .add(
+                                            egui::TextEdit::singleline(&mut self.price_filter.min)
+                                                .hint_text("min")
+                                                .desired_width(FILTER_FIELD_W),
+                                        )
+                                        .changed();
+                                },
+                            );
                         });
-                    });
-                }
 
-                if self.filters.is_empty() {
-                    ui.label(
-                        RichText::new("No mapped stats to filter on this item.")
-                            .weak()
-                            .italics(),
-                    );
-                } else {
-                    egui::ScrollArea::vertical()
-                        .max_height(240.0)
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            for row in &mut self.filters {
-                                ui.horizontal(|ui| {
+                        // Item level (type_filters.ilvl) — default-on for Normal bases
+                        // only. And item quality (type_filters.quality).
+                        changed |= min_filter_row(ui, "Item level ≥", &mut self.ilvl_filter);
+                        changed |= min_filter_row(ui, "Quality ≥", &mut self.quality_filter);
+                        // Waystone tier (map_filters.map_tier) — only for waystones.
+                        let is_waystone = self
+                            .item
+                            .as_ref()
+                            .is_some_and(|i| i.item_class == "Waystones");
+                        if is_waystone {
+                            changed |=
+                                min_filter_row(ui, "Waystone tier ≥", &mut self.waystone_filter);
+                        }
+
+                        // Rarity (type_filters.rarity), defaulting to the item's own.
+                        hover_row(ui, |ui| {
+                            ui.label("Rarity");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let before = self.rarity_filter.clone();
+                                    egui::ComboBox::from_id_salt("rarity-filter")
+                                        .selected_text(rarity_label(&self.rarity_filter))
+                                        .show_ui(ui, |ui| {
+                                            for (id, label) in RARITIES {
+                                                ui.selectable_value(
+                                                    &mut self.rarity_filter,
+                                                    (*id).to_string(),
+                                                    *label,
+                                                );
+                                            }
+                                        });
+                                    changed |= self.rarity_filter != before;
+                                },
+                            );
+                        });
+
+                        // Defences / equipment properties (armour / evasion / ES / …),
+                        // built from the item's stats block, not its affix mods.
+                        if !self.equipment.is_empty() {
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Defences").strong());
+                            for row in &mut self.equipment {
+                                hover_row(ui, |ui| {
                                     changed |= ui.checkbox(&mut row.enabled, "").changed();
-                                    if row.is_implicit {
-                                        implicit_pill(ui);
-                                    }
-                                    stat_filter_label(ui, &row.label);
+                                    ui.label(RichText::new(&row.label).strong());
                                     changed |= min_max_fields(ui, &mut row.min, &mut row.max);
                                 });
                             }
-                        });
-                }
+                        }
 
-                // Mods with no GGG trade filter (e.g. a tablet's "Map contains N
-                // additional Rare Chests" — GGG has no searchable variant).
-                // Shown read-only so they don't silently vanish from the panel.
-                if !self.unfilterable_mods.is_empty() {
-                    ui.add_space(6.0);
-                    ui.label(
+                        ui.add_space(6.0);
+                        if !self.equipment.is_empty() {
+                            ui.label(RichText::new("Modifiers").strong());
+                        }
+
+                        // Resistance-search mode — only meaningful when the item carries
+                        // a Fire/Cold/Lightning roll, so hide it otherwise.
+                        if self.filters.iter().any(|r| is_elemental_resistance(&r.id)) {
+                            hover_row(ui, |ui| {
+                                ui.label("Resistances");
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let before = self.resistance_mode;
+                                        egui::ComboBox::from_id_salt("resistance-mode")
+                                            .selected_text(resistance_label(self.resistance_mode))
+                                            .show_ui(ui, |ui| {
+                                                for (mode, label, help) in RESISTANCE_MODES {
+                                                    ui.selectable_value(
+                                                        &mut self.resistance_mode,
+                                                        *mode,
+                                                        *label,
+                                                    )
+                                                    .on_hover_text(*help);
+                                                }
+                                            });
+                                        changed |= self.resistance_mode != before;
+                                    },
+                                );
+                            });
+                        }
+
+                        if self.filters.is_empty() {
+                            ui.label(
+                                RichText::new("No mapped stats to filter on this item.")
+                                    .weak()
+                                    .italics(),
+                            );
+                        } else {
+                            egui::ScrollArea::vertical()
+                                .max_height(240.0)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    for row in &mut self.filters {
+                                        hover_row(ui, |ui| {
+                                            changed |= ui.checkbox(&mut row.enabled, "").changed();
+                                            if row.is_implicit {
+                                                implicit_pill(ui);
+                                            }
+                                            stat_filter_label(ui, &row.label);
+                                            changed |=
+                                                min_max_fields(ui, &mut row.min, &mut row.max);
+                                        });
+                                    }
+                                });
+                        }
+
+                        // Mods with no GGG trade filter (e.g. a tablet's "Map contains N
+                        // additional Rare Chests" — GGG has no searchable variant).
+                        // Shown read-only so they don't silently vanish from the panel.
+                        if !self.unfilterable_mods.is_empty() {
+                            ui.add_space(6.0);
+                            ui.label(
                         RichText::new("Not searchable on trade")
                             .strong()
                             .color(Color32::from_rgb(0xb0, 0xb0, 0xb0)),
@@ -211,24 +248,48 @@ impl QuickModeApp {
                     .on_hover_text(
                         "These mods have no trade-site filter, so they can't narrow the search.",
                     );
-                    for line in &self.unfilterable_mods {
-                        ui.label(RichText::new(format!("• {line}")).weak().italics());
-                    }
-                }
-
-                // Miscellaneous: boolean attribute filters, collapsed by default.
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new(RichText::new("Miscellaneous").strong())
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        // Two even columns of four (4 + 4), evenly spaced.
-                        ui.columns(2, |cols| {
-                            for (i, m) in self.misc.iter_mut().enumerate() {
-                                let col = usize::from(i >= 4);
-                                changed |= cols[col].checkbox(&mut m.on, m.label).changed();
+                            for line in &self.unfilterable_mods {
+                                ui.label(RichText::new(format!("• {line}")).weak().italics());
                             }
-                        });
-                    });
+                        }
+                    } else {
+                        // Miscellaneous tab: one row per boolean attribute, each with a
+                        // three-state Any / Yes / No segmented control. The row under
+                        // the cursor gets a faint hover wash so the pointer target is
+                        // obvious; the selected Yes/No segment carries its own
+                        // (stronger) built-in highlight.
+                        for m in &mut self.misc {
+                            hover_row(ui, |ui| {
+                                ui.label(m.label);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        // Right-to-left: add in reverse so the
+                                        // segments read Any | Yes | No left→right.
+                                        changed |= ui
+                                            .selectable_value(
+                                                &mut m.state,
+                                                MiscState::Exclude,
+                                                "No",
+                                            )
+                                            .changed();
+                                        changed |= ui
+                                            .selectable_value(
+                                                &mut m.state,
+                                                MiscState::Include,
+                                                "Yes",
+                                            )
+                                            .changed();
+                                        changed |= ui
+                                            .selectable_value(&mut m.state, MiscState::Any, "Any")
+                                            .changed();
+                                    },
+                                );
+                            });
+                        }
+                    }
+                });
+                self.filter_body_h = self.filter_body_h.max(body.response.rect.height());
 
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -360,11 +421,29 @@ fn min_max_fields(ui: &mut egui::Ui, min: &mut String, max: &mut String) -> bool
     changed
 }
 
+/// Lay out one filter row (a horizontal strip) via `add_row`, painting a faint
+/// hover wash behind it while the cursor is over the row so the pointer target
+/// is obvious. Used by every interactive filter row for a consistent highlight.
+fn hover_row<R>(ui: &mut egui::Ui, add_row: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    // Reserve a slot so the wash paints *behind* the row content, not over it.
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let inner = ui.horizontal(add_row);
+    let rect = inner.response.rect;
+    if ui.rect_contains_pointer(rect) {
+        let fill = ui.visuals().widgets.hovered.weak_bg_fill;
+        ui.painter().set(
+            bg,
+            egui::epaint::RectShape::filled(rect.expand2(egui::vec2(4.0, 1.0)), 3.0, fill),
+        );
+    }
+    inner.inner
+}
+
 /// A checkbox + label for a single-value (min-only) filter, with the min field
 /// right-aligned to fill the row width. Returns whether it changed.
 fn min_filter_row(ui: &mut egui::Ui, label: &str, filter: &mut MinFilter) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
+    hover_row(ui, |ui| {
         changed |= ui.checkbox(&mut filter.enabled, "").changed();
         ui.label(label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

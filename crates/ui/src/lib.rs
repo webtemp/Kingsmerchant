@@ -31,8 +31,8 @@ use trade_api::{
 };
 
 use model::{
-    item_hash, EquipmentRow, ExchangePhase, MinFilter, MiscToggle, Msg, Phase, PriceFilterState,
-    PriceMode, ScoutPhase, SessionCheck, StatFilterRow, View, MISC_OPTIONS,
+    item_hash, EquipmentRow, ExchangePhase, FilterTab, MinFilter, MiscToggle, Msg, Phase,
+    PriceFilterState, PriceMode, ScoutPhase, SessionCheck, StatFilterRow, View, MISC_OPTIONS,
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
@@ -143,6 +143,12 @@ pub struct QuickModeApp {
     /// Boolean Miscellaneous attribute toggles (corrupted, mirrored, …), all
     /// off by default; persist across items.
     misc: Vec<MiscToggle>,
+    /// Which detailed-filter tab is visible (General vs Miscellaneous).
+    filter_tab: FilterTab,
+    /// Tallest filter-tab body seen for the current item. The shorter tab pads
+    /// up to this so switching tabs keeps a constant height and the auto-sized
+    /// window doesn't jump. Reset to 0 when a new item is parsed.
+    filter_body_h: f32,
     /// How Fire/Cold/Lightning resistances become trade filters. Reset to the
     /// fungible default on each fresh check (Total/Specific are per-item picks).
     resistance_mode: trade_api::ResistanceMode,
@@ -260,9 +266,11 @@ impl QuickModeApp {
                 .map(|(key, label)| MiscToggle {
                     key,
                     label,
-                    on: false,
+                    state: trade_api::MiscState::default(),
                 })
                 .collect(),
+            filter_tab: FilterTab::default(),
+            filter_body_h: 0.0,
             resistance_mode: trade_api::ResistanceMode::default(),
             filter_dirty: false,
             filter_changed_at: Instant::now(),

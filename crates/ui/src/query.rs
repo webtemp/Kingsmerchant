@@ -86,6 +86,9 @@ impl QuickModeApp {
         // "Exceptional" bases carry a tier prefix resolve_base strips; on those
         // the extra sockets/quality are the value, so default those filters on.
         let exceptional = self.is_exceptional_base(&item);
+        // New item → its filter rows change, so re-measure the tab body height
+        // from scratch rather than carrying the previous item's tallest tab.
+        self.filter_body_h = 0.0;
         self.filters = self.build_filter_rows(&item);
         // Explicit mods GGG offers no trade filter for — surfaced read-only so
         // they don't silently disappear from the detailed panel.
@@ -315,7 +318,7 @@ impl QuickModeApp {
                 .iter()
                 .map(|m| MiscSelection {
                     key: m.key.to_string(),
-                    on: m.on,
+                    state: m.state,
                 })
                 .collect(),
             quality: self.quality_filter.value(),

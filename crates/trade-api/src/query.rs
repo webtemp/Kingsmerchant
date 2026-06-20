@@ -240,11 +240,23 @@ pub struct EquipmentSelection {
     pub max: Option<f64>,
 }
 
-/// A boolean misc filter (corrupted, mirrored, …); `on` → require `true`.
+/// Three-state misc filter: ignore the attribute, require it, or forbid it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MiscState {
+    /// No constraint — the attribute is not filtered on.
+    #[default]
+    Any,
+    /// Require the attribute to be present (`{ "option": "true" }`).
+    Include,
+    /// Require the attribute to be absent (`{ "option": "false" }`).
+    Exclude,
+}
+
+/// A three-state misc filter (corrupted, mirrored, …); see [`MiscState`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct MiscSelection {
     pub key: String,
-    pub on: bool,
+    pub state: MiscState,
 }
 
 /// Everything the user can tune in detailed mode: listing status, per-stat
@@ -422,14 +434,18 @@ fn total_resistance_filter(res: [f64; 3]) -> Option<StatFilter> {
     })
 }
 
-/// Collect the checked boolean attributes into the `misc_filters` group (each
-/// `{ "option": "true" }`); unchecked ones are omitted (not filtered).
+/// Collect the constrained boolean attributes into the `misc_filters` group:
+/// [`MiscState::Include`] emits `{ "option": "true" }`, [`MiscState::Exclude`]
+/// emits `{ "option": "false" }`, and [`MiscState::Any`] is omitted entirely.
 fn build_misc_filters(selections: &[MiscSelection]) -> Option<MiscFilters> {
     let mut filters = BTreeMap::new();
     for s in selections {
-        if s.on {
-            filters.insert(s.key.clone(), OptionFilter::new("true"));
-        }
+        let option = match s.state {
+            MiscState::Any => continue,
+            MiscState::Include => "true",
+            MiscState::Exclude => "false",
+        };
+        filters.insert(s.key.clone(), OptionFilter::new(option));
     }
     if filters.is_empty() {
         None

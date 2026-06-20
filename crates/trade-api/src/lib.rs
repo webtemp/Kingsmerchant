@@ -43,8 +43,8 @@ pub use model::{Price, ResultEntry, SearchRequest, SearchResponse, StatGroup, St
 pub use poeprices::PriceEstimate;
 pub use query::{
     build_detailed_query, build_search_query, category_for, is_elemental_resistance,
-    DetailedFilters, EquipmentSelection, ListingStatus, MiscSelection, PriceFilter, QueryOptions,
-    ResistanceMode, StatSelection,
+    DetailedFilters, EquipmentSelection, ListingStatus, MiscSelection, MiscState, PriceFilter,
+    QueryOptions, ResistanceMode, StatSelection,
 };
 pub use rate_limit::{Bucket, RateLimiter};
 pub use scout::{ScoutLeague, ScoutPrice};

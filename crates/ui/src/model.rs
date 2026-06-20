@@ -5,8 +5,8 @@
 
 use parser::{Item, ModKind, Rarity};
 use trade_api::{
-    EquipmentSelection, ExchangeCheck, ListingStatus, PriceCheck, PriceEstimate, PriceFilter,
-    ScoutPrice, SessionStatus, StatSelection,
+    EquipmentSelection, ExchangeCheck, ListingStatus, MiscState, PriceCheck, PriceEstimate,
+    PriceFilter, ScoutPrice, SessionStatus, StatSelection,
 };
 
 /// Standard rare-item affix cap: up to three prefixes and three suffixes.
@@ -276,6 +276,16 @@ impl PriceFilterState {
     }
 }
 
+/// Which tab of the detailed-filter panel is showing. "General" holds the bulk
+/// of the filters (price, defences, modifiers, …); "Misc" holds the boolean
+/// attribute toggles (corrupted, mirrored, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FilterTab {
+    #[default]
+    General,
+    Misc,
+}
+
 /// A single-value "≥ min" filter with an enable toggle (item quality, item
 /// level — both routed to `type_filters`).
 #[derive(Default)]
@@ -317,11 +327,12 @@ pub(crate) const MISC_OPTIONS: &[(&str, &str)] = &[
     ("twice_corrupted", "Twice Corrupted"),
 ];
 
-/// A boolean Miscellaneous toggle (e.g. Corrupted). Checked → require `true`.
+/// A three-state Miscellaneous toggle (e.g. Corrupted): Any / Yes (require) /
+/// No (forbid). See [`MiscState`].
 pub(crate) struct MiscToggle {
     pub(crate) key: &'static str,
     pub(crate) label: &'static str,
-    pub(crate) on: bool,
+    pub(crate) state: MiscState,
 }
 
 /// Parse a numeric filter buffer; blank or unparseable → no bound.
