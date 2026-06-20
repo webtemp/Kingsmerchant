@@ -184,6 +184,9 @@ pub(crate) struct Shared<'a> {
 /// One `wlr-layer-shell` overlay surface (the popup or the settings panel) with
 /// its own GL context and egui context.
 pub(crate) struct WinSurface {
+    /// Short identity for logs ("popup" / "settings"), since the two surfaces
+    /// emit the same messages (e.g. "overlay GL surface ready").
+    label: &'static str,
     pub(crate) layer: LayerSurface,
     pub(crate) egui_ctx: egui::Context,
     pub(crate) gl: Option<Gl>,
@@ -236,6 +239,7 @@ impl WinSurface {
         qh: &QueueHandle<App>,
         egui_ctx: egui::Context,
         namespace: &str,
+        label: &'static str,
         width: u32,
     ) -> Self {
         let surface = compositor.create_surface(qh);
@@ -250,6 +254,7 @@ impl WinSurface {
         layer.set_size(width, INITIAL_HEIGHT);
         layer.commit();
         WinSurface {
+            label,
             layer,
             egui_ctx,
             gl: None,
@@ -358,7 +363,7 @@ impl WinSurface {
             gl_surface,
             painter,
         });
-        tracing::info!("overlay GL surface ready");
+        tracing::info!(surface = self.label, "overlay GL surface ready");
         Ok(())
     }
 

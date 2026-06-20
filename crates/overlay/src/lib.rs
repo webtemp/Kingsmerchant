@@ -65,9 +65,14 @@ impl Which {
 /// Launch the overlay: build the egui app + tray, bind the two layer surfaces,
 /// and run the Wayland event loop until the app is closed.
 pub fn run() -> Result<()> {
+    // Default verbosity comes from config (`error` in release, `debug` in dev
+    // when `auto`); `RUST_LOG` still wins when set. Read write-free so this
+    // early peek can't re-trigger the config watcher or race the startup write.
+    let log_filter = ui::resolve_log_filter(&ui::config::Config::load_no_write().log_level);
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| log_filter.into()),
         )
         .init();
 
@@ -132,6 +137,7 @@ pub fn run() -> Result<()> {
         &qh,
         popup_ctx,
         "kingsmerchant",
+        "popup",
         POPUP_INIT_WIDTH,
     );
     let settings = WinSurface::new(
@@ -140,6 +146,7 @@ pub fn run() -> Result<()> {
         &qh,
         settings_ctx,
         "kingsmerchant-settings",
+        "settings",
         SETTINGS_WIDTH,
     );
 

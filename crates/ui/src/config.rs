@@ -50,6 +50,12 @@ pub struct Config {
     /// and (unlike the others) it fires regardless of which window is focused, so
     /// you can open settings after tabbing out of the game.
     pub hotkey_settings: String,
+    /// Logging verbosity (a `tracing` filter level). One of `auto`, `off`,
+    /// `error`, `warn`, `info`, `debug`, `trace`. `auto` (the default) picks by
+    /// build: `error` in release, `debug` in development. The `RUST_LOG`
+    /// environment variable, if set, overrides this. Applied at startup — a
+    /// change takes effect on the next launch.
+    pub log_level: String,
     /// Only fire the price-check / macro hotkeys while Path of Exile is the
     /// focused window (so Ctrl+C in other apps isn't hijacked, and the macro
     /// never types into the wrong window). Set false if focus detection
@@ -141,6 +147,7 @@ impl Default for Config {
             hotkey_macro2: "F2".to_string(),
             hotkey_close: "Escape".to_string(),
             hotkey_settings: "Ctrl+Alt+S".to_string(),
+            log_level: "auto".to_string(),
             require_poe2_focus: true,
             trade_status: "securable".to_string(),
             position_mode: "center".to_string(),

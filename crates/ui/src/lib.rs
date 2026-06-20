@@ -641,6 +641,44 @@ impl QuickModeApp {
     }
 }
 
+/// Workspace crates that emit logs. The `auto`/dev directive raises just these
+/// to `debug`, leaving dependency crates (wayland, calloop, hyper, …) at `info`
+/// so the frame-loop chatter doesn't bury our own logs.
+const APP_CRATES: &[&str] = &[
+    "kingsmerchant",
+    "overlay",
+    "ui",
+    "platform_linux",
+    "trade_api",
+    "parser",
+];
+
+/// Resolve a configured [`Config::log_level`](config::Config) into a `tracing`
+/// `EnvFilter` directive.
+///
+/// `auto` (or empty) picks by build profile: `error` in release, and our own
+/// crates at `debug` in development. Any explicit level (`off`/`error`/…/`trace`)
+/// is used verbatim and applies to every crate. `RUST_LOG`, if set, overrides
+/// this entirely — that precedence lives at the call site (the tracing init).
+pub fn resolve_log_filter(level: &str) -> String {
+    match level.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" => {
+            if cfg!(debug_assertions) {
+                // Dev: our crates verbose, dependencies kept at info.
+                let ours = APP_CRATES
+                    .iter()
+                    .map(|c| format!("{c}=debug"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("info,{ours}")
+            } else {
+                "error".to_string()
+            }
+        }
+        explicit => explicit.to_string(),
+    }
+}
+
 /// Install the HTTP/image loaders egui_extras needs for item icons. Call once
 /// per `egui::Context`.
 pub fn install_loaders(ctx: &egui::Context) {
@@ -770,4 +808,35 @@ pub fn build_app(
     Ok(QuickModeApp::new(
         rt, client, config, leagues, hotkey_rx, tray, hotkeys,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_log_filter;
+
+    #[test]
+    fn explicit_levels_pass_through_lowercased() {
+        assert_eq!(resolve_log_filter("error"), "error");
+        assert_eq!(resolve_log_filter("WARN"), "warn");
+        assert_eq!(resolve_log_filter("  Trace "), "trace");
+        assert_eq!(resolve_log_filter("off"), "off");
+    }
+
+    #[test]
+    fn auto_is_build_profile_dependent() {
+        // Tests run under the dev profile (debug_assertions on), so `auto` and
+        // empty both resolve to the verbose dev directive: deps at info, our
+        // crates at debug. (Release would resolve to "error" — not exercised here.)
+        let dev = resolve_log_filter("auto");
+        assert_eq!(resolve_log_filter(""), dev);
+        assert!(
+            dev.starts_with("info"),
+            "dev directive caps deps at info: {dev}"
+        );
+        assert!(
+            dev.contains("ui=debug"),
+            "dev directive raises our crates: {dev}"
+        );
+        assert!(!dev.contains("error"));
+    }
 }

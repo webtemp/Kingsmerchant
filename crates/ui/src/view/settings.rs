@@ -24,6 +24,18 @@ const TRADE_STATUSES: &[(&str, &str)] = &[
 /// Popup position modes for the settings dropdown (config id, label).
 const POSITION_MODES: &[(&str, &str)] = &[("center", "Center"), ("fixed", "Fixed")];
 
+/// Log-verbosity options for the settings dropdown (config id, label). `auto` is
+/// `error` in release and `debug` in dev; the rest map straight to tracing levels.
+const LOG_LEVELS: &[(&str, &str)] = &[
+    ("auto", "Auto"),
+    ("off", "Off"),
+    ("error", "Error"),
+    ("warn", "Warn"),
+    ("info", "Info"),
+    ("debug", "Debug"),
+    ("trace", "Trace"),
+];
+
 /// Shared width for the right-edge button-like controls (the dropdowns and the
 /// hotkey-record buttons) so they form one consistent column. The theme-preset
 /// row is intentionally excluded — it's a multi-button row, not a single control.
@@ -388,6 +400,33 @@ impl QuickModeApp {
                     changed = true;
                 }
 
+                // Log verbosity (read once at startup, so a change needs a
+                // restart). `auto` = error in release, debug in development;
+                // `RUST_LOG` overrides it regardless.
+                ui.horizontal(|ui| {
+                    ui.label("Log level");
+                    ui.label(RichText::new("(restart)").weak().small());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let before = self.config.log_level.clone();
+                        egui::ComboBox::from_id_salt("settings-log-level")
+                            .width(CONTROL_WIDTH)
+                            .selected_text(log_level_label(&self.config.log_level))
+                            .show_ui(ui, |ui| {
+                                for (id, label) in LOG_LEVELS {
+                                    ui.selectable_value(
+                                        &mut self.config.log_level,
+                                        id.to_string(),
+                                        *label,
+                                    );
+                                }
+                            });
+                        if self.config.log_level != before {
+                            changed = true;
+                            restart = true;
+                        }
+                    });
+                });
+
                 ui.separator();
 
                 // Hotkey bindings (pushed live to the evdev watcher by
@@ -511,8 +550,7 @@ impl QuickModeApp {
                 tracing::warn!(error = %e, "could not save config");
                 self.settings_note = Some(format!("Could not save: {e}"));
             } else if restart {
-                self.settings_note =
-                    Some("Hotkeys / realm / focus-gate apply after a restart.".to_string());
+                self.settings_note = Some("Realm / log level apply after a restart.".to_string());
             } else {
                 self.settings_note = None;
             }
@@ -635,6 +673,13 @@ fn position_label(id: &str) -> &str {
         .iter()
         .find(|(i, _)| *i == id)
         .map_or("Center", |(_, l)| *l)
+}
+
+fn log_level_label(id: &str) -> &str {
+    LOG_LEVELS
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map_or("Auto", |(_, l)| *l)
 }
 
 /// A labelled, right-aligned click-to-record hotkey row. Shows the current
