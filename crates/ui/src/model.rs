@@ -52,7 +52,10 @@ pub(crate) fn waystone_tier(item: &Item) -> Option<u32> {
     }
     let base = item.base_type.as_deref()?;
     let open = base.find('(')?;
-    let inner = &base[open + 1..base.find(')')?];
+    let close = base.find(')')?;
+    // `get` (not slicing) so a malformed base like `"foo )( bar"`, where `)`
+    // precedes `(`, yields `None` instead of panicking on an inverted range.
+    let inner = base.get(open + 1..close)?;
     inner.split_whitespace().last()?.parse::<u32>().ok()
 }
 
@@ -474,6 +477,29 @@ mod tests {
         // A ring with parentheses elsewhere must not be mistaken for a tier.
         let ring = item_with_class("Rings", "Rare", 1, 0);
         assert_eq!(waystone_tier(&ring), None);
+
+        // Malformed base where `)` precedes `(` must yield None, not panic.
+        let weird = parser::parse_item(
+            "Item Class: Waystones\nRarity: Rare\nName\nWeird )( Name\n--------\nItem Level: 82\n",
+        )
+        .expect("parses");
+        assert_eq!(waystone_tier(&weird), None);
+    }
+
+    #[test]
+    fn fmt_amount_trims_decimals_without_rounding() {
+        assert_eq!(fmt_amount(5.0), "5"); // whole values drop the point
+        assert_eq!(fmt_amount(2.5), "2.5");
+        assert_eq!(fmt_amount(0.17), "0.17"); // not rounded up to 0.2
+        assert_eq!(fmt_amount(1.250), "1.25"); // trailing zeros trimmed
+    }
+
+    #[test]
+    fn scaled_min_floors_integers_but_keeps_fractions() {
+        assert_eq!(scaled_min(132.0, 90), 118.0); // 118.8 floored
+        assert_eq!(scaled_min(132.0, 100), 132.0); // exact roll unchanged
+        assert_eq!(scaled_min(2.5, 100), 2.5); // fractional precision kept
+        assert!((scaled_min(2.5, 90) - 2.25).abs() < 1e-9);
     }
 
     #[test]

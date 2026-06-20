@@ -193,11 +193,8 @@ pub fn price_from_currency(raw: &ScoutCurrency, divine_price: Option<f64>) -> Sc
         .filter_map(|l| l.price)
         .filter(|p| p.is_finite())
         .collect();
-    let low = prices
-        .iter()
-        .copied()
-        .reduce(f64::min)
-        .filter(|_| !prices.is_empty());
+    // `reduce` already yields `None` on an empty `prices`, so no extra guard.
+    let low = prices.iter().copied().reduce(f64::min);
     let high = prices.iter().copied().reduce(f64::max);
     // Latest log point that carries a quantity, as a rough liquidity hint.
     let volume = logs.iter().rev().find_map(|l| l.quantity);

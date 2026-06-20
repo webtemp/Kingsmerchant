@@ -205,13 +205,17 @@ impl Config {
     /// watcher, which must not re-trigger itself by writing the file.
     pub fn load_no_write() -> Self {
         let path = Self::path();
-        match std::fs::read_to_string(&path) {
+        let mut config = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
                 tracing::warn!(path = %path.display(), error = %e, "invalid config on reload; using defaults");
                 Config::default()
             }),
             Err(_) => Config::default(),
-        }
+        };
+        // The file is hand-editable; keep an out-of-range percent (e.g. a typo'd
+        // `0`, which would seed every filter min at 0) inside the documented 1..=100.
+        config.filter_min_percent = config.filter_min_percent.clamp(1, 100);
+        config
     }
 
     /// Write back to disk (creating the directory if needed).
@@ -234,5 +238,36 @@ impl Config {
             return Err(e.into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_off_by_default_matches_implicits_and_noise_substrings() {
+        let cfg = Config::default();
+        // Implicits start off (default `implicits_off_by_default = true`)...
+        assert!(cfg.filter_off_by_default("anything", true));
+        // ...but explicit mods only when they hit the noise list (case-insensitive,
+        // substring).
+        assert!(cfg.filter_off_by_default("increased Light Radius", false));
+        assert!(cfg.filter_off_by_default("LIGHT RADIUS bonus", false));
+        assert!(!cfg.filter_off_by_default("+50 to maximum Life", false));
+    }
+
+    #[test]
+    fn config_round_trips_through_json() {
+        // Guards the save → load contract: a serialized default must deserialize
+        // back unchanged, so backfilling the file never drops or renames a field.
+        let json = serde_json::to_string(&Config::default()).expect("serialize");
+        let back: Config = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            back.filter_min_percent,
+            Config::default().filter_min_percent
+        );
+        assert_eq!(back.hotkey_quick, "Ctrl+C");
+        assert_eq!(back.trade_status, "securable");
     }
 }

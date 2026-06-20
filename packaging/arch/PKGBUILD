@@ -7,7 +7,7 @@ _gh=webtemp
 _reponame=Kingsmerchant
 
 pkgname=kingsmerchant
-pkgver=0.9.5
+pkgver=0.9.7
 pkgrel=1
 pkgdesc="Native POE2 price-check overlay for KDE Plasma 6 Wayland"
 arch=('x86_64')

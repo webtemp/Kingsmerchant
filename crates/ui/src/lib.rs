@@ -812,7 +812,46 @@ pub fn build_app(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_log_filter;
+    use super::{is_hardcore_league, resolve_auto_league, resolve_log_filter};
+    use trade_api::League;
+
+    fn league(id: &str) -> League {
+        League {
+            id: id.to_string(),
+            text: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn hardcore_leagues_are_detected_by_id_shape() {
+        assert!(is_hardcore_league("Hardcore"));
+        assert!(is_hardcore_league("HC Runes of Aldur"));
+        assert!(is_hardcore_league("Hardcore Runes of Aldur"));
+        // Softcore variants and substrings that merely contain "HC" don't match.
+        assert!(!is_hardcore_league("Standard"));
+        assert!(!is_hardcore_league("Runes of Aldur"));
+        assert!(!is_hardcore_league("HCSSF")); // no trailing space → not the HC prefix
+    }
+
+    #[test]
+    fn auto_league_picks_first_non_hardcore_entry() {
+        // Mid-league ordering: softcore challenge league wins over its HC sibling.
+        let challenge = [
+            league("Runes of Aldur"),
+            league("HC Runes of Aldur"),
+            league("Standard"),
+            league("Hardcore"),
+        ];
+        assert_eq!(
+            resolve_auto_league(&challenge).as_deref(),
+            Some("Runes of Aldur")
+        );
+        // Between leagues GGG returns just [Standard, Hardcore].
+        let between = [league("Standard"), league("Hardcore")];
+        assert_eq!(resolve_auto_league(&between).as_deref(), Some("Standard"));
+        // Empty (failed fetch) → None.
+        assert_eq!(resolve_auto_league(&[]), None);
+    }
 
     #[test]
     fn explicit_levels_pass_through_lowercased() {

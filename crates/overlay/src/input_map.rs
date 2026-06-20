@@ -110,3 +110,55 @@ pub(crate) fn map_button(code: u32) -> Option<egui::PointerButton> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_key_folds_letters_and_maps_named_keys() {
+        // Letters fold to uppercase regardless of shift state.
+        assert_eq!(keysym_to_binding_key(Keysym::a).as_deref(), Some("A"));
+        assert_eq!(keysym_to_binding_key(Keysym::A).as_deref(), Some("A"));
+        assert_eq!(keysym_to_binding_key(Keysym::c).as_deref(), Some("C"));
+        // Digits and F-keys map directly (F-key offset is easy to get wrong).
+        assert_eq!(keysym_to_binding_key(Keysym::_5).as_deref(), Some("5"));
+        assert_eq!(keysym_to_binding_key(Keysym::F1).as_deref(), Some("F1"));
+        assert_eq!(keysym_to_binding_key(Keysym::F5).as_deref(), Some("F5"));
+        assert_eq!(keysym_to_binding_key(Keysym::F12).as_deref(), Some("F12"));
+        // Named anchors.
+        assert_eq!(
+            keysym_to_binding_key(Keysym::Escape).as_deref(),
+            Some("Escape")
+        );
+        assert_eq!(
+            keysym_to_binding_key(Keysym::Return).as_deref(),
+            Some("Enter")
+        );
+        assert_eq!(
+            keysym_to_binding_key(Keysym::space).as_deref(),
+            Some("Space")
+        );
+        assert_eq!(keysym_to_binding_key(Keysym::Tab).as_deref(), Some("Tab"));
+        // Modifiers can't anchor a binding → None (caller keeps listening).
+        assert_eq!(keysym_to_binding_key(Keysym::Control_L), None);
+        assert_eq!(keysym_to_binding_key(Keysym::Shift_L), None);
+    }
+
+    #[test]
+    fn format_binding_emits_canonical_ctrl_alt_shift_order() {
+        assert_eq!(format_binding(false, false, false, "C"), "C");
+        assert_eq!(format_binding(true, false, false, "C"), "Ctrl+C");
+        assert_eq!(format_binding(true, true, true, "F5"), "Ctrl+Alt+Shift+F5");
+        // Order is fixed regardless of which flags are set.
+        assert_eq!(format_binding(false, true, true, "X"), "Alt+Shift+X");
+    }
+
+    #[test]
+    fn map_button_covers_the_three_mouse_buttons() {
+        assert_eq!(map_button(BTN_LEFT), Some(egui::PointerButton::Primary));
+        assert_eq!(map_button(0x111), Some(egui::PointerButton::Secondary));
+        assert_eq!(map_button(0x112), Some(egui::PointerButton::Middle));
+        assert_eq!(map_button(0x113), None); // BTN_SIDE and beyond are unmapped
+    }
+}

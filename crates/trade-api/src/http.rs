@@ -54,6 +54,10 @@ pub struct ReqwestTransport {
 impl ReqwestTransport {
     pub fn new(user_agent: impl Into<String>) -> Result<Self, Error> {
         let client = reqwest::Client::builder()
+            // Bound every request so a stalled trade/poeprices/poe2scout endpoint
+            // can't hang a price check forever (caught by `is_timeout` below).
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| Error::Transport(e.to_string()))?;
         Ok(ReqwestTransport {

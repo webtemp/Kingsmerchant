@@ -13,6 +13,14 @@ use crate::{HotkeySlot, QuickModeApp, POESESSID_DEBOUNCE};
 
 use super::theme::online_dot;
 
+/// Copy the POESESSID to the OS clipboard, logging (rather than silently
+/// swallowing) a failure so a non-working Copy/Cut button leaves a trace.
+fn copy_session_id(sid: &str) {
+    if let Err(e) = platform_linux::write_clipboard_text(sid) {
+        tracing::warn!(error = %e, "could not copy POESESSID to clipboard");
+    }
+}
+
 /// Trade listing-status options for the settings dropdown (config id, label).
 const TRADE_STATUSES: &[(&str, &str)] = &[
     ("securable", "Instant Buyout"),
@@ -195,7 +203,7 @@ impl QuickModeApp {
                         .on_hover_text("Copy to clipboard")
                         .clicked()
                     {
-                        let _ = platform_linux::write_clipboard_text(&sid);
+                        copy_session_id(&sid);
                     }
                     if ui
                         .button(ph::CLIPBOARD)
@@ -212,11 +220,11 @@ impl QuickModeApp {
                     // single short cookie — and read/write the real OS clipboard.
                     resp.context_menu(|ui| {
                         if ui.button("Copy").clicked() {
-                            let _ = platform_linux::write_clipboard_text(&sid);
+                            copy_session_id(&sid);
                             ui.close_menu();
                         }
                         if ui.button("Cut").clicked() {
-                            let _ = platform_linux::write_clipboard_text(&sid);
+                            copy_session_id(&sid);
                             sid.clear();
                             edited = true;
                             ui.close_menu();
