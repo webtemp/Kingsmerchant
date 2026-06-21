@@ -23,7 +23,9 @@ pub use definitions::{
 pub use error::Error;
 pub use exchange::{CurrencyDefinitions, CurrencyEntry, ExchangeCheck, ExchangeOffer};
 pub use http::{HttpRequest, HttpResponse, HttpTransport, Method, ReqwestTransport};
-pub use model::{Price, ResultEntry, SearchRequest, SearchResponse, StatGroup, StatValue};
+pub use model::{
+    Presence, Price, ResultEntry, SearchRequest, SearchResponse, StatGroup, StatValue,
+};
 pub use poeprices::PriceEstimate;
 pub use query::{
     build_detailed_query, build_search_query, category_for, is_elemental_resistance,

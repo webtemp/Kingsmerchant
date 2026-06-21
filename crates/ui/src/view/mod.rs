@@ -167,6 +167,7 @@ impl QuickModeApp {
                         ui.colored_label(Color32::from_rgb(0xff, 0x6b, 0x6b), e);
                     }
                     Phase::Done(pc) => {
+                        self.anonymous_results_banner(ui);
                         show_results(ui, pc, &mut copied, &mut teleport);
                     }
                 }
@@ -193,6 +194,29 @@ impl QuickModeApp {
                 format!("{} Sent {status} to POE2", ph::CHECK_CIRCLE),
             );
         }
+    }
+
+    /// Warn, above results, when the session is missing/expired so the listings
+    /// are anonymous — i.e. no hideout teleport, and the user should re-enter
+    /// their POESESSID. Silent when the session is valid.
+    pub(crate) fn anonymous_results_banner(&self, ui: &mut egui::Ui) {
+        if !self.session_anonymous() {
+            return;
+        }
+        let reason = if self.config.poesessid.is_none() {
+            "not set"
+        } else {
+            "expired or invalid"
+        };
+        ui.colored_label(
+            Color32::from_rgb(0xff, 0xc8, 0x4b),
+            format!(
+                "{} Anonymous results — POESESSID {reason}. Hideout teleport \
+                 unavailable; re-enter it in Settings.",
+                ph::WARNING
+            ),
+        );
+        ui.add_space(4.0);
     }
 
     /// The league dropdown; switching re-prices the loaded item under the new league.

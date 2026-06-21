@@ -287,6 +287,25 @@ impl Account {
     pub fn is_online(&self) -> bool {
         self.online.as_ref().is_some_and(|o| o.status.is_none())
     }
+
+    /// Three-state presence for the results table: a logged-in seller with no
+    /// status flag is `Online`; one carrying a status (e.g. `"afk"`) is `Afk`;
+    /// an absent `online` block is `Offline`.
+    pub fn presence(&self) -> Presence {
+        match &self.online {
+            None => Presence::Offline,
+            Some(o) if o.status.is_some() => Presence::Afk,
+            Some(_) => Presence::Online,
+        }
+    }
+}
+
+/// A seller's availability, surfaced as an explicit label in the results table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    Online,
+    Afk,
+    Offline,
 }
 
 #[derive(Debug, Clone, Deserialize)]

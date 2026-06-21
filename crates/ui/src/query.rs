@@ -136,6 +136,7 @@ impl QuickModeApp {
     /// Validate the configured POESESSID against the server, verdict to the Settings panel.
     pub(crate) fn spawn_session_check(&mut self, ctx: &egui::Context) {
         self.session_status = SessionCheck::Checking;
+        self.last_session_check = Some(Instant::now());
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();

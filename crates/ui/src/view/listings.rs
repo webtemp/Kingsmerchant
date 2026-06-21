@@ -2,7 +2,7 @@
 
 use egui::{Color32, RichText};
 use egui_phosphor::regular as ph;
-use trade_api::PriceCheck;
+use trade_api::{Presence, PriceCheck};
 
 use crate::model::fmt_amount;
 use crate::SHOWN;
@@ -16,7 +16,7 @@ const ROW_H: f32 = 26.0;
 /// One row of the results table (an item listing or an exchange offer).
 pub(super) struct RowData {
     pub(super) price: String,
-    pub(super) online: bool,
+    pub(super) presence: Presence,
     pub(super) seller: String,
     pub(super) seller_hover: Option<String>,
     pub(super) whisper: Option<String>,
@@ -65,7 +65,7 @@ pub(super) fn show_results(
                     || "—".to_string(),
                     |p| format!("{} {}", fmt_amount(p.amount), p.currency),
                 ),
-                online: l.is_online(),
+                presence: l.account.presence(),
                 seller: l.account.name.clone(),
                 seller_hover: l.indexed.as_ref().map(|i| format!("listed {i}")),
                 whisper: l.whisper.clone(),
@@ -107,7 +107,7 @@ pub(super) fn results_table(
                         ui.label(RichText::new(&r.price).strong());
                     });
                     row.col(|ui| {
-                        online_dot(ui, r.online);
+                        presence_badge(ui, r.presence);
                         let lbl = ui.add(egui::Label::new(&r.seller).truncate());
                         // Seller hover only when no item preview competes with it.
                         if r.item.is_none() {
@@ -138,15 +138,17 @@ pub(super) fn results_table(
         });
 }
 
-/// A painted online-status dot: green online, grey offline.
-fn online_dot(ui: &mut egui::Ui, online: bool) {
-    let color = if online {
-        online_dot_color()
-    } else {
-        Color32::from_gray(0x70)
+/// A presence dot plus an explicit "Online" / "AFK" / "Offline" label, so a
+/// grayed row reads as what it is instead of just looking dimmed.
+fn presence_badge(ui: &mut egui::Ui, presence: Presence) {
+    let (color, text) = match presence {
+        Presence::Online => (online_dot_color(), "Online"),
+        Presence::Afk => (Color32::from_rgb(0xff, 0xc8, 0x4b), "AFK"),
+        Presence::Offline => (Color32::from_gray(0x70), "Offline"),
     };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, ROW_H), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, ROW_H), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.0, color);
+    ui.label(RichText::new(text).small().color(color));
 }
 
 /// The four chat-action buttons (Whisper / Invite / Hideout / Trade).
@@ -179,7 +181,9 @@ fn action_buttons(
         character.map(|c| format!("/invite {c}")),
         copied,
     );
-    // A teleport token gives one-click travel; else fall back to `/hideout <char>`.
+    // Only Instant-Buyout listings carry a teleport token; show the button only
+    // then. `/hideout <stranger>` is rejected by the game ("You cannot currently
+    // access this player's area"), so we never offer that dead-end fallback.
     if let Some(token) = hideout_token {
         if ui
             .button(ph::HOUSE)
@@ -189,14 +193,6 @@ fn action_buttons(
             *teleport = Some(token.to_string());
             *copied = Some(format!("teleport to {seller}"));
         }
-    } else {
-        chat_button(
-            ui,
-            ph::HOUSE,
-            "Hideout",
-            character.map(|c| format!("/hideout {c}")),
-            copied,
-        );
     }
     chat_button(
         ui,

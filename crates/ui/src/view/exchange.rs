@@ -213,6 +213,7 @@ impl QuickModeApp {
                     .weak(),
                 );
                 ui.add_space(6.0);
+                self.anonymous_results_banner(ui);
                 let rows = exchange_rows(ex.cheapest(SHOWN), pay);
                 results_table(ui, &rows, copied, &mut None);
                 ui.add_space(6.0);
@@ -264,7 +265,12 @@ fn exchange_rows(offers: &[ExchangeOffer], pay: &str) -> Vec<RowData> {
         .iter()
         .map(|o| RowData {
             price: format!("{} {}", fmt_amount(o.unit_price), pay),
-            online: o.online,
+            // Bulk-exchange offers only carry a boolean online flag (no AFK state).
+            presence: if o.online {
+                trade_api::Presence::Online
+            } else {
+                trade_api::Presence::Offline
+            },
             seller: o.account.clone(),
             seller_hover: o.stock.map(|s| format!("stock: {}", fmt_amount(s))),
             whisper: o.whisper.clone(),

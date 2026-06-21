@@ -132,6 +132,9 @@ pub struct QuickModeApp {
     session_status: SessionCheck,
     /// When the POESESSID field last changed, for debouncing; `None` when nothing pending.
     session_check_at: Option<Instant>,
+    /// When the session was last validated against the server; drives the
+    /// automatic startup + periodic re-check so an expired cookie is noticed.
+    last_session_check: Option<Instant>,
     /// Whether the loaded item prices via per-item search or the bulk exchange.
     mode: PriceMode,
     scout_phase: ScoutPhase,
@@ -210,6 +213,7 @@ impl QuickModeApp {
             hotkeys,
             session_status: SessionCheck::Idle,
             session_check_at: None,
+            last_session_check: None,
             mode: PriceMode::Item,
             scout_phase: ScoutPhase::Idle,
             exchange_phase: ExchangePhase::Idle,
@@ -328,8 +332,37 @@ impl QuickModeApp {
         }
     }
 
+    /// Validate the POESESSID automatically: once on first use, then periodically,
+    /// so an expired cookie flips to `Invalid` on its own — the user never has to
+    /// open Settings to re-validate. [`spawn_session_check`](Self::spawn_session_check)
+    /// stamps `last_session_check`.
+    fn maybe_check_session(&mut self, ctx: &egui::Context) {
+        const REVALIDATE: Duration = Duration::from_mins(10);
+        // No session → nothing to validate; the anonymous results banner covers it.
+        if self.config.poesessid.is_none() {
+            return;
+        }
+        // Don't stack checks while one is already in flight.
+        if matches!(self.session_status, SessionCheck::Checking) {
+            return;
+        }
+        if self
+            .last_session_check
+            .is_none_or(|t| t.elapsed() >= REVALIDATE)
+        {
+            self.spawn_session_check(ctx);
+        }
+    }
+
+    /// Whether price-check results are anonymous (no usable session), so the
+    /// teleport features are unavailable and a banner should warn the user.
+    pub(crate) fn session_anonymous(&self) -> bool {
+        self.config.poesessid.is_none() || matches!(self.session_status, SessionCheck::Invalid)
+    }
+
     /// Drain the hotkey + price-check channels. Side-effect only; safe to call every frame.
     pub fn pump(&mut self, ctx: &egui::Context) {
+        self.maybe_check_session(ctx);
         while let Ok(event) = self.hotkey_rx.try_recv() {
             match event {
                 Hotkey::CopyStarted => {

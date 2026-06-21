@@ -564,8 +564,10 @@ fn session_status_label(ui: &mut egui::Ui, status: &SessionCheck, has_session: b
     match status {
         SessionCheck::Idle => {
             if has_session {
-                ui.colored_label(online_dot(), ph::CHECK_CIRCLE)
-                    .on_hover_text("Session set");
+                // A stored session is NOT a verified one — don't show a green
+                // tick until it actually validates (which happens automatically).
+                ui.label(RichText::new("set — verifying…").weak())
+                    .on_hover_text("Validates automatically when you price an item.");
             }
         }
         SessionCheck::Checking => {
