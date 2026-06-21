@@ -65,10 +65,22 @@ whole time, and the overlay stays hidden until your first copy.
 
 ## ⚡ Install
 
-### Arch Linux
+### Arch Linux (and Arch-based: Manjaro, EndeavourOS, CachyOS, Garuda)
 
-A PKGBUILD ships in [`packaging/arch`](packaging/arch); see
-[`assets/INSTALL.md`](assets/INSTALL.md) for the full walkthrough.
+One command builds and installs the package — it pulls the build deps, compiles,
+installs via `pacman`, and adds a **launcher + icon to your app menu**:
+
+```sh
+sudo pacman -S --needed base-devel git
+git clone https://github.com/webtemp/Kingsmerchant.git
+cd Kingsmerchant
+./build arch
+```
+
+`./build arch` wraps `makepkg -si` in [`packaging/arch`](packaging/arch) and
+prints the one-time setup reminders. Update later with `git pull && ./build arch`.
+The full walkthrough (and AUR notes) is in
+[`assets/INSTALL.md`](assets/INSTALL.md).
 
 ### From source
 
@@ -90,7 +102,9 @@ run; `RUST_LOG=debug` turns on detailed logging.
   focused POE2 window. Without `xdotool` the Ctrl+C gate never fires.
 - **`xdg-utils`** (`xdg-open`) for the trade-site / Craft of Exile links.
 - Membership in the **`input`** group (see below).
-- The Rust toolchain (**1.96+**) to build from source.
+- The Rust toolchain (**1.96+**), plus **`cmake`** and a C toolchain, to build
+  from source (BoringSSL is built for the Cloudflare-bypass transport). On Arch,
+  `./build arch` pulls these in automatically.
 
 > [!IMPORTANT]
 > **Input access is required.** Both the global **Ctrl+C** hotkey (evdev read)
