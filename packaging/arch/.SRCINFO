@@ -1,6 +1,6 @@
 pkgbase = kingsmerchant
 	pkgdesc = Native POE2 price-check overlay for KDE Plasma 6 Wayland
-	pkgver = 0.9.2
+	pkgver = 0.11.0
 	pkgrel = 1
 	url = https://github.com/webtemp/Kingsmerchant
 	install = kingsmerchant.install
@@ -17,7 +17,7 @@ pkgbase = kingsmerchant
 	depends = hicolor-icon-theme
 	options = !lto
 	options = !debug
-	source = kingsmerchant-0.9.2.tar.gz::https://github.com/webtemp/Kingsmerchant/archive/refs/tags/v0.9.2.tar.gz
-	sha256sums = 20e22ad835b6d0869d73b8179e9bca85e23c43c2fda3915b7720835ee99b80f4
+	source = kingsmerchant-0.11.0.tar.gz::https://github.com/webtemp/Kingsmerchant/archive/refs/tags/v0.11.0.tar.gz
+	sha256sums = cde903c9087ad57b815f5f3cc562e14fa09e0faa7ed28541d2ffebea72077376
 
 pkgname = kingsmerchant

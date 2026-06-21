@@ -49,7 +49,7 @@ install="${pkgname}.install"
 # GitHub generates the tag tarball on demand; it extracts to ${_reponame}-${pkgver}/.
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 # Replace with the real digest after tagging:  updpkgsums
-sha256sums=('20e22ad835b6d0869d73b8179e9bca85e23c43c2fda3915b7720835ee99b80f4')
+sha256sums=('cde903c9087ad57b815f5f3cc562e14fa09e0faa7ed28541d2ffebea72077376')
 
 prepare() {
     cd "${_reponame}-${pkgver}"
