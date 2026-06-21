@@ -464,6 +464,24 @@ impl<T: HttpTransport> TradeClient<T> {
                 .await
                 .observe(&response.headers, Instant::now());
 
+            // A Cloudflare bot-check is NOT a normal rate-limit: it carries no
+            // useful headers and retrying it immediately only deepens the flag.
+            // Back off hard and surface a clean message instead of the HTML page.
+            if is_cloudflare_challenge(&response) {
+                const COOLDOWN: Duration = Duration::from_mins(5);
+                let now = Instant::now();
+                self.limiter.lock().await.penalize(now, COOLDOWN);
+                *self.retry_at.lock().expect("retry_at lock") = Some(now + COOLDOWN);
+                tracing::warn!(
+                    status = response.status,
+                    "Cloudflare bot-check; backing off {}s",
+                    COOLDOWN.as_secs()
+                );
+                return Err(Error::Cloudflare {
+                    status: response.status,
+                });
+            }
+
             if response.status == 429 && attempt + 1 < MAX_ATTEMPTS {
                 tracing::warn!("got 429, honouring rate-limit headers and retrying");
                 continue;
@@ -534,9 +552,66 @@ fn ok_or_api_error(resp: HttpResponse) -> Result<HttpResponse, Error> {
     }
 }
 
+/// Whether a response is a Cloudflare bot-check interstitial rather than a real
+/// API reply: a challenge status plus the tell-tale `cf-mitigated` header or the
+/// "Just a moment…" challenge-platform markers in the HTML body.
+fn is_cloudflare_challenge(resp: &HttpResponse) -> bool {
+    if !matches!(resp.status, 403 | 429 | 503) {
+        return false;
+    }
+    resp.headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("cf-mitigated"))
+        || resp.body.contains("Just a moment")
+        || resp.body.contains("challenge-platform")
+        || resp.body.contains("__cf_chl")
+        || resp.body.contains("cf_chl_opt")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{poesessid_format, SessionIdFormat};
+    use super::{is_cloudflare_challenge, poesessid_format, HttpResponse, SessionIdFormat};
+
+    fn resp(status: u16, headers: Vec<(&str, &str)>, body: &str) -> HttpResponse {
+        HttpResponse {
+            status,
+            headers: headers
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn detects_cloudflare_challenge_by_body_and_header() {
+        assert!(is_cloudflare_challenge(&resp(
+            429,
+            vec![],
+            "<html><title>Just a moment...</title></html>"
+        )));
+        assert!(is_cloudflare_challenge(&resp(
+            403,
+            vec![("cf-mitigated", "challenge")],
+            "{}"
+        )));
+    }
+
+    #[test]
+    fn real_api_responses_are_not_flagged() {
+        // A genuine GGG 429 rate-limit (JSON body, no Cloudflare markers).
+        assert!(!is_cloudflare_challenge(&resp(
+            429,
+            vec![("x-rate-limit-policy", "trade")],
+            "{\"error\":{\"code\":3,\"message\":\"rate limit\"}}"
+        )));
+        // A normal success.
+        assert!(!is_cloudflare_challenge(&resp(
+            200,
+            vec![],
+            "{\"result\":[]}"
+        )));
+    }
 
     #[test]
     fn well_formed_poesessid_is_32_hex() {

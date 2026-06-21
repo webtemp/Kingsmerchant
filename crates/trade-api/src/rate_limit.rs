@@ -85,6 +85,16 @@ impl RateLimiter {
         self.prune(now);
     }
 
+    /// Impose a hard cooldown (e.g. after a Cloudflare bot-check), extending any
+    /// existing penalty rather than shortening it.
+    pub fn penalize(&mut self, now: Instant, cooldown: Duration) {
+        let until = now + cooldown;
+        self.penalty_until = Some(match self.penalty_until {
+            Some(existing) if existing > until => existing,
+            _ => until,
+        });
+    }
+
     /// How long to wait before the next request is safe; `ZERO` means fire now.
     pub fn delay_before_next(&self, now: Instant) -> Duration {
         let mut wait = Duration::ZERO;

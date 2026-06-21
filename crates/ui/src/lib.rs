@@ -26,7 +26,13 @@ use model::{
 };
 
 const BASE_URL: &str = "https://www.pathofexile.com";
-const USER_AGENT: &str = concat!("kingsmerchant/", env!("CARGO_PKG_VERSION"));
+// GGG's trade API wants a descriptive User-Agent with a contact/repo URL; a bare
+// token reads as a bot and draws Cloudflare challenges sooner.
+const USER_AGENT: &str = concat!(
+    "kingsmerchant/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/webtemp/Kingsmerchant)"
+);
 pub(crate) const SAMPLE: usize = 10;
 pub(crate) const SHOWN: usize = 10;
 /// How long to wait for POE2 to write the clipboard after Ctrl+C.
@@ -340,6 +346,10 @@ impl QuickModeApp {
         const REVALIDATE: Duration = Duration::from_mins(10);
         // No session → nothing to validate; the anonymous results banner covers it.
         if self.config.poesessid.is_none() {
+            return;
+        }
+        // Don't add traffic while we're in a rate-limit / Cloudflare cooldown.
+        if self.client.retry_in().is_some() {
             return;
         }
         // Don't stack checks while one is already in flight.
