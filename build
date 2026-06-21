@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# Convenience builder for kingsmerchant.
+#
+#   ./build arch     Build the Arch/pacman package (from the current release tag)
+#                    and install it via makepkg. Works on any Arch-based distro
+#                    (Arch, Manjaro, EndeavourOS, CachyOS, Garuda, …).
+#
+# More targets can be added later. Run with no arguments for usage.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+target="${1:-}"
+
+usage() {
+    cat <<'EOF'
+usage: ./build <target>
+
+targets:
+  arch    Build and install the Arch (pacman) package via makepkg.
+          Builds the version pinned in packaging/arch/PKGBUILD (the latest
+          release tag), pulls any missing deps, and installs it.
+
+Afterwards: kingsmerchant appears in your app launcher (KDE Plasma 6 Wayland).
+EOF
+}
+
+case "$target" in
+arch)
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "error: run ./build as your normal user — makepkg will sudo when it needs to." >&2
+        exit 1
+    fi
+    if ! command -v makepkg >/dev/null 2>&1; then
+        echo "error: makepkg not found. Install the build tools first:" >&2
+        echo "       sudo pacman -S --needed base-devel git" >&2
+        exit 1
+    fi
+    echo "==> Building the Arch package (the first build compiles BoringSSL — give it a minute)…"
+    (cd "$here/packaging/arch" && makepkg -si)
+    cat <<'EOF'
+
+==> Done. kingsmerchant is installed and in your app launcher.
+
+    One-time setup (skip whatever you've already done):
+      1.  sudo usermod -aG input "$USER"     # global hotkey + chat buttons
+          …then LOG OUT and back in.
+      2.  Use a KDE Plasma 6 *Wayland* session (the overlay needs wlr-layer-shell).
+
+    Launch from the menu, or run:  kingsmerchant
+EOF
+    ;;
+"" | -h | --help | help)
+    usage
+    # No target given is an error; explicit help is success.
+    [ -z "$target" ] && exit 1 || exit 0
+    ;;
+*)
+    echo "error: unknown target '$target' (try: ./build arch)" >&2
+    exit 1
+    ;;
+esac
