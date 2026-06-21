@@ -165,6 +165,9 @@ impl QuickModeApp {
                             .desired_width(220.0),
                     );
                     let mut edited = resp.changed();
+                    // Verification status sits right after the field, before the
+                    // action icons (compact icon; details on hover).
+                    session_status_label(ui, &self.session_status, self.config.poesessid.is_some());
                     let eye = if show { ph::EYE_SLASH } else { ph::EYE };
                     if ui
                         .button(eye)
@@ -234,7 +237,6 @@ impl QuickModeApp {
                             }
                         }
                     }
-                    session_status_label(ui, &self.session_status, self.config.poesessid.is_some());
                 });
                 ui.label(
                     RichText::new(
@@ -599,45 +601,45 @@ impl QuickModeApp {
     }
 }
 
-/// Render the POESESSID validation indicator. `has_session`: a session is stored.
+/// Render the POESESSID validation indicator as a compact icon (detail in the
+/// hover) so it fits inline before the action buttons. `has_session`: a session
+/// is stored.
 fn session_status_label(ui: &mut egui::Ui, status: &SessionCheck, has_session: bool) {
     let warn = Color32::from_rgb(0xff, 0xc8, 0x4b);
     let bad = Color32::from_rgb(0xff, 0x6b, 0x6b);
     match status {
         SessionCheck::Idle => {
             if has_session {
-                // A stored session is NOT a verified one — don't show a green
-                // tick until it actually validates (which happens automatically).
-                ui.label(RichText::new("set — verifying…").weak())
-                    .on_hover_text("Validates automatically when you price an item.");
+                // A stored session is NOT a verified one — a grey (not green) tick
+                // until it actually validates (which happens automatically).
+                ui.colored_label(Color32::from_gray(0x88), ph::CHECK_CIRCLE)
+                    .on_hover_text("Session set — validates automatically.");
             }
         }
         SessionCheck::Checking => {
-            ui.spinner();
-            ui.label(RichText::new("checking…").weak().small());
+            ui.spinner().on_hover_text("Checking session…");
         }
         SessionCheck::Valid(account) => {
-            let text = match account {
-                Some(name) => format!("{} valid: {name}", ph::CHECK_CIRCLE),
-                None => format!("{} valid", ph::CHECK_CIRCLE),
+            let hover = match account {
+                Some(name) => format!("Valid — {name}"),
+                None => "Valid".to_string(),
             };
-            ui.colored_label(online_dot(), text);
+            ui.colored_label(online_dot(), ph::CHECK_CIRCLE)
+                .on_hover_text(hover);
         }
         SessionCheck::Invalid => {
-            ui.colored_label(bad, format!("{} invalid or expired", ph::X_CIRCLE));
+            ui.colored_label(bad, ph::X_CIRCLE)
+                .on_hover_text("Invalid or expired — re-paste your POESESSID.");
         }
         SessionCheck::Malformed => {
-            ui.colored_label(
-                bad,
-                format!("{} not a POESESSID (32 hex chars)", ph::X_CIRCLE),
-            )
-            .on_hover_text(
-                "Paste only the cookie value — no \"POESESSID=\" prefix, quotes, or spaces.",
+            ui.colored_label(bad, ph::X_CIRCLE).on_hover_text(
+                "Not a POESESSID (need 32 hex chars). Paste only the cookie value — \
+                 no \"POESESSID=\" prefix, quotes, or spaces.",
             );
         }
         SessionCheck::Unknown => {
-            ui.colored_label(warn, format!("{} couldn't verify", ph::WARNING))
-                .on_hover_text("Network error — the session may still be fine.");
+            ui.colored_label(warn, ph::WARNING)
+                .on_hover_text("Couldn't verify (network) — the session may still be fine.");
         }
     }
 }
