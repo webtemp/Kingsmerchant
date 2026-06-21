@@ -9,9 +9,8 @@ pub enum Error {
     Api { status: u16, body: String },
 
     #[error(
-        "Cloudflare is challenging requests (HTTP {status}). The trade site blocks \
-         automated traffic when it sees too many requests in a short time — wait a \
-         few minutes, then try again."
+        "Cloudflare bot-check (HTTP {status}) — backing off ~30s. If it keeps \
+         happening, enable the Cloudflare bypass in Settings."
     )]
     Cloudflare { status: u16 },
 

@@ -468,7 +468,11 @@ impl<T: HttpTransport> TradeClient<T> {
             // useful headers and retrying it immediately only deepens the flag.
             // Back off hard and surface a clean message instead of the HTML page.
             if is_cloudflare_challenge(&response) {
-                const COOLDOWN: Duration = Duration::from_mins(5);
+                // Short, not punishing: enough to avoid hammering the challenge
+                // (which deepens the flag) without locking the user out. Transient
+                // challenges clear quickly; persistent ones want the impersonation
+                // toggle, not a longer wait here.
+                const COOLDOWN: Duration = Duration::from_secs(30);
                 let now = Instant::now();
                 self.limiter.lock().await.penalize(now, COOLDOWN);
                 *self.retry_at.lock().expect("retry_at lock") = Some(now + COOLDOWN);
