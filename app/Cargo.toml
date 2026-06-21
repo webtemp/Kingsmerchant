@@ -1,6 +1,6 @@
 [package]
 name = "kingsmerchant"
-version = "0.11.0"
+version = "0.11.1"
 description = "Native POE2 price-check overlay for KDE Plasma 6 Wayland."
 edition.workspace = true
 license.workspace = true
