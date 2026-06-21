@@ -43,7 +43,9 @@ depends=(
     'xdg-utils'
     'hicolor-icon-theme'
 )
-makedepends=('cargo')
+# `cmake` (+ the base-devel C toolchain) build BoringSSL, pulled in by the
+# `wreq` Cloudflare-bypass transport.
+makedepends=('cargo' 'cmake')
 install="${pkgname}.install"
 
 # GitHub generates the tag tarball on demand; it extracts to ${_reponame}-${pkgver}/.

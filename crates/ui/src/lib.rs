@@ -15,9 +15,11 @@ use std::time::{Duration, Instant};
 
 use config::Config;
 use parser::Item;
+use std::sync::RwLock;
+
 use trade_api::{
-    fetch_definitions, fetch_leagues, ClientConfig, League, PriceEstimate, ReqwestTransport,
-    TradeClient,
+    fetch_definitions, fetch_leagues, ClientConfig, ImpersonateSettings, ImpersonateTransport,
+    League, PriceEstimate, ReqwestTransport, TradeClient,
 };
 
 use model::{
@@ -46,7 +48,7 @@ pub(crate) const POESESSID_DEBOUNCE: Duration = Duration::from_millis(700);
 
 pub const POPUP_WIDTH: u32 = 600;
 
-pub type Client = TradeClient<ReqwestTransport>;
+pub type Client = TradeClient<ImpersonateTransport<ReqwestTransport>>;
 
 /// What the watchers observed; drained by [`pump`](QuickModeApp::pump) each frame.
 pub enum Hotkey {
@@ -83,6 +85,9 @@ pub(crate) enum HotkeySlot {
 pub struct QuickModeApp {
     rt: tokio::runtime::Runtime,
     client: Arc<Client>,
+    /// Live Cloudflare-bypass knobs shared with the transport; the Settings panel
+    /// writes here so the toggle / cf_clearance take effect without a restart.
+    impersonate_settings: Arc<RwLock<ImpersonateSettings>>,
     config: Config,
     /// Render-time palette parsed from `config.theme`; rebuilt on config change.
     theme: view::theme::Theme,
@@ -153,6 +158,7 @@ pub struct QuickModeApp {
 
 impl QuickModeApp {
     /// Assemble the app from its already-built dependencies. Most callers want [`build_app`].
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rt: tokio::runtime::Runtime,
         client: Arc<Client>,
@@ -161,12 +167,14 @@ impl QuickModeApp {
         hotkey_rx: Receiver<Hotkey>,
         tray: Option<platform::TrayHandle>,
         hotkeys: HotkeyHandle,
+        impersonate_settings: Arc<RwLock<ImpersonateSettings>>,
     ) -> Self {
         let (tx, rx) = channel();
         let theme = view::theme::Theme::from_config(&config.theme);
         QuickModeApp {
             rt,
             client,
+            impersonate_settings,
             config,
             theme,
             leagues,
@@ -364,6 +372,15 @@ impl QuickModeApp {
         }
     }
 
+    /// Push the current Cloudflare-bypass config into the shared transport state
+    /// so a Settings change (toggle / cf_clearance) takes effect immediately.
+    pub(crate) fn push_impersonate_settings(&self) {
+        if let Ok(mut s) = self.impersonate_settings.write() {
+            s.enabled = self.config.impersonate;
+            s.cf_clearance.clone_from(&self.config.cf_clearance);
+        }
+    }
+
     /// Whether price-check results are anonymous (no usable session), so the
     /// teleport features are unavailable and a banner should warn the user.
     pub(crate) fn session_anonymous(&self) -> bool {
@@ -538,6 +555,7 @@ impl QuickModeApp {
         self.config = new;
         self.theme = view::theme::Theme::from_config(&self.config.theme);
         self.hotkeys.apply_config(&self.config);
+        self.push_impersonate_settings();
         if restart_needed {
             self.settings_note =
                 Some("Saved. The realm change applies after a restart.".to_string());
@@ -634,7 +652,16 @@ pub fn build_app(
     }
 
     let rt = tokio::runtime::Runtime::new()?;
-    let transport = ReqwestTransport::new(USER_AGENT)?;
+    // The default rustls transport, wrapped so the Chrome-emulation bypass can be
+    // toggled live from Settings. Shared `impersonate_settings` lets the UI flip it.
+    let impersonate_settings = Arc::new(RwLock::new(ImpersonateSettings {
+        enabled: config.impersonate,
+        cf_clearance: config.cf_clearance.clone(),
+    }));
+    let transport = ImpersonateTransport::new(
+        ReqwestTransport::new(USER_AGENT)?,
+        Arc::clone(&impersonate_settings),
+    )?;
     tracing::info!("fetching trade definitions…");
     let (stats, items, currencies) = rt
         .block_on(fetch_definitions(&transport, BASE_URL))
@@ -684,7 +711,14 @@ pub fn build_app(
     client.set_poesessid(config.poesessid.clone());
 
     Ok(QuickModeApp::new(
-        rt, client, config, leagues, hotkey_rx, tray, hotkeys,
+        rt,
+        client,
+        config,
+        leagues,
+        hotkey_rx,
+        tray,
+        hotkeys,
+        impersonate_settings,
     ))
 }
 

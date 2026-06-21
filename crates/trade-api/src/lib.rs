@@ -5,6 +5,7 @@ pub mod definitions;
 pub mod error;
 pub mod exchange;
 pub mod http;
+pub mod impersonate;
 pub mod model;
 pub mod poeprices;
 pub mod price;
@@ -23,6 +24,7 @@ pub use definitions::{
 pub use error::Error;
 pub use exchange::{CurrencyDefinitions, CurrencyEntry, ExchangeCheck, ExchangeOffer};
 pub use http::{HttpRequest, HttpResponse, HttpTransport, Method, ReqwestTransport};
+pub use impersonate::{ImpersonateSettings, ImpersonateTransport};
 pub use model::{
     Presence, Price, ResultEntry, SearchRequest, SearchResponse, StatGroup, StatValue,
 };

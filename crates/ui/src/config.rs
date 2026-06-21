@@ -49,6 +49,13 @@ pub struct Config {
     pub perf_metrics: bool,
     /// `POESESSID` cookie (32-hex); sent only to pathofexile.com. Treat like a password.
     pub poesessid: Option<String>,
+    /// Route requests through a Chrome-emulating client to get past Cloudflare's
+    /// bot-check. Off by default; needs [`cf_clearance`](Self::cf_clearance).
+    #[serde(default)]
+    pub impersonate: bool,
+    /// `cf_clearance` cookie from the browser, used only when `impersonate` is on.
+    #[serde(default)]
+    pub cf_clearance: Option<String>,
     pub theme: ThemeConfig,
 }
 
@@ -108,6 +115,8 @@ impl Default for Config {
             fixed_y: 100,
             perf_metrics: false,
             poesessid: None,
+            impersonate: false,
+            cf_clearance: None,
             theme: ThemeConfig::default(),
         }
     }

@@ -7,6 +7,7 @@ pkgbase = kingsmerchant
 	arch = x86_64
 	license = MIT OR GPL-3.0-or-later
 	makedepends = cargo
+	makedepends = cmake
 	depends = gcc-libs
 	depends = libxkbcommon
 	depends = wayland

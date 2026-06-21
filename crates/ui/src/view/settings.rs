@@ -246,6 +246,48 @@ impl QuickModeApp {
                     .small(),
                 );
 
+                // Cloudflare bypass: route requests through a Chrome-emulating client.
+                let cf_toggle = ui.checkbox(
+                    &mut self.config.impersonate,
+                    "Cloudflare bypass (impersonate Chrome)",
+                );
+                let mut impersonate_changed = cf_toggle
+                    .on_hover_text(
+                        "Sends requests with a Chrome TLS fingerprint to pass Cloudflare's \
+                         bot-check. Needs a cf_clearance cookie below.",
+                    )
+                    .changed();
+                if self.config.impersonate {
+                    ui.horizontal(|ui| {
+                        ui.label("cf_clearance");
+                        let mut cf = self.config.cf_clearance.clone().unwrap_or_default();
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut cf)
+                                .password(true)
+                                .hint_text("cf_clearance cookie value")
+                                .desired_width(220.0),
+                        );
+                        if resp.changed() {
+                            let trimmed = cf.trim().to_string();
+                            self.config.cf_clearance = (!trimmed.is_empty()).then_some(trimmed);
+                            impersonate_changed = true;
+                        }
+                    });
+                    ui.label(
+                        RichText::new(
+                            "Browser DevTools → Application → Cookies → pathofexile.com → \
+                             cf_clearance. Bound to your IP + browser and expires in a few \
+                             hours, so it needs re-pasting periodically.",
+                        )
+                        .weak()
+                        .small(),
+                    );
+                }
+                if impersonate_changed {
+                    changed = true;
+                    self.push_impersonate_settings();
+                }
+
                 ui.separator();
 
                 setting_row(ui, "Popup position", |ui| {
