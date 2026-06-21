@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/unique_tablet.txt
 ---
@@ -51,6 +52,7 @@ Item {
         },
     ],
     flavour_text: [],
+    description: [],
     notes: [
         "~b/o 3 divine",
     ],

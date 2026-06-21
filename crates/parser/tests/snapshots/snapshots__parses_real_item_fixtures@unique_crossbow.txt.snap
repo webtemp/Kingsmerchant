@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/unique_crossbow.txt
 ---
@@ -121,6 +122,7 @@ Item {
     flavour_text: [
         "His approach to the gate was met with sounding trumpets\nand an unfurling of banners. He never saw it coming.\"\n- anonymous Brotherhood of Silence report",
     ],
+    description: [],
     notes: [],
     corrupted: true,
     mirrored: false,

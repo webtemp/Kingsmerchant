@@ -17,7 +17,7 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{wl_keyboard, wl_pointer, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_surface},
     Connection, QueueHandle,
 };
 use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1;
@@ -69,15 +69,15 @@ pub fn run() -> Result<()> {
     let hotkeys = ui::spawn_hotkey_watcher(popup_ctx.clone(), hk_tx.clone());
 
     // Tray on its own thread; menu clicks forward into the hotkey channel.
-    let tray = match platform_linux::spawn_tray() {
+    let tray = match platform::spawn_tray() {
         Ok((handle, actions)) => {
             let tx = hk_tx.clone();
             let ctx = popup_ctx.clone();
             std::thread::spawn(move || {
                 for action in actions {
                     let hk = match action {
-                        platform_linux::TrayAction::OpenSettings => Hotkey::OpenSettings,
-                        platform_linux::TrayAction::Quit => Hotkey::Quit,
+                        platform::TrayAction::OpenSettings => Hotkey::OpenSettings,
+                        platform::TrayAction::Quit => Hotkey::Quit,
                     };
                     if tx.send(hk).is_err() {
                         break;
@@ -132,6 +132,7 @@ pub fn run() -> Result<()> {
         relative_pointer_state: RelativePointerState::bind(&globals, &qh),
         conn: conn.clone(),
         compositor,
+        layer_shell,
         display: None,
         pointer: None,
         relative_pointer: None,
@@ -142,8 +143,32 @@ pub fn run() -> Result<()> {
         settings,
         quick,
         pending_bootstrap: None,
+        bootstrapping: true,
         exit: false,
     };
+
+    // Pin the surfaces to POE2's monitor before any draw, so the compositor can't
+    // drift them to another output mid-session. While `bootstrapping`, configure
+    // events don't draw, so no GL exists yet and re-homing the surface is safe.
+    // Two roundtrips: bind + receive each output's logical geometry.
+    event_queue
+        .roundtrip(&mut app)
+        .context("output roundtrip")?;
+    event_queue
+        .roundtrip(&mut app)
+        .context("output roundtrip")?;
+    if let Some(output) = poe2_output(&app.output_state) {
+        app.popup
+            .pin_to_output(&app.compositor, &app.layer_shell, &qh, Some(&output));
+        app.settings
+            .pin_to_output(&app.compositor, &app.layer_shell, &qh, Some(&output));
+        tracing::info!("overlay pinned to POE2's monitor");
+    } else {
+        tracing::info!(
+            "POE2 monitor not resolved (game not running?) — overlay uses compositor default"
+        );
+    }
+    app.bootstrapping = false;
 
     tracing::info!("overlay running (hidden) — Ctrl+C on an item in POE2 to pop it");
     while !app.exit {
@@ -154,6 +179,25 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
+/// The `wl_output` whose logical rect contains POE2's window centre, so the
+/// surfaces can be pinned to the monitor the game is on. `None` if POE2 isn't
+/// found or no output's geometry covers it (e.g. mixed-DPI coordinate mismatch).
+fn poe2_output(output_state: &OutputState) -> Option<wl_output::WlOutput> {
+    let (x, y, w, h) = platform::poe2_window_geometry()?;
+    let (cx, cy) = (x + w / 2, y + h / 2);
+    for output in output_state.outputs() {
+        let Some(info) = output_state.info(&output) else {
+            continue;
+        };
+        if let (Some((ox, oy)), Some((ow, oh))) = (info.logical_position, info.logical_size) {
+            if cx >= ox && cx < ox + ow && cy >= oy && cy < oy + oh {
+                return Some(output);
+            }
+        }
+    }
+    None
+}
+
 struct App {
     registry_state: RegistryState,
     seat_state: SeatState,
@@ -161,6 +205,7 @@ struct App {
     relative_pointer_state: RelativePointerState,
     conn: Connection,
     compositor: CompositorState,
+    layer_shell: LayerShell,
     /// Shared EGL display, created lazily by the first surface that inits GL.
     display: Option<Display>,
     pointer: Option<wl_pointer::WlPointer>,
@@ -175,6 +220,9 @@ struct App {
     quick: QuickModeApp,
     /// A surface to kick back into its redraw loop after the current draw.
     pending_bootstrap: Option<Which>,
+    /// True until the surfaces are pinned to their output at startup; suppresses
+    /// drawing (hence GL init) so pinning happens before any painter exists.
+    bootstrapping: bool,
     exit: bool,
 }
 
@@ -216,7 +264,7 @@ impl App {
     /// hand keyboard focus back on its own). Best-effort, off the UI thread.
     fn refocus_game() {
         std::thread::spawn(|| {
-            platform_linux::focus_poe2();
+            platform::focus_poe2();
         });
     }
 

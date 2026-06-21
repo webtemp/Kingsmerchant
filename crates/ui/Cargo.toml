@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 parser = { path = "../parser" }
 trade-api = { path = "../trade-api" }
-platform-linux = { path = "../platform-linux" }
+platform = { path = "../platform" }
 anyhow.workspace = true
 tracing.workspace = true
 serde = { workspace = true }

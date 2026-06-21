@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use platform_linux::{HotkeyBindings, HotkeyControl};
+use platform::{HotkeyBindings, HotkeyControl};
 
 use crate::config::Config;
 use crate::model::{item_hash, normalize_item_text};
@@ -44,7 +44,7 @@ impl HotkeyHandle {
 ///
 /// Returns a [`HotkeyHandle`] so the app can rebind hotkeys / toggle the focus gate live.
 pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHandle {
-    use platform_linux::HotkeyEvent;
+    use platform::HotkeyEvent;
     // Read-only load so this thread doesn't race the startup write or re-trigger the watcher.
     let config = Config::load_no_write();
     let control = HotkeyControl::new(HotkeyHandle::bindings_from(&config));
@@ -55,7 +55,7 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
     };
 
     std::thread::spawn(move || {
-        let hotkeys = match platform_linux::watch_hotkeys(&control) {
+        let hotkeys = match platform::watch_hotkeys(&control) {
             Ok(rx) => rx,
             Err(e) => {
                 tracing::warn!(error = %e, "hotkey watcher disabled; use the buttons");
@@ -74,12 +74,10 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
             || config.f5_command.is_some()
             || config.macro2_command.is_some()
         {
-            std::thread::spawn(platform_linux::warm_up_injection);
+            std::thread::spawn(platform::warm_up_injection);
         }
         // Shared so the clipboard wait can run OFF this loop, which must not block on the poll.
-        let last_seen = Arc::new(Mutex::new(
-            platform_linux::read_clipboard_text().unwrap_or(None),
-        ));
+        let last_seen = Arc::new(Mutex::new(platform::read_clipboard_text().unwrap_or(None)));
         // Debounce duplicate device-node echoes (slot 0 = F5, 1 = F2).
         let mut last_macro: [Option<Instant>; 2] = [None, None];
         for event in hotkeys {
@@ -114,9 +112,7 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                         Hotkey::Macro
                     };
                     std::thread::spawn(move || {
-                        if require_focus.load(Ordering::Relaxed)
-                            && !platform_linux::is_poe2_active()
-                        {
+                        if require_focus.load(Ordering::Relaxed) && !platform::is_poe2_active() {
                             tracing::info!("macro ignored — POE2 not focused");
                             return;
                         }
@@ -134,9 +130,7 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                         control.clone(),
                     );
                     std::thread::spawn(move || {
-                        if require_focus.load(Ordering::Relaxed)
-                            && !platform_linux::is_poe2_active()
-                        {
+                        if require_focus.load(Ordering::Relaxed) && !platform::is_poe2_active() {
                             tracing::info!("price-check hotkey ignored — POE2 not focused");
                             return;
                         }
@@ -146,7 +140,7 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
 
                         // If the hotkey isn't Ctrl+C, synthesize the copy so the clipboard holds the item.
                         if control.snapshot().quick_needs_synthetic_copy() {
-                            if let Err(e) = platform_linux::copy_item_under_cursor() {
+                            if let Err(e) = platform::copy_item_under_cursor() {
                                 tracing::warn!(error = %format!("{e:#}"), "synthetic copy failed");
                             }
                         }
@@ -251,7 +245,7 @@ fn wait_for_item(last_seen: Option<&str>) -> Option<String> {
     // The same item is a re-view; poll the full window so a genuine switch wins.
     let mut same: Option<String> = None;
     loop {
-        if let Ok(Some(text)) = platform_linux::read_clipboard_text() {
+        if let Ok(Some(text)) = platform::read_clipboard_text() {
             match clip_step(&text, last.as_deref()) {
                 ClipStep::Different => return Some(text),
                 ClipStep::Same => same = Some(text),

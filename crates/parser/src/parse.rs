@@ -78,6 +78,7 @@ pub fn parse_item(input: &str) -> Result<Item, ParseError> {
         rune_mods: Vec::new(),
         modifiers: Vec::new(),
         flavour_text: Vec::new(),
+        description: Vec::new(),
         notes: Vec::new(),
         corrupted: false,
         mirrored: false,
@@ -203,6 +204,9 @@ fn classify_section(section: &[&str], item: &mut Item) {
         } else if item.item_class == "Augment" && item.base_type.is_none() {
             // Augment items put their base type on a bare line; adopt the first.
             item.base_type = Some(t.to_string());
+        } else if item.rarity == Rarity::Currency {
+            // Currency/stackable effect + usage prose (no key, not flavour/mods).
+            item.description.push(t.to_string());
         }
     }
 }
@@ -608,6 +612,7 @@ mod tests {
             rune_mods: Vec::new(),
             modifiers: Vec::new(),
             flavour_text: Vec::new(),
+            description: Vec::new(),
             notes: Vec::new(),
             corrupted: false,
             mirrored: false,
@@ -615,5 +620,21 @@ mod tests {
             fractured: false,
             flags: Vec::new(),
         }
+    }
+
+    #[test]
+    fn captures_currency_description() {
+        let input = "Item Class: Stackable Currency\nRarity: Currency\nPreserved Cranium\n\
+                     --------\nStack Size: 1/20\n--------\nDesecrates a Rare Jewel\n\
+                     --------\nRight click this item then left click a Rare item to apply it.";
+        let item = parse_item(input).unwrap();
+        assert_eq!(item.name.as_deref(), Some("Preserved Cranium"));
+        assert_eq!(
+            item.description,
+            vec![
+                "Desecrates a Rare Jewel".to_string(),
+                "Right click this item then left click a Rare item to apply it.".to_string(),
+            ]
+        );
     }
 }

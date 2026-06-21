@@ -166,6 +166,8 @@ pub(crate) struct Shared<'a> {
 pub(crate) struct WinSurface {
     /// Short identity for logs ("popup" / "settings").
     label: &'static str,
+    /// Layer-shell namespace, kept so the surface can be rebuilt on a pinned output.
+    namespace: &'static str,
     pub(crate) layer: LayerSurface,
     pub(crate) egui_ctx: egui::Context,
     pub(crate) gl: Option<Gl>,
@@ -204,7 +206,7 @@ impl WinSurface {
         layer_shell: &LayerShell,
         qh: &QueueHandle<App>,
         egui_ctx: egui::Context,
-        namespace: &str,
+        namespace: &'static str,
         label: &'static str,
         width: u32,
     ) -> Self {
@@ -218,6 +220,7 @@ impl WinSurface {
         layer.commit();
         WinSurface {
             label,
+            namespace,
             layer,
             egui_ctx,
             gl: None,
@@ -240,6 +243,42 @@ impl WinSurface {
             warm_frames: WARMUP_FRAMES,
             last_want_h: INITIAL_HEIGHT,
         }
+    }
+
+    /// Rebuild the surface pinned to `output`, so the compositor can't drift it to
+    /// another monitor (a layer surface's output is fixed at creation). Must run
+    /// before any draw — the `debug_assert` enforces `gl` is unset, so it never
+    /// tears a live painter from egui's texture state (a `GL_INVALID_OPERATION`).
+    pub(crate) fn pin_to_output(
+        &mut self,
+        compositor: &CompositorState,
+        layer_shell: &LayerShell,
+        qh: &QueueHandle<App>,
+        output: Option<&wl_output::WlOutput>,
+    ) {
+        debug_assert!(self.gl.is_none(), "pin_to_output must run before GL init");
+
+        let surface = compositor.create_surface(qh);
+        let layer = layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Overlay,
+            Some(self.namespace),
+            output,
+        );
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_anchor(Anchor::TOP | Anchor::LEFT);
+        layer.set_size(self.desired_width, self.desired_height);
+        layer.commit();
+
+        self.layer = layer;
+        // Seed the centring output so the first frame lands right, before `surface_enter`.
+        self.current_output = output.cloned();
+        // Fresh surface: force cached applied-state to re-apply, re-warm the atlas.
+        self.applied_input = None;
+        self.applied_kbd = None;
+        self.input_region = None;
+        self.warm_frames = WARMUP_FRAMES;
     }
 
     /// Build the EGL context + egui painter, creating the shared display on
@@ -412,8 +451,7 @@ impl WinSurface {
 
         // Bridge egui's copy/cut out to the system clipboard.
         if !full.platform_output.copied_text.is_empty() {
-            if let Err(e) = platform_linux::write_clipboard_text(&full.platform_output.copied_text)
-            {
+            if let Err(e) = platform::write_clipboard_text(&full.platform_output.copied_text) {
                 tracing::warn!(error = %e, "clipboard write (copy/cut) failed");
             }
         }

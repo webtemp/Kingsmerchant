@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/currency_omen.txt
 ---
@@ -29,6 +30,13 @@ Item {
     rune_mods: [],
     modifiers: [],
     flavour_text: [],
+    description: [
+        "While this item is active in your inventory your next",
+        "Gamble purchase will have a 50% chance of costing no Gold",
+        "and not consuming this Omen",
+        "Right click this item in your inventory to set it to be active. This item is consumed when triggered.",
+        "Shift click to unstack.",
+    ],
     notes: [],
     corrupted: false,
     mirrored: false,

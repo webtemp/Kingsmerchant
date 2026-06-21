@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/currency_distilled.txt
 ---
@@ -42,6 +43,13 @@ Item {
     rune_mods: [],
     modifiers: [],
     flavour_text: [],
+    description: [
+        "Removes a random modifer and Augments a Rare Basic Jewel with a",
+        "new guaranteed Crafted modifier",
+        "Can be used at The Withered Willow to Instil Amulets with a Notable Passive Skill.",
+        "Right click this item then left click a Rare Jewel to apply it.",
+        "Shift click to unstack.",
+    ],
     notes: [],
     corrupted: false,
     mirrored: false,

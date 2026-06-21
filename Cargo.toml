@@ -3,7 +3,9 @@ resolver = "2"
 members = [
     "app",
     "crates/parser",
+    "crates/platform",
     "crates/platform-linux",
+    "crates/platform-windows",
     "crates/trade-api",
     "crates/ui",
     "crates/overlay",

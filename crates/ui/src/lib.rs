@@ -121,7 +121,7 @@ pub struct QuickModeApp {
     /// Polling the clipboard after a detected Ctrl+C; drives the "reading…" spinner.
     awaiting_copy: bool,
     /// `None` if the tray failed to start (no SNI host).
-    tray: Option<platform_linux::TrayHandle>,
+    tray: Option<platform::TrayHandle>,
     settings_requested: bool,
     settings_close_requested: bool,
     quit_requested: bool,
@@ -150,7 +150,7 @@ impl QuickModeApp {
         config: Config,
         leagues: Vec<League>,
         hotkey_rx: Receiver<Hotkey>,
-        tray: Option<platform_linux::TrayHandle>,
+        tray: Option<platform::TrayHandle>,
         hotkeys: HotkeyHandle,
     ) -> Self {
         let (tx, rx) = channel();
@@ -318,7 +318,7 @@ impl QuickModeApp {
     }
 
     fn read_clipboard(&mut self) {
-        match platform_linux::read_clipboard_text() {
+        match platform::read_clipboard_text() {
             Ok(Some(text)) => {
                 self.item_text = text;
                 self.view = View::Item;
@@ -472,12 +472,12 @@ impl QuickModeApp {
         };
         let state = if let Some(wait) = self.client.retry_in() {
             let secs = (wait.as_millis() as u64).div_ceil(1000);
-            platform_linux::TrayState::RateLimited(secs)
+            platform::TrayState::RateLimited(secs)
         } else if let Phase::Failed(e) = &self.phase {
             let short = e.lines().next().unwrap_or(e).to_string();
-            platform_linux::TrayState::Error(short)
+            platform::TrayState::Error(short)
         } else {
-            platform_linux::TrayState::Listening
+            platform::TrayState::Listening
         };
         tray.set_state(state);
     }
@@ -575,7 +575,7 @@ fn resolve_auto_league(leagues: &[League]) -> Option<String> {
 /// League auto-resolves unless pinned. `POE_LEAGUE` / `POE_REALM` override for the run (not persisted).
 pub fn build_app(
     hotkey_rx: Receiver<Hotkey>,
-    tray: Option<platform_linux::TrayHandle>,
+    tray: Option<platform::TrayHandle>,
     hotkeys: HotkeyHandle,
 ) -> anyhow::Result<QuickModeApp> {
     let mut config = Config::load();

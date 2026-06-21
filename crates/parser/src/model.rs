@@ -89,6 +89,8 @@ pub struct Item {
     pub rune_mods: Vec<String>,
     pub modifiers: Vec<Modifier>,
     pub flavour_text: Vec<String>,
+    /// Effect/usage prose on currency & stackables, e.g. "Desecrates a Rare Jewel".
+    pub description: Vec<String>,
     pub notes: Vec<String>,
     pub corrupted: bool,
     pub mirrored: bool,

@@ -283,7 +283,7 @@ impl QuickModeApp {
                         {
                             // Built only on click — encoding the full query is costly.
                             let url = self.trade_url();
-                            match platform_linux::open_url(&url) {
+                            match platform::open_url(&url) {
                                 // Hide the popup so the browser comes forward over us.
                                 Ok(()) => self.close_requested = true,
                                 Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
@@ -298,7 +298,7 @@ impl QuickModeApp {
                                 .clicked()
                         {
                             let url = self.craft_of_exile_url();
-                            match platform_linux::open_url(&url) {
+                            match platform::open_url(&url) {
                                 Ok(()) => self.close_requested = true,
                                 Err(e) => tracing::warn!(error = %e, "xdg-open failed"),
                             }

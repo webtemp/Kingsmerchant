@@ -1,0 +1,21 @@
+[package]
+name = "platform"
+version = "0.1.0"
+description = "Platform facade: re-exports the OS-specific backend (Linux/Windows) behind one neutral API."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# Per-target backends: only the matching one is compiled and linked. `ui` and
+# `overlay` depend on THIS crate (`platform::`) instead of any concrete backend,
+# so the same call site resolves to the right implementation per target.
+[target.'cfg(target_os = "linux")'.dependencies]
+platform-linux = { path = "../platform-linux" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../platform-windows" }

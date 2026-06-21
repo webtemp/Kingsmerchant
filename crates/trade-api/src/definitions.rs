@@ -273,18 +273,39 @@ fn preferred_types(kind: &ModKind, source: Option<&ModSource>) -> Vec<&'static s
     }
 }
 
-/// Turn a `"… # additional <plural>"` count template into the singular `"… an additional <singular>"` form.
+/// Words that start a trailing clause after the counted noun phrase, so the
+/// noun being singularised stops before them (e.g. `… waves of Hiveborn …`).
+const TRAILING_CLAUSE_WORDS: &[&str] = &[
+    "to", "of", "when", "after", "for", "from", "in", "with", "per", "around", "near", "while",
+    "during", "that", "which",
+];
+
+/// Turn a `"… # additional <plural> [trailing]"` count template into the singular
+/// `"… an additional <singular> [trailing]"` form GGG exposes as a presence filter.
 fn singular_additional_variant(template: &str) -> Option<String> {
     let idx = template.find("# additional ")?;
     let head = &template[..idx];
-    let plural_noun = &template[idx + "# additional ".len()..];
-    if plural_noun.is_empty() {
+    let rest = &template[idx + "# additional ".len()..];
+    if rest.is_empty() {
         return None;
     }
-    Some(format!(
-        "{head}an additional {}",
-        singularize_last_word(plural_noun)
-    ))
+    // The counted noun phrase runs up to any trailing clause ("… waves of …").
+    let words: Vec<&str> = rest.split(' ').collect();
+    let split = words
+        .iter()
+        .position(|w| TRAILING_CLAUSE_WORDS.contains(&w.to_ascii_lowercase().as_str()))
+        .unwrap_or(words.len());
+    if split == 0 {
+        return None;
+    }
+    let noun_phrase = singularize_last_word(&words[..split].join(" "));
+    let trailing = words[split..].join(" ");
+    let mut out = format!("{head}an additional {noun_phrase}");
+    if !trailing.is_empty() {
+        out.push(' ');
+        out.push_str(&trailing);
+    }
+    Some(out)
 }
 
 /// Singularise the last whitespace-separated word of `s` with simple English rules.
@@ -439,6 +460,34 @@ mod tests {
         assert_eq!(
             singular_additional_variant("#% increased Magic Monsters"),
             None
+        );
+    }
+
+    #[test]
+    fn singular_variant_keeps_trailing_clause() {
+        // Breach-tablet count mods: noun is singularised, trailing clause kept.
+        assert_eq!(
+            singular_additional_variant(
+                "Unstable Breaches in Map take # additional seconds to collapse after timer is filled"
+            )
+            .as_deref(),
+            Some(
+                "Unstable Breaches in Map take an additional second to collapse after timer is filled"
+            )
+        );
+        assert_eq!(
+            singular_additional_variant(
+                "Breach Hives in Map have # additional waves of Hiveborn Monsters"
+            )
+            .as_deref(),
+            Some("Breach Hives in Map have an additional wave of Hiveborn Monsters")
+        );
+        assert_eq!(
+            singular_additional_variant(
+                "Unstable Breaches in Map spawn # additional Rare Monsters when Stabilised"
+            )
+            .as_deref(),
+            Some("Unstable Breaches in Map spawn an additional Rare Monster when Stabilised")
         );
     }
 }

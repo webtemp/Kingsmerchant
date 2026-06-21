@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/rare_bow_fractured_mirrored.txt
 ---
@@ -178,6 +179,7 @@ Item {
         },
     ],
     flavour_text: [],
+    description: [],
     notes: [
         "~b/o 2800 divine",
     ],

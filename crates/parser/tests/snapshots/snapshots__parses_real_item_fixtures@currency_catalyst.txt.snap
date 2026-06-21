@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/currency_catalyst.txt
 ---
@@ -29,6 +30,12 @@ Item {
     rune_mods: [],
     modifiers: [],
     flavour_text: [],
+    description: [
+        "Adds quality that enhances Speed modifiers on a ring or amulet",
+        "Replaces other quality types",
+        "Right click this item then left click a ring or amulet to apply it.",
+        "Shift click to unstack.",
+    ],
     notes: [],
     corrupted: false,
     mirrored: false,

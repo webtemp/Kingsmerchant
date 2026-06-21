@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/trial_coins.txt
 ---
@@ -36,6 +37,9 @@ Item {
     modifiers: [],
     flavour_text: [
         "Take me to the Trial of the Sekhemas.\nI will serve.",
+    ],
+    description: [
+        "Take this item to the Relic Altar at the Trial of the Sekhemas.",
     ],
     notes: [],
     corrupted: false,

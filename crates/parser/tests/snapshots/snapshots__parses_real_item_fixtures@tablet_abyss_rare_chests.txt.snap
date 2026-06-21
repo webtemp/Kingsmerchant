@@ -1,6 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
-assertion_line: 15
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/tablet_abyss_rare_chests.txt
 ---
@@ -97,6 +97,7 @@ Item {
         },
     ],
     flavour_text: [],
+    description: [],
     notes: [],
     corrupted: false,
     mirrored: false,

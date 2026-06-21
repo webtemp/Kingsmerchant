@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/unique_charm.txt
 ---
@@ -67,6 +68,7 @@ Item {
     flavour_text: [
         "To scrape the sky,\nto touch the clouds themselves,\nis to know true freedom.\"\n- Mutewind saying",
     ],
+    description: [],
     notes: [],
     corrupted: false,
     mirrored: false,

@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/augment_idol.txt
 ---
@@ -46,6 +47,10 @@ Item {
     rune_mods: [],
     modifiers: [],
     flavour_text: [],
+    description: [
+        "Place into an empty Augment Socket in a Helmet or Sceptre to apply its effect to that item. Once socketed it cannot be retrieved but can be replaced by other Augment items.",
+        "Shift click to unstack.",
+    ],
     notes: [],
     corrupted: false,
     mirrored: false,

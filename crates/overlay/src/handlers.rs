@@ -110,6 +110,11 @@ impl LayerShellHandler for App {
                 );
             }
         }
+        // Hold off drawing until the surfaces are pinned to their output, so GL
+        // only ever inits on the pinned surface (see `App::bootstrapping`).
+        if self.bootstrapping {
+            return;
+        }
         self.render(which, qh);
     }
 }
@@ -324,7 +329,7 @@ impl KeyboardHandler for App {
             && !modifiers.alt
             && (event.keysym == Keysym::v || event.keysym == Keysym::V)
         {
-            match platform_linux::read_paste_text() {
+            match platform::read_paste_text() {
                 Ok(Some(text)) if !text.is_empty() => {
                     self.surf_mut(which).events.push(egui::Event::Paste(text));
                 }

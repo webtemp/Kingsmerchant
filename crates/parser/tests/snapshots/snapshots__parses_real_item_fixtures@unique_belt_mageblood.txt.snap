@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/unique_belt_mageblood.txt
 ---
@@ -133,6 +134,7 @@ Item {
         },
     ],
     flavour_text: [],
+    description: [],
     notes: [
         "~b/o 650 divine",
     ],

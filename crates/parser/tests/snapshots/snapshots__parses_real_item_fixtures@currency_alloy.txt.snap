@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/currency_alloy.txt
 ---
@@ -50,6 +51,11 @@ Item {
     rune_mods: [],
     modifiers: [],
     flavour_text: [],
+    description: [
+        "Removes a random modifier and augments a Rare item with a new guaranteed modifier",
+        "Right click this item then left click a Rare item to apply it.",
+        "Shift click to unstack.",
+    ],
     notes: [],
     corrupted: false,
     mirrored: false,

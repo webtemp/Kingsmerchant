@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/magic_jewel.txt
 ---
@@ -80,6 +81,7 @@ Item {
         },
     ],
     flavour_text: [],
+    description: [],
     notes: [
         "~b/o 50 divine",
     ],

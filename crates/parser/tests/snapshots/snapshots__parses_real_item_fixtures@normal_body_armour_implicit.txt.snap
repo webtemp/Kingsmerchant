@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/normal_body_armour_implicit.txt
 ---
@@ -56,6 +57,7 @@ Item {
         },
     ],
     flavour_text: [],
+    description: [],
     notes: [
         "~b/o 10 exalted",
     ],

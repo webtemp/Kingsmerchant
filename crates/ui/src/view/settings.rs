@@ -14,7 +14,7 @@ use super::theme::online_dot;
 
 /// Copy the POESESSID to the OS clipboard, logging any failure.
 fn copy_session_id(sid: &str) {
-    if let Err(e) = platform_linux::write_clipboard_text(sid) {
+    if let Err(e) = platform::write_clipboard_text(sid) {
         tracing::warn!(error = %e, "could not copy POESESSID to clipboard");
     }
 }
@@ -187,7 +187,7 @@ impl QuickModeApp {
                         .on_hover_text("Paste from clipboard")
                         .clicked()
                     {
-                        if let Ok(Some(text)) = platform_linux::read_paste_text() {
+                        if let Ok(Some(text)) = platform::read_paste_text() {
                             sid = text.trim().to_string();
                             edited = true;
                         }
@@ -205,7 +205,7 @@ impl QuickModeApp {
                             ui.close_menu();
                         }
                         if ui.button("Paste").clicked() {
-                            if let Ok(Some(text)) = platform_linux::read_paste_text() {
+                            if let Ok(Some(text)) = platform::read_paste_text() {
                                 sid = text.trim().to_string();
                                 edited = true;
                             }

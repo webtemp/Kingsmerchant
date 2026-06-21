@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/currency_vaal_orb.txt
 ---
@@ -29,6 +30,11 @@ Item {
     rune_mods: [],
     modifiers: [],
     flavour_text: [],
+    description: [
+        "Modifies an item unpredictably and Corrupts it",
+        "Right click this item then left click an item to corrupt it. Corrupted items cannot be modified again.",
+        "Shift click to unstack.",
+    ],
     notes: [],
     corrupted: false,
     mirrored: false,

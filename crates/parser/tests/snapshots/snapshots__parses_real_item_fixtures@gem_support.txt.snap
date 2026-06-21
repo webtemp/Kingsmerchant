@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/gem_support.txt
 ---
@@ -31,6 +32,7 @@ Item {
     flavour_text: [
         "The murals tell a story of creation, of design... the Precursors\ndelved into the secrets of life itself. In their war with the Abyssals,\nthey sought to breed warriors, grown in legions, to fight back...",
     ],
+    description: [],
     notes: [],
     corrupted: false,
     mirrored: false,

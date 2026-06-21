@@ -21,7 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 ui = { path = "../ui" }
-platform-linux = { path = "../platform-linux" }
+platform = { path = "../platform" }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

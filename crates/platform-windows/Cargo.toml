@@ -1,0 +1,23 @@
+[package]
+name = "platform-windows"
+version = "0.1.0"
+description = "Windows platform glue for kingsmerchant: hotkeys, clipboard, input injection, tray, window focus."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# NOTE: This is currently a compiling skeleton that mirrors `platform-linux`'s
+# public surface so `ui`/`overlay` type-check against it. The function bodies are
+# not implemented yet (the fallible ones return an error so the app degrades
+# gracefully rather than panicking). It is pure Rust for now, so it also builds
+# on non-Windows hosts during `cargo build --workspace`, which keeps the contract
+# honest. The real implementation will pull in `windows-sys` (Win32: RegisterHotKey
+# / raw input, clipboard, SendInput, Shell_NotifyIcon, SetForegroundWindow).
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true

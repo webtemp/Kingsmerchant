@@ -176,7 +176,7 @@ impl QuickModeApp {
             self.copy_status = Some(label);
         }
         if let Some(url) = open_trade {
-            match platform_linux::open_url(&url) {
+            match platform::open_url(&url) {
                 // Hide the popup so the browser comes forward over our overlay.
                 Ok(()) => self.close_requested = true,
                 Err(e) => tracing::warn!(error = %e, "xdg-open failed"),

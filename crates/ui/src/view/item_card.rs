@@ -92,6 +92,7 @@ pub(super) fn item_card(ui: &mut egui::Ui, item: &Item, icon_url: Option<&str>) 
             });
 
             meta_line(ui, item);
+            description_block(ui, item);
             state_badges(ui, item);
             properties_block(ui, item);
             sockets_block(ui, item);
@@ -187,6 +188,17 @@ fn meta_line(ui: &mut egui::Ui, item: &Item) {
     if !meta.is_empty() {
         ui.add_space(2.0);
         ui.label(RichText::new(meta.join(" · ")).color(META_COLOR).small());
+    }
+}
+
+/// Currency / stackable effect + usage prose (e.g. "Desecrates a Rare Jewel").
+fn description_block(ui: &mut egui::Ui, item: &Item) {
+    if item.description.is_empty() {
+        return;
+    }
+    thin_separator(ui);
+    for line in &item.description {
+        ui.label(RichText::new(line).color(PROP_COLOR));
     }
 }
 

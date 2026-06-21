@@ -8,17 +8,17 @@ pub(super) fn send_chat_to_poe2(command: String) {
         return;
     }
     std::thread::spawn(move || {
-        platform_linux::focus_poe2();
+        platform::focus_poe2();
         // Let focus reach POE2 before injecting, else keystrokes land in our overlay.
         std::thread::sleep(Duration::from_millis(120));
-        if platform_linux::is_poe2_active() {
-            if let Err(e) = platform_linux::send_chat_command(&command) {
+        if platform::is_poe2_active() {
+            if let Err(e) = platform::send_chat_command(&command) {
                 tracing::warn!(error = %format!("{e:#}"), "chat send failed; left on clipboard");
-                let _ = platform_linux::write_clipboard_text(&command);
+                let _ = platform::write_clipboard_text(&command);
             }
         } else {
             tracing::info!("POE2 not focusable — left command on clipboard to paste");
-            let _ = platform_linux::write_clipboard_text(&command);
+            let _ = platform::write_clipboard_text(&command);
         }
     });
 }
@@ -31,7 +31,7 @@ pub(crate) fn run_chat_macro(command: Option<String>) {
     }
     tracing::info!(command = %cmd, "running chat macro");
     std::thread::spawn(move || {
-        if let Err(e) = platform_linux::send_chat_command(&cmd) {
+        if let Err(e) = platform::send_chat_command(&cmd) {
             tracing::warn!(error = %format!("{e:#}"), "chat macro failed");
         }
     });

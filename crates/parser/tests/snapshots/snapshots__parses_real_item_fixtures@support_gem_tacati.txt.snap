@@ -1,5 +1,6 @@
 ---
 source: crates/parser/tests/snapshots.rs
+assertion_line: 11
 expression: item
 input_file: crates/parser/tests/items/support_gem_tacati.txt
 ---
@@ -35,6 +36,7 @@ Item {
     rune_mods: [],
     modifiers: [],
     flavour_text: [],
+    description: [],
     notes: [],
     corrupted: false,
     mirrored: false,
