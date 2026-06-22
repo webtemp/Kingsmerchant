@@ -54,8 +54,8 @@ impl CompositorHandler for App {
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        if let Some(which) = self.which(surface) {
-            self.render_throttled(which, ANIMATION_FRAME);
+        if self.which(surface).is_some() {
+            self.render_throttled(ANIMATION_FRAME);
         }
     }
     fn surface_enter(
@@ -115,7 +115,7 @@ impl LayerShellHandler for App {
         if self.bootstrapping {
             return;
         }
-        self.render_throttled(which, ANIMATION_FRAME);
+        self.render_throttled(ANIMATION_FRAME);
     }
 }
 

@@ -190,6 +190,10 @@ pub(crate) struct WinSurface {
     /// An Alt drag is in progress (left button held).
     pub(crate) dragging: bool,
     pub(crate) shown: bool,
+    /// Whether the last painted frame was a shown frame. Lets the event loop give
+    /// a just-hidden surface one final clearing frame, then leave it fully idle
+    /// (see [`crate::App::needs_draw`]).
+    pub(crate) last_drawn_shown: bool,
     /// Kept alive until the next commit so the compositor reads the region.
     input_region: Option<Region>,
     /// Last applied (shown, width, height) to skip no-op input region updates.
@@ -238,6 +242,7 @@ impl WinSurface {
             dragged: false,
             dragging: false,
             shown: false,
+            last_drawn_shown: false,
             input_region: None,
             applied_input: None,
             applied_kbd: None,

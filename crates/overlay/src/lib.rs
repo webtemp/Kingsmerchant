@@ -15,7 +15,7 @@ use smithay_client_toolkit::{
     reexports::calloop::{
         ping::make_ping,
         timer::{TimeoutAction, Timer},
-        EventLoop, LoopHandle, RegistrationToken,
+        EventLoop, LoopHandle,
     },
     reexports::calloop_wayland_source::WaylandSource,
     registry::RegistryState,
@@ -56,15 +56,6 @@ const INPUT_FRAME: Duration = Duration::from_millis(8);
 pub(crate) enum Which {
     Popup,
     Settings,
-}
-
-impl Which {
-    fn other(self) -> Which {
-        match self {
-            Which::Popup => Which::Settings,
-            Which::Settings => Which::Popup,
-        }
-    }
 }
 
 /// Launch the overlay: build the egui app + tray, bind the layer surfaces, run
@@ -171,11 +162,12 @@ pub fn run() -> Result<()> {
         popup,
         settings,
         quick,
-        pending_bootstrap: None,
         bootstrapping: true,
         exit: false,
         loop_handle: loop_handle.clone(),
-        repaint_timer: None,
+        next_repaint: None,
+        timer_deadline: None,
+        timer_gen: 0,
         last_render_at: None,
     };
 
@@ -268,16 +260,27 @@ struct App {
     popup: WinSurface,
     settings: WinSurface,
     quick: QuickModeApp,
-    /// A surface to kick back into its redraw loop after the current draw.
-    pending_bootstrap: Option<Which>,
     /// True until the surfaces are pinned to their output at startup; suppresses
     /// drawing (hence GL init) so pinning happens before any painter exists.
     bootstrapping: bool,
     exit: bool,
-    /// calloop handle, used to arm one-shot repaint timers for egui animations.
+    /// calloop handle, used to arm the repaint timer for egui animations.
     loop_handle: LoopHandle<'static, App>,
-    /// The pending egui-driven repaint timer, replaced (not stacked) each frame.
-    repaint_timer: Option<RegistrationToken>,
+    /// When the next paint is due. Plain data: handlers update this (coalescing
+    /// to the soonest deadline) and the repaint timer renders when it arrives.
+    /// `None` means nothing is scheduled and the loop is free to sleep.
+    next_repaint: Option<Instant>,
+    /// The instant the currently-armed repaint timer will fire, or `None` if no
+    /// timer is live. Lets [`App::request_repaint_at`] skip arming a fresh timer
+    /// when an existing one already covers the deadline (see that method).
+    timer_deadline: Option<Instant>,
+    /// Generation stamp for the repaint timer. Bumped whenever a new timer is
+    /// armed; a timer callback whose captured generation no longer matches is
+    /// stale (superseded by an earlier-deadline timer) and drops itself. This is
+    /// how we move a deadline earlier without ever calling `loop_handle.remove`
+    /// on a timer whose event may already be queued — the slot-reuse race that
+    /// dropped wake-ups and produced "non-existence source" warnings in 0.12.0.
+    timer_gen: u64,
     /// When the last paint happened, to throttle the repaint rate (see
     /// [`App::render_throttled`]).
     last_render_at: Option<Instant>,
@@ -301,85 +304,158 @@ impl App {
         }
     }
 
-    /// Whether a surface currently needs drawing — i.e. it is visible. A hidden
-    /// surface is left fully idle; it is woken on demand by input, a repaint
-    /// ping, or a timer (see [`App::on_repaint_request`]). This replaces the old
-    /// rule that kept the popup spinning whenever Settings was closed, which
-    /// busy-rendered ~100fps doing nothing.
-    fn should_spin(&self, which: Which) -> bool {
+    fn surf(&self, which: Which) -> &WinSurface {
         match which {
-            Which::Popup => self.popup.shown,
-            Which::Settings => self.settings.shown,
+            Which::Popup => &self.popup,
+            Which::Settings => &self.settings,
         }
     }
 
-    /// Paint now after an input/state change in a Wayland handler (pointer,
-    /// keyboard, drag), at the snappier [`INPUT_FRAME`] rate so interaction isn't
-    /// bound to the 30fps animation cap. Renders whichever surface is visible.
-    /// Replaces the old perpetual spin that absorbed input.
+    /// Whether a surface needs painting this wake-up: it is visible, or it was
+    /// visible on its last paint and so still owes one frame to clear itself
+    /// off-screen (drop its input region, hide). Once a hidden surface has
+    /// committed that clearing frame it stops needing draws, so the loop goes
+    /// fully idle — no more empty hidden frames spinning at the ping rate (the
+    /// `shown_fps=0 fps=17` churn in 0.12.0).
+    fn needs_draw(&self, which: Which) -> bool {
+        let s = self.surf(which);
+        s.shown || s.last_drawn_shown
+    }
+
+    /// Paint after an input/state change in a Wayland handler (pointer, keyboard,
+    /// drag), at the snappier [`INPUT_FRAME`] rate so interaction isn't bound to
+    /// the animation cap.
     fn repaint_input(&mut self) {
-        self.render_throttled(self.visible(), INPUT_FRAME);
+        self.render_throttled(INPUT_FRAME);
     }
 
-    /// Render in response to a wake-up (repaint ping from a worker thread, or a
+    /// Render in response to a wake-up (repaint ping from a worker thread, or the
     /// repaint timer continuing an animation), at the [`ANIMATION_FRAME`] rate.
-    /// `tick` pumps the channels either way, so a hidden popup still processes
-    /// hotkeys / results and may pop.
+    /// `pump` runs either way, so a hidden popup still processes hotkeys / results
+    /// and may pop.
     fn on_repaint_request(&mut self) {
-        self.render_throttled(self.visible(), ANIMATION_FRAME);
+        self.render_throttled(ANIMATION_FRAME);
     }
 
-    /// The surface currently on screen (popup unless Settings is open).
-    fn visible(&self) -> Which {
-        if self.settings.shown {
-            Which::Settings
-        } else {
-            Which::Popup
+    /// Pump channels, then paint every surface that needs it — but no more than
+    /// once per `min_interval`. egui's spinner (and other animations) call
+    /// `request_repaint` every frame, which pings us every frame; without this
+    /// throttle that would render at the monitor refresh rate. If we painted too
+    /// recently, defer via the repaint timer — collapsing any number of requests
+    /// into one capped paint. Input passes a small `min_interval` for
+    /// responsiveness; egui's own animations re-arm at the slower
+    /// [`ANIMATION_FRAME`] below.
+    fn render_throttled(&mut self, min_interval: Duration) {
+        // Always pump first so a hidden popup can pop / settings can open / quit
+        // is honoured even when nothing is on screen.
+        self.pump();
+        // Nothing to draw → stay fully idle (no GL, no timer). `pump` may have
+        // just shown a surface, in which case we fall through and paint it.
+        if !self.needs_draw(Which::Popup) && !self.needs_draw(Which::Settings) {
+            return;
         }
-    }
-
-    /// Paint `which`, but no more than once per `min_interval`. egui's spinner
-    /// (and other animations) call `request_repaint` every frame, which pings us
-    /// every frame; without this throttle that would render at the monitor
-    /// refresh rate. If we painted too recently, defer to a timer — collapsing
-    /// any number of repaint requests into one capped paint. Input passes a small
-    /// `min_interval` for responsiveness; egui's own animations always re-arm at
-    /// the slower [`ANIMATION_FRAME`] below.
-    fn render_throttled(&mut self, which: Which, min_interval: Duration) {
         let now = Instant::now();
         if let Some(last) = self.last_render_at {
             let since = now.saturating_duration_since(last);
             if since < min_interval {
-                self.arm_repaint(min_interval.saturating_sub(since));
+                self.request_repaint_at(now + min_interval.saturating_sub(since));
                 return;
             }
         }
         self.last_render_at = Some(now);
-        let delay = self.render(which);
-        // egui wants to keep animating → schedule the next paint (capped to 30fps,
-        // independent of how snappily input rendered).
+        let delay = self.render_due();
+        // egui wants to keep animating → schedule the next paint (capped to the
+        // animation rate, independent of how snappily input rendered).
         if delay < Duration::MAX {
-            self.arm_repaint(delay.max(ANIMATION_FRAME));
+            self.request_repaint_at(now + delay.max(ANIMATION_FRAME));
         }
     }
 
-    /// Arm a one-shot timer to repaint after `delay` (egui requested a delayed
-    /// repaint, e.g. an animation or input debounce). Replaces any pending timer
-    /// so they can't accumulate.
-    fn arm_repaint(&mut self, delay: Duration) {
-        if let Some(token) = self.repaint_timer.take() {
-            self.loop_handle.remove(token);
+    /// Record that a paint is wanted no later than `when`, coalescing to the
+    /// soonest outstanding deadline, and ensure a timer is armed to service it.
+    ///
+    /// A live timer that already fires at or before `when` is left untouched —
+    /// this is what collapses a high-polling-rate mouse's thousands of events
+    /// into at most one timer per frame, instead of the per-event arm/disarm
+    /// churn that drove the calloop slot version into the tens of thousands.
+    /// Only when the deadline moves *earlier* than the armed timer do we arm a
+    /// fresh one (via [`App::arm_timer`], which supersedes the old via the
+    /// generation stamp rather than removing it).
+    fn request_repaint_at(&mut self, when: Instant) {
+        let due = match self.next_repaint {
+            Some(d) if d <= when => d,
+            _ => {
+                self.next_repaint = Some(when);
+                when
+            }
+        };
+        let need_timer = match self.timer_deadline {
+            Some(d) => due < d, // armed timer fires too late
+            None => true,       // no timer live
+        };
+        if need_timer {
+            self.arm_timer(due);
         }
-        let token =
-            self.loop_handle
-                .insert_source(Timer::from_duration(delay), move |_, (), app| {
-                    app.repaint_timer = None;
-                    app.on_repaint_request();
+    }
+
+    /// Arm a repaint timer to fire at `due`. The timer is never removed from the
+    /// outside; it lives until its own callback returns [`TimeoutAction::Drop`]
+    /// (idle, or superseded). The generation stamp captured by the callback lets
+    /// a later, earlier-deadline timer supersede this one without a `remove`.
+    fn arm_timer(&mut self, due: Instant) {
+        self.timer_gen = self.timer_gen.wrapping_add(1);
+        let gen = self.timer_gen;
+        let delay = due.saturating_duration_since(Instant::now());
+        match self
+            .loop_handle
+            .insert_source(Timer::from_duration(delay), move |_, (), app| {
+                app.on_repaint_timer(gen)
+            }) {
+            Ok(_) => self.timer_deadline = Some(due),
+            Err(e) => {
+                self.timer_deadline = None;
+                tracing::warn!(error = %e, "could not arm repaint timer");
+            }
+        }
+    }
+
+    /// Repaint-timer callback. Renders if the deadline has arrived, then either
+    /// reschedules itself to the next deadline (no new source — the cheap path
+    /// for a continuing animation) or drops itself when idle/superseded.
+    fn on_repaint_timer(&mut self, gen: u64) -> TimeoutAction {
+        // Superseded by a newer, earlier-deadline timer: let this one die.
+        if gen != self.timer_gen {
+            return TimeoutAction::Drop;
+        }
+        let now = Instant::now();
+        match self.next_repaint {
+            Some(due) if now >= due => {
+                // Clear before rendering: `render_throttled` may set a new
+                // deadline (and even arm a fresh timer, bumping `timer_gen`).
+                self.next_repaint = None;
+                self.render_throttled(ANIMATION_FRAME);
+                // Re-arming inside the render above supersedes us — bow out.
+                if gen != self.timer_gen {
+                    return TimeoutAction::Drop;
+                }
+                if let Some(next) = self.next_repaint {
+                    self.timer_deadline = Some(next);
+                    TimeoutAction::ToInstant(next)
+                } else {
+                    self.timer_deadline = None;
                     TimeoutAction::Drop
-                });
-        match token {
-            Ok(token) => self.repaint_timer = Some(token),
-            Err(e) => tracing::warn!(error = %e, "could not arm repaint timer"),
+                }
+            }
+            // Fired early (deadline still in the future): wait for it.
+            Some(due) => {
+                self.timer_deadline = Some(due);
+                TimeoutAction::ToInstant(due)
+            }
+            // Nothing pending: go idle.
+            None => {
+                self.timer_deadline = None;
+                TimeoutAction::Drop
+            }
         }
     }
 
@@ -391,7 +467,11 @@ impl App {
         });
     }
 
-    fn tick(&mut self, current: Which) {
+    /// Pump the worker channels and apply any show/hide/quit requests. Runs on
+    /// every wake-up — including while hidden — so a price-check result or hotkey
+    /// can pop the popup, open settings, or quit without a surface being visible.
+    /// Drawing is decided separately (see [`App::needs_draw`] / [`App::render_due`]).
+    fn pump(&mut self) {
         // Always pump on the popup's egui context (where price results render).
         self.quick.pump(&self.popup.egui_ctx);
         surface::set_perf_metrics_enabled(self.quick.perf_metrics_enabled());
@@ -419,21 +499,17 @@ impl App {
         if self.quick.take_quit_request() {
             self.exit = true;
         }
-        // Kick the other surface if a transition left it visible and needing a draw.
-        let other = current.other();
-        if self.should_spin(other) {
-            self.pending_bootstrap = Some(other);
-        }
     }
 
-    /// Draw `which` (plus any surface a transition left needing a redraw) and
-    /// return the soonest delay egui wants before the next paint. Scheduling and
-    /// rate-capping are the caller's job (see [`App::render_throttled`]).
-    fn render(&mut self, which: Which) -> Duration {
-        let mut delay = self.draw_surface(which);
-        if let Some(boot) = self.pending_bootstrap.take() {
-            if boot != which {
-                delay = delay.min(self.draw_surface(boot));
+    /// Draw every surface that needs it (the visible one, plus any surface still
+    /// owing a clearing frame after being hidden) and return the soonest delay
+    /// egui wants before the next paint. Scheduling and rate-capping are the
+    /// caller's job (see [`App::render_throttled`]).
+    fn render_due(&mut self) -> Duration {
+        let mut delay = Duration::MAX;
+        for which in [Which::Popup, Which::Settings] {
+            if self.needs_draw(which) {
+                delay = delay.min(self.draw_surface(which));
             }
         }
         delay
@@ -443,7 +519,9 @@ impl App {
     /// placement, and content closure. Returns the delay egui wants before its
     /// next paint (see [`WinSurface::draw`]).
     fn draw_surface(&mut self, which: Which) -> Duration {
-        self.tick(which);
+        // Record the visibility this frame paints, so a hide transition gets
+        // exactly one clearing frame and then [`App::needs_draw`] reports idle.
+        self.surf_mut(which).last_drawn_shown = self.surf(which).shown;
         let (want_w, place) = match which {
             Which::Popup => {
                 let place = match self.quick.position_mode() {
