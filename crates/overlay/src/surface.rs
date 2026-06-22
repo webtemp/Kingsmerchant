@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use glutin::config::{ConfigTemplateBuilder, GlConfig};
@@ -12,7 +12,7 @@ use glutin::context::{
     ContextAttributesBuilder, NotCurrentGlContext, PossiblyCurrentContext, PossiblyCurrentGlContext,
 };
 use glutin::display::{Display, DisplayApiPreference, GlDisplay};
-use glutin::surface::{GlSurface, Surface, SurfaceAttributesBuilder, WindowSurface};
+use glutin::surface::{GlSurface, Surface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
 use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
 };
@@ -38,6 +38,10 @@ const MIN_HEIGHT: u32 = 80;
 const MAX_HEIGHT: u32 = 1300;
 /// Deadband so measurement jitter doesn't thrash `set_size`.
 const HEIGHT_DEADBAND: u32 = 8;
+/// A height change this large (opening a surface, a section expanding) is applied
+/// on the same frame instead of waiting two frames to settle, so the surface
+/// never flashes at a stale size.
+const BIG_JUMP: u32 = 64;
 const CORNER_RADIUS: f32 = 14.0;
 
 struct Perf {
@@ -186,8 +190,6 @@ pub(crate) struct WinSurface {
     /// An Alt drag is in progress (left button held).
     pub(crate) dragging: bool,
     pub(crate) shown: bool,
-    /// Currently in its redraw loop; goes quiet → needs a kick (see `App::tick`).
-    pub(crate) spinning: bool,
     /// Kept alive until the next commit so the compositor reads the region.
     input_region: Option<Region>,
     /// Last applied (shown, width, height) to skip no-op input region updates.
@@ -236,7 +238,6 @@ impl WinSurface {
             dragged: false,
             dragging: false,
             shown: false,
-            spinning: false,
             input_region: None,
             applied_input: None,
             applied_kbd: None,
@@ -346,6 +347,13 @@ impl WinSurface {
             .make_current(&gl_surface)
             .context("make_current")?;
 
+        // Don't block `swap_buffers` on the compositor's vblank: paints are
+        // already paced by our own timer, so vsync-waiting here only adds latency
+        // jitter (worst when the GPU is busy with the game). Best-effort.
+        if let Err(e) = gl_surface.set_swap_interval(&context, SwapInterval::DontWait) {
+            tracing::debug!(error = %e, "set_swap_interval(DontWait) unsupported");
+        }
+
         // SAFETY: the context is current, so `get_proc_address` resolves valid
         // GL function pointers; glow only invokes the loader during construction.
         let glow = unsafe {
@@ -364,18 +372,20 @@ impl WinSurface {
     }
 
     /// Lay out, size, place, and paint this surface for one frame.
+    ///
+    /// Returns the delay egui wants before the next paint: `ZERO`/small means it
+    /// is animating, `MAX` means idle. The caller schedules the next paint (at a
+    /// capped rate) — there is no perpetual frame-callback loop.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw(
         &mut self,
         shared: &mut Shared,
-        qh: &QueueHandle<App>,
         want_width: u32,
         place: Placement,
-        request_next: bool,
         fill: egui::Color32,
         stroke: egui::Color32,
         render: impl FnOnce(&mut egui::Ui),
-    ) -> Result<()> {
+    ) -> Result<Duration> {
         let perf_t0 = Instant::now();
         if self.gl.is_none() {
             self.init_gl(shared)?;
@@ -459,16 +469,30 @@ impl WinSurface {
         // Auto-height: resize to measured content (not while dragging, with a
         // shrink deadband), and only once the height has settled across two
         // frames so reflow wobble can't drive a configure↔set_size feedback loop.
+        let mut height_pending = false;
         if shown && measured > 0.0 && !self.dragging {
             let want_h = (measured.ceil() as u32).clamp(MIN_HEIGHT, MAX_HEIGHT);
             let settled = want_h == self.last_want_h;
             self.last_want_h = want_h;
-            let height_changed = want_h.abs_diff(self.desired_height) > HEIGHT_DEADBAND;
-            if want_width != self.desired_width || (settled && height_changed) {
+            let diff = want_h.abs_diff(self.desired_height);
+            let height_changed = diff > HEIGHT_DEADBAND;
+            // Apply at once for a big jump (open / section expand) so it never
+            // flashes at a stale size; small adjustments still settle across two
+            // frames to avoid reflow wobble driving a configure↔set_size loop.
+            if want_width != self.desired_width || (height_changed && (settled || diff > BIG_JUMP))
+            {
                 self.desired_height = want_h;
                 self.desired_width = want_width;
                 self.layer.set_size(want_width, want_h);
                 perf_note_setsize();
+            } else if height_changed {
+                // Measured a new height but it hasn't settled across two frames
+                // yet, so we can't apply it. Force the next frame now (below) so
+                // the resize converges in a few ms — otherwise, with on-demand
+                // rendering, the surface stalls at its stale (too-small) height
+                // until the next event arrives, which can be ~1s away. That was
+                // the "settings opens top-first, the rest a second later" bug.
+                height_pending = true;
             }
         }
 
@@ -507,15 +531,22 @@ impl WinSurface {
             .swap_buffers(&gl.context)
             .context("swap_buffers")?;
 
-        // Schedule the next frame only if this surface should keep redrawing.
-        self.spinning = request_next;
-        if request_next {
-            let surface = self.layer.wl_surface();
-            surface.frame(qh, surface.clone());
-        }
+        // egui reports when it next wants to paint; the event loop schedules it
+        // (at a capped rate, so a visible spinner can't peg the GPU at the
+        // monitor's refresh rate). No frame-callback loop: that was the old
+        // always-on spin that rendered ~100fps even while hidden. While the
+        // auto-height is still converging we ask for an immediate next frame so
+        // the surface reaches its final size without waiting for an event.
+        let repaint_delay = if height_pending {
+            Duration::ZERO
+        } else {
+            full.viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .map_or(Duration::MAX, |v| v.repaint_delay)
+        };
         self.layer.commit();
         perf_note_frame(shown, perf_t0.elapsed().as_secs_f32() * 1000.0);
-        Ok(())
+        Ok(repaint_delay)
     }
 
     /// Take keyboard focus on-demand while shown, drop it when hidden.

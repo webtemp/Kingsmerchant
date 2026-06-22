@@ -185,6 +185,10 @@ impl QuickModeApp {
         }
         if let Some(token) = teleport {
             self.spawn_teleport(token, &ctx);
+            // Hide immediately so the overlay is gone the moment you click — the
+            // teleport itself runs in the background. If it fails, the result
+            // handler re-opens the popup with the error.
+            self.close_requested = true;
         }
 
         if let Some(status) = &self.copy_status {

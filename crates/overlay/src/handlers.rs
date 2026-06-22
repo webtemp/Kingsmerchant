@@ -28,7 +28,7 @@ use wayland_client::{
 use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1;
 
 use crate::input_map::{format_binding, keysym_to_binding_key, map_button, map_keysym, BTN_LEFT};
-use crate::{App, Which};
+use crate::{App, Which, ANIMATION_FRAME};
 
 impl CompositorHandler for App {
     fn scale_factor_changed(
@@ -50,12 +50,12 @@ impl CompositorHandler for App {
     fn frame(
         &mut self,
         _: &Connection,
-        qh: &QueueHandle<Self>,
+        _: &QueueHandle<Self>,
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
         if let Some(which) = self.which(surface) {
-            self.render(which, qh);
+            self.render_throttled(which, ANIMATION_FRAME);
         }
     }
     fn surface_enter(
@@ -88,7 +88,7 @@ impl LayerShellHandler for App {
     fn configure(
         &mut self,
         _: &Connection,
-        qh: &QueueHandle<Self>,
+        _: &QueueHandle<Self>,
         layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _: u32,
@@ -115,7 +115,7 @@ impl LayerShellHandler for App {
         if self.bootstrapping {
             return;
         }
-        self.render(which, qh);
+        self.render_throttled(which, ANIMATION_FRAME);
     }
 }
 
@@ -236,6 +236,9 @@ impl PointerHandler for App {
         if let Some((x, y)) = popup_dropped {
             self.quick.set_fixed_position(x, y);
         }
+        if !events.is_empty() {
+            self.repaint_input();
+        }
     }
 }
 
@@ -260,6 +263,7 @@ impl RelativePointerHandler for App {
         if let Some(surf) = surf {
             surf.margin_left = (surf.margin_left + dx).max(0);
             surf.margin_top = (surf.margin_top + dy).max(0);
+            self.repaint_input();
         }
     }
 }
@@ -279,6 +283,7 @@ impl KeyboardHandler for App {
             self.focused = Some(which);
             self.surf_mut(which).kbd_focus = true;
             tracing::info!(?which, "keyboard focus GAINED");
+            self.repaint_input();
         }
     }
     fn leave(
@@ -301,6 +306,8 @@ impl KeyboardHandler for App {
             tracing::info!("popup keyboard focus lost → closing");
             self.popup.shown = false;
         }
+        // Repaint so a now-hidden popup actually clears off-screen.
+        self.repaint_input();
     }
     fn press_key(
         &mut self,
@@ -310,6 +317,7 @@ impl KeyboardHandler for App {
         _: u32,
         event: KeyEvent,
     ) {
+        self.repaint_input();
         let modifiers = self.kbd_modifiers;
         // Click-to-record hotkey capture: grab the whole combo; Esc cancels.
         if self.quick.is_recording_hotkey() {
@@ -364,6 +372,7 @@ impl KeyboardHandler for App {
         _: u32,
         event: KeyEvent,
     ) {
+        self.repaint_input();
         let modifiers = self.kbd_modifiers;
         let Some(which) = self.focused else {
             return;

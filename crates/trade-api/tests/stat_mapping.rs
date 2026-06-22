@@ -315,3 +315,26 @@ fn granted_skill_maps_to_skill_id_with_level_as_value() {
         .is_none());
     assert!(defs.map_granted_skill("garbage").is_none());
 }
+
+#[test]
+fn trailing_qualifier_is_stripped_so_ingame_text_maps() {
+    // GGG publishes this stat only as "… (Gold Piles)", but the in-game mod text
+    // omits the qualifier — it must still map to the filter (regression: tablet
+    // gold-find showed as unsearchable). Two ids share the stripped form across
+    // types, so it resolves via the type-scoped table, not the global one.
+    let json = r##"{"result":[{"label":"Explicit","entries":[
+        {"id":"explicit.stat_1276056105","text":"#% increased Gold found in Map (Gold Piles)","type":"explicit"},
+        {"id":"fractured.stat_1276056105","text":"#% increased Gold found in Map (Gold Piles)","type":"fractured"}
+    ]}]}"##;
+    let defs = StatDefinitions::from_json(json).expect("parse");
+    let m = defs
+        .map_stat_line(
+            &ModKind::Prefix,
+            None,
+            "28(25-35)% increased Gold found in Map",
+            false,
+        )
+        .expect("gold-find maps via stripped qualifier");
+    assert_eq!(m.id, "explicit.stat_1276056105");
+    assert_eq!(m.values, [28.0]);
+}

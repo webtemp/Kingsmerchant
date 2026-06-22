@@ -60,13 +60,51 @@ impl StatDefinitions {
         let doc: RawDoc<RawStat> =
             serde_json::from_str(json).map_err(|e| Error::decode("data/stats", e))?;
         let mut defs = StatDefinitions::default();
-        for group in doc.result {
-            for stat in group.entries {
+        // Pass 1: index each stat by its exact (canonical) text. First wins.
+        for group in &doc.result {
+            for stat in &group.entries {
                 let key = canonical_ggg(&stat.text);
                 defs.by_type_text
                     .entry((stat.stat_type.clone(), key.clone()))
                     .or_insert_with(|| stat.id.clone());
-                defs.by_text.entry(key).or_insert(stat.id);
+                defs.by_text.entry(key).or_insert_with(|| stat.id.clone());
+            }
+        }
+        // Pass 2: index a qualifier-stripped alias for stats whose trade text ends
+        // in a parenthetical the in-game mod text omits (e.g. "… (Gold Piles)"),
+        // so those mods still map to a filter instead of falling through as
+        // unsearchable. Only when the stripped form is unambiguous (one id) and
+        // never overriding an exact entry from pass 1.
+        let mut tt_alias: HashMap<(String, String), HashSet<String>> = HashMap::new();
+        let mut t_alias: HashMap<String, HashSet<String>> = HashMap::new();
+        for group in &doc.result {
+            for stat in &group.entries {
+                let canon = canonical_ggg(&stat.text);
+                let Some(stripped) = strip_trailing_qualifier(&canon) else {
+                    continue;
+                };
+                tt_alias
+                    .entry((stat.stat_type.clone(), stripped.to_string()))
+                    .or_default()
+                    .insert(stat.id.clone());
+                t_alias
+                    .entry(stripped.to_string())
+                    .or_default()
+                    .insert(stat.id.clone());
+            }
+        }
+        for (key, ids) in tt_alias {
+            if ids.len() == 1 {
+                defs.by_type_text
+                    .entry(key)
+                    .or_insert_with(|| ids.into_iter().next().expect("len == 1"));
+            }
+        }
+        for (key, ids) in t_alias {
+            if ids.len() == 1 {
+                defs.by_text
+                    .entry(key)
+                    .or_insert_with(|| ids.into_iter().next().expect("len == 1"));
             }
         }
         Ok(defs)
@@ -225,6 +263,22 @@ impl LocalContext {
             self.is_weapon
         }
     }
+}
+
+/// If a stat's trade text ends in a parenthetical qualifier that the in-game mod
+/// text omits (e.g. `"#% increased Gold found in Map (Gold Piles)"`), return the
+/// text without it so the mod can still be matched. `(Local)` is left alone — it
+/// is matched the other way, by appending it to the item's template.
+fn strip_trailing_qualifier(text: &str) -> Option<&str> {
+    let trimmed = text.trim_end();
+    let inner_end = trimmed.strip_suffix(')')?.len();
+    let open = trimmed.rfind(" (")?;
+    let qualifier = &trimmed[open + 2..inner_end];
+    if qualifier.is_empty() || qualifier.contains('(') || qualifier.eq_ignore_ascii_case("Local") {
+        return None;
+    }
+    let stripped = trimmed[..open].trim_end();
+    (!stripped.is_empty()).then_some(stripped)
 }
 
 fn is_defence_stat(line: &str) -> bool {

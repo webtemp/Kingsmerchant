@@ -356,14 +356,55 @@ fn stat_filter_label(ui: &mut egui::Ui, text: &str) {
     // Two fields plus gaps — keep in sync with `min_max_fields`.
     let reserved = 2.0 * FILTER_FIELD_W + 3.0 * ui.spacing().item_spacing.x;
     let label_w = (ui.available_width() - reserved).max(40.0);
+    // Elide to one line ourselves and attach a single `on_hover_text`. (Using
+    // egui's `Label::truncate()` would add its *own* hover tooltip when elided,
+    // stacking a second identical one on long mods — while leaving short mods,
+    // which it never elides, with no tooltip at all.)
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let shown = elide_to_width(ui, text, &font, label_w);
     ui.allocate_ui_with_layout(
         egui::vec2(label_w, ui.spacing().interact_size.y),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.add(egui::Label::new(RichText::new(text).color(affix_blue())).truncate())
-                .on_hover_text(text);
+            ui.add(
+                egui::Label::new(RichText::new(&shown).color(affix_blue()))
+                    .wrap_mode(egui::TextWrapMode::Extend),
+            )
+            .on_hover_text(text);
         },
     );
+}
+
+/// Width of `s` laid out on one line in `font` (colour is irrelevant to width).
+fn text_width(ui: &egui::Ui, s: &str, font: &egui::FontId) -> f32 {
+    ui.fonts(|f| {
+        f.layout_no_wrap(s.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    })
+}
+
+/// Shorten `text` with a trailing `…` so it fits within `max_w` on one line.
+/// Returns `text` unchanged when it already fits. Binary-searches the cut point;
+/// the candidate strings are stable per `(text, max_w)`, so egui's galley cache
+/// makes repeat frames cheap.
+fn elide_to_width(ui: &egui::Ui, text: &str, font: &egui::FontId, max_w: f32) -> String {
+    if text_width(ui, text, font) <= max_w {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi) = (0usize, chars.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let cand: String = chars[..mid].iter().collect();
+        if text_width(ui, &format!("{}…", cand.trim_end()), font) <= max_w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let head: String = chars[..lo].iter().collect();
+    format!("{}…", head.trim_end())
 }
 
 /// Right-aligned min + max fields. Returns whether either changed.

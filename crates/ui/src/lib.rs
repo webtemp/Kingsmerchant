@@ -504,9 +504,12 @@ impl QuickModeApp {
                     };
                 }
                 Msg::Teleport(result) => {
+                    // The popup was already hidden on click. Surface a failure by
+                    // re-opening it with the error; a success stays hidden.
                     if let Err(e) = result {
                         tracing::warn!(error = %e, "hideout teleport failed");
                         self.copy_status = Some(format!("teleport failed: {e}"));
+                        self.pop_requested = true;
                     }
                 }
                 Msg::SessionChecked(status) => {

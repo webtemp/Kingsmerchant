@@ -5,12 +5,19 @@
 #![allow(unsafe_code)]
 
 use std::sync::mpsc::channel;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use glutin::display::Display;
 use smithay_client_toolkit::{
     compositor::CompositorState,
     output::OutputState,
+    reexports::calloop::{
+        ping::make_ping,
+        timer::{TimeoutAction, Timer},
+        EventLoop, LoopHandle, RegistrationToken,
+    },
+    reexports::calloop_wayland_source::WaylandSource,
     registry::RegistryState,
     seat::{relative_pointer::RelativePointerState, SeatState},
     shell::{wlr_layer::LayerShell, WaylandSurface},
@@ -18,7 +25,7 @@ use smithay_client_toolkit::{
 use wayland_client::{
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_surface},
-    Connection, QueueHandle,
+    Connection,
 };
 use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1;
 
@@ -29,6 +36,21 @@ use crate::surface::{Placement, Shared, WinSurface, POPUP_INIT_WIDTH, SETTINGS_W
 mod handlers;
 mod input_map;
 mod surface;
+
+/// Minimum spacing between egui-driven repaints (~60fps). egui animations like
+/// spinners and smooth scrolling ask to repaint "immediately" every frame;
+/// without this clamp that runs at the monitor refresh rate (100–150fps here),
+/// pegging the GPU during a long-lived spinner. Frames are ~0.4–2ms now, so
+/// ~90fps costs only a few percent of GPU while keeping scroll/animation smooth
+/// (egui eases mouse-wheel scroll over ~0.1s, so the easing wants a decent
+/// frame rate to look fluid; 30 felt choppy when scrolling Settings).
+const ANIMATION_FRAME: Duration = Duration::from_millis(11);
+
+/// Minimum spacing between input-driven repaints (~120fps). Pointer/keyboard
+/// input renders at this snappier rate so interaction (hover, scroll, drag)
+/// isn't bound to the animation cap; it only exists to coalesce high-polling-
+/// rate mice. Frames are ~1ms, so this is essentially free.
+const INPUT_FRAME: Duration = Duration::from_millis(8);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Which {
@@ -101,6 +123,13 @@ pub fn run() -> Result<()> {
     let (globals, mut event_queue) = registry_queue_init(&conn).context("registry init")?;
     let qh = event_queue.handle();
 
+    // calloop drives the loop so it can sleep when idle and be woken by a repaint
+    // ping (egui asked to repaint) or a timer (a delayed egui animation), instead
+    // of busy-rendering via perpetual frame callbacks.
+    let mut event_loop: EventLoop<'static, App> =
+        EventLoop::try_new().context("create event loop")?;
+    let loop_handle = event_loop.handle();
+
     let compositor =
         CompositorState::bind(&globals, &qh).map_err(|e| anyhow!("wl_compositor: {e}"))?;
     let layer_shell =
@@ -145,6 +174,9 @@ pub fn run() -> Result<()> {
         pending_bootstrap: None,
         bootstrapping: true,
         exit: false,
+        loop_handle: loop_handle.clone(),
+        repaint_timer: None,
+        last_render_at: None,
     };
 
     // Pin the surfaces to POE2's monitor before any draw, so the compositor can't
@@ -170,11 +202,29 @@ pub fn run() -> Result<()> {
     }
     app.bootstrapping = false;
 
+    // Wake the idle loop whenever egui requests a repaint (price-check results,
+    // hotkeys, session checks — all land on a worker thread that calls
+    // `request_repaint`). The ping coalesces, so a burst is one wake-up. Wired to
+    // both contexts since the popup and settings panels repaint independently.
+    let (repaint_ping, repaint_source) = make_ping().context("create repaint ping")?;
+    loop_handle
+        .insert_source(repaint_source, |(), (), app| app.on_repaint_request())
+        .map_err(|e| anyhow!("insert repaint ping: {e}"))?;
+    for ctx in [&app.popup.egui_ctx, &app.settings.egui_ctx] {
+        let ping = repaint_ping.clone();
+        ctx.set_request_repaint_callback(move |_| ping.ping());
+    }
+
+    WaylandSource::new(conn.clone(), event_queue)
+        .insert(loop_handle)
+        .map_err(|e| anyhow!("insert wayland source: {e}"))?;
+
     tracing::info!("overlay running (hidden) — Ctrl+C on an item in POE2 to pop it");
     while !app.exit {
-        event_queue
-            .blocking_dispatch(&mut app)
-            .context("dispatch")?;
+        event_loop.dispatch(None, &mut app).context("dispatch")?;
+        // Flush requests queued by renders driven from ping/timer wake-ups (the
+        // Wayland source only flushes when it itself runs).
+        app.conn.flush().context("flush wayland")?;
     }
     Ok(())
 }
@@ -224,6 +274,13 @@ struct App {
     /// drawing (hence GL init) so pinning happens before any painter exists.
     bootstrapping: bool,
     exit: bool,
+    /// calloop handle, used to arm one-shot repaint timers for egui animations.
+    loop_handle: LoopHandle<'static, App>,
+    /// The pending egui-driven repaint timer, replaced (not stacked) each frame.
+    repaint_timer: Option<RegistrationToken>,
+    /// When the last paint happened, to throttle the repaint rate (see
+    /// [`App::render_throttled`]).
+    last_render_at: Option<Instant>,
 }
 
 impl App {
@@ -244,19 +301,85 @@ impl App {
         }
     }
 
-    fn surf(&self, which: Which) -> &WinSurface {
+    /// Whether a surface currently needs drawing — i.e. it is visible. A hidden
+    /// surface is left fully idle; it is woken on demand by input, a repaint
+    /// ping, or a timer (see [`App::on_repaint_request`]). This replaces the old
+    /// rule that kept the popup spinning whenever Settings was closed, which
+    /// busy-rendered ~100fps doing nothing.
+    fn should_spin(&self, which: Which) -> bool {
         match which {
-            Which::Popup => &self.popup,
-            Which::Settings => &self.settings,
+            Which::Popup => self.popup.shown,
+            Which::Settings => self.settings.shown,
         }
     }
 
-    /// Whether a surface should keep requesting frame callbacks. Exactly one
-    /// spins at a time so the two never compete for the vsync swap.
-    fn should_spin(&self, which: Which) -> bool {
-        match which {
-            Which::Popup => self.popup.shown || !self.settings.shown,
-            Which::Settings => self.settings.shown,
+    /// Paint now after an input/state change in a Wayland handler (pointer,
+    /// keyboard, drag), at the snappier [`INPUT_FRAME`] rate so interaction isn't
+    /// bound to the 30fps animation cap. Renders whichever surface is visible.
+    /// Replaces the old perpetual spin that absorbed input.
+    fn repaint_input(&mut self) {
+        self.render_throttled(self.visible(), INPUT_FRAME);
+    }
+
+    /// Render in response to a wake-up (repaint ping from a worker thread, or a
+    /// repaint timer continuing an animation), at the [`ANIMATION_FRAME`] rate.
+    /// `tick` pumps the channels either way, so a hidden popup still processes
+    /// hotkeys / results and may pop.
+    fn on_repaint_request(&mut self) {
+        self.render_throttled(self.visible(), ANIMATION_FRAME);
+    }
+
+    /// The surface currently on screen (popup unless Settings is open).
+    fn visible(&self) -> Which {
+        if self.settings.shown {
+            Which::Settings
+        } else {
+            Which::Popup
+        }
+    }
+
+    /// Paint `which`, but no more than once per `min_interval`. egui's spinner
+    /// (and other animations) call `request_repaint` every frame, which pings us
+    /// every frame; without this throttle that would render at the monitor
+    /// refresh rate. If we painted too recently, defer to a timer — collapsing
+    /// any number of repaint requests into one capped paint. Input passes a small
+    /// `min_interval` for responsiveness; egui's own animations always re-arm at
+    /// the slower [`ANIMATION_FRAME`] below.
+    fn render_throttled(&mut self, which: Which, min_interval: Duration) {
+        let now = Instant::now();
+        if let Some(last) = self.last_render_at {
+            let since = now.saturating_duration_since(last);
+            if since < min_interval {
+                self.arm_repaint(min_interval.saturating_sub(since));
+                return;
+            }
+        }
+        self.last_render_at = Some(now);
+        let delay = self.render(which);
+        // egui wants to keep animating → schedule the next paint (capped to 30fps,
+        // independent of how snappily input rendered).
+        if delay < Duration::MAX {
+            self.arm_repaint(delay.max(ANIMATION_FRAME));
+        }
+    }
+
+    /// Arm a one-shot timer to repaint after `delay` (egui requested a delayed
+    /// repaint, e.g. an animation or input debounce). Replaces any pending timer
+    /// so they can't accumulate.
+    fn arm_repaint(&mut self, delay: Duration) {
+        if let Some(token) = self.repaint_timer.take() {
+            self.loop_handle.remove(token);
+        }
+        let token =
+            self.loop_handle
+                .insert_source(Timer::from_duration(delay), move |_, (), app| {
+                    app.repaint_timer = None;
+                    app.on_repaint_request();
+                    TimeoutAction::Drop
+                });
+        match token {
+            Ok(token) => self.repaint_timer = Some(token),
+            Err(e) => tracing::warn!(error = %e, "could not arm repaint timer"),
         }
     }
 
@@ -296,28 +419,31 @@ impl App {
         if self.quick.take_quit_request() {
             self.exit = true;
         }
-        // Kick the other surface if a transition left it needing to spin.
+        // Kick the other surface if a transition left it visible and needing a draw.
         let other = current.other();
-        if self.should_spin(other) && !self.surf(other).spinning {
+        if self.should_spin(other) {
             self.pending_bootstrap = Some(other);
         }
     }
 
-    /// Draw `which`, then kick any surface a transition left needing a redraw.
-    fn render(&mut self, which: Which, qh: &QueueHandle<Self>) {
-        self.draw_surface(which, qh);
+    /// Draw `which` (plus any surface a transition left needing a redraw) and
+    /// return the soonest delay egui wants before the next paint. Scheduling and
+    /// rate-capping are the caller's job (see [`App::render_throttled`]).
+    fn render(&mut self, which: Which) -> Duration {
+        let mut delay = self.draw_surface(which);
         if let Some(boot) = self.pending_bootstrap.take() {
             if boot != which {
-                self.draw_surface(boot, qh);
+                delay = delay.min(self.draw_surface(boot));
             }
         }
+        delay
     }
 
     /// Draw one surface (popup or settings); they differ only in width,
-    /// placement, and content closure.
-    fn draw_surface(&mut self, which: Which, qh: &QueueHandle<Self>) {
+    /// placement, and content closure. Returns the delay egui wants before its
+    /// next paint (see [`WinSurface::draw`]).
+    fn draw_surface(&mut self, which: Which) -> Duration {
         self.tick(which);
-        let request_next = self.should_spin(which);
         let (want_w, place) = match which {
             Which::Popup => {
                 let place = match self.quick.position_mode() {
@@ -358,22 +484,17 @@ impl App {
             display,
             kbd_modifiers: *kbd_modifiers,
         };
-        let result = surf.draw(
-            &mut shared,
-            qh,
-            want_w,
-            place,
-            request_next,
-            fill,
-            stroke,
-            |ui| match which {
-                Which::Popup => quick.content(ui),
-                Which::Settings => quick.settings_content(ui),
-            },
-        );
-        if let Err(e) = result {
-            tracing::error!(error = %format!("{e:#}"), which = ?which, "surface draw failed");
-            *exit = true;
+        let result = surf.draw(&mut shared, want_w, place, fill, stroke, |ui| match which {
+            Which::Popup => quick.content(ui),
+            Which::Settings => quick.settings_content(ui),
+        });
+        match result {
+            Ok(delay) => delay,
+            Err(e) => {
+                tracing::error!(error = %format!("{e:#}"), which = ?which, "surface draw failed");
+                *exit = true;
+                Duration::MAX
+            }
         }
     }
 }
