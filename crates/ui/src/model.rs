@@ -341,8 +341,16 @@ pub(crate) fn fmt_amount(amount: f64) -> String {
 }
 
 /// Scale a rolled value to the filter-min percentage; integer rolls floor, fractions keep precision.
+///
+/// For a negative (downside) roll — e.g. `-72` from "reduced Amount Recovered"
+/// stored as "increased" — scaling toward zero would make the filter *stricter*
+/// than the item itself, so the item wouldn't match its own search. Clamp so the
+/// min is never tighter than the roll.
 pub(crate) fn scaled_min(rolled: f64, percent: u32) -> f64 {
-    let scaled = rolled * f64::from(percent) / 100.0;
+    let mut scaled = rolled * f64::from(percent) / 100.0;
+    if rolled < 0.0 {
+        scaled = scaled.min(rolled);
+    }
     if rolled.fract() == 0.0 {
         scaled.floor()
     } else {
@@ -423,6 +431,14 @@ mod tests {
         assert_eq!(scaled_min(132.0, 100), 132.0);
         assert_eq!(scaled_min(2.5, 100), 2.5);
         assert!((scaled_min(2.5, 90) - 2.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scaled_min_does_not_tighten_negative_downside_rolls() {
+        // A "-72" roll scaled to 90% must not become -65 (stricter than the
+        // item itself); it stays at the roll so the item matches its own filter.
+        assert_eq!(scaled_min(-72.0, 90), -72.0);
+        assert_eq!(scaled_min(-72.0, 100), -72.0);
     }
 
     #[test]

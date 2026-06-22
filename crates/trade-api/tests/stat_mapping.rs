@@ -80,6 +80,56 @@ fn same_text_resolves_to_different_id_by_affix_type() {
 }
 
 #[test]
+fn reduced_stat_maps_to_the_increased_filter_with_a_negated_value() {
+    let defs = stats();
+    // Lavianga's Spirits rolls "reduced Amount Recovered"; GGG only lists the
+    // "increased" stat, so it must map there with the roll negated (else the mod
+    // vanishes from the filter entirely).
+    let flask = parse_item(
+        "Item Class: Mana Flasks\nRarity: Unique\nLavianga's Spirits\nGargantuan Mana Flask\n\
+         --------\nItem Level: 80\n--------\n\
+         { Unique Modifier }\n72(80-70)% reduced Amount Recovered\n",
+    )
+    .unwrap();
+
+    let m = defs
+        .map_item(&flask)
+        .into_iter()
+        .find(|m| m.id == "explicit.stat_700317374")
+        .expect("reduced Amount Recovered maps to the increased stat");
+    assert_eq!(m.values, [-72.0]);
+}
+
+#[test]
+fn crafted_and_explicit_of_same_stat_merge_into_one_summed_filter() {
+    let defs = stats();
+    // A crafted "increased maximum Life" and a hybrid explicit one are the same
+    // stat to a buyer; map_item must collapse them into a single summed filter
+    // (mirrors the duplicate "increased Evasion Rating" rows on real rares).
+    // Crafted listed first to also exercise preferring the general explicit id.
+    let gloves = parse_item(
+        "Item Class: Gloves\nRarity: Rare\nCarrion Clutches\nTest Base\n--------\n\
+         Item Level: 82\n--------\n\
+         { Crafted Prefix Modifier \"Phantasm's\" (Tier: 3) }\n+73% increased maximum Life\n\
+         { Prefix Modifier \"Stag's\" (Tier: 1) }\n+46% increased maximum Life\n",
+    )
+    .unwrap();
+
+    let life: Vec<_> = defs
+        .map_item(&gloves)
+        .into_iter()
+        .filter(|m| m.id.contains("983749596"))
+        .collect();
+
+    assert_eq!(life.len(), 1, "the two life mods collapse into one row");
+    assert_eq!(
+        life[0].id, "explicit.stat_983749596",
+        "merged row keeps the general explicit id, not crafted"
+    );
+    assert_eq!(life[0].values, [119.0], "rolls are summed: 73 + 46");
+}
+
+#[test]
 fn plural_count_mod_falls_back_to_singular_presence_filter() {
     let defs = stats();
     let m = defs

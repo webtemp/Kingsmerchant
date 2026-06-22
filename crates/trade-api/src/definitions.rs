@@ -48,6 +48,56 @@ impl MappedStat {
     }
 }
 
+/// Stat-id type prefixes whose mods are interchangeable affixes (prefix/suffix
+/// rolls), so two of them with the same numeric stat are merged. `implicit`,
+/// `enchant`, `rune`, `pseudo` and `sanctum` are deliberately excluded — they
+/// are separate from affixes (and shown/handled on their own rows).
+const MERGEABLE_TYPES: &[&str] = &["explicit", "crafted", "fractured", "desecrated"];
+
+/// The type segment of a stat id, e.g. `explicit` in `explicit.stat_124859000`.
+fn stat_id_type(id: &str) -> &str {
+    id.split('.').next().unwrap_or(id)
+}
+
+/// The merge key for an affix stat: its numeric `stat_…` suffix, shared by every
+/// source type. `None` for non-affix stats, which are never merged.
+fn merge_key(stat: &MappedStat) -> Option<&str> {
+    MERGEABLE_TYPES
+        .contains(&stat_id_type(&stat.id))
+        .then(|| stat.id.rsplit('.').next().unwrap_or(&stat.id))
+}
+
+/// Collapse affix mods that map to the same underlying stat into one filter,
+/// summing their rolls element-wise. First appearance fixes row order; the kept
+/// row prefers the plain `explicit` id (the most general on the market) over a
+/// `crafted`/`fractured`/… variant so the search matches the widest pool.
+fn merge_same_stat(stats: impl Iterator<Item = MappedStat>) -> Vec<MappedStat> {
+    let mut out: Vec<MappedStat> = Vec::new();
+    for stat in stats {
+        let pos = merge_key(&stat).and_then(|key| {
+            out.iter()
+                .position(|e| merge_key(e) == Some(key))
+        });
+        let Some(i) = pos else {
+            out.push(stat);
+            continue;
+        };
+        let existing = &mut out[i];
+        for (idx, v) in stat.values.iter().enumerate() {
+            match existing.values.get_mut(idx) {
+                Some(slot) => *slot += v,
+                None => existing.values.push(*v),
+            }
+        }
+        if stat_id_type(&stat.id) == "explicit" && stat_id_type(&existing.id) != "explicit" {
+            existing.id = stat.id;
+            existing.stat_type = stat.stat_type;
+            existing.template = stat.template;
+        }
+    }
+    out
+}
+
 /// The `trade2/data/stats` snapshot, indexed for lookup by affix type + text.
 #[derive(Debug, Default)]
 pub struct StatDefinitions {
@@ -119,12 +169,15 @@ impl StatDefinitions {
     }
 
     /// Map all of an item's modifiers to GGG stat filters, choosing local-vs-global per stat.
+    ///
+    /// Affix mods that resolve to the *same* underlying stat — differing only by
+    /// their `explicit`/`crafted`/`fractured`/… source prefix (e.g. a crafted and
+    /// a hybrid "#% increased Evasion Rating") — are one stat to a buyer, so they
+    /// collapse into a single filter with the rolls summed. See [`merge_same_stat`].
     pub fn map_item(&self, item: &Item) -> Vec<MappedStat> {
         let ctx = LocalContext::for_item(item);
-        item.modifiers
-            .iter()
-            .flat_map(|m| self.map_modifier(m, ctx))
-            .collect()
+        let mapped = item.modifiers.iter().flat_map(|m| self.map_modifier(m, ctx));
+        merge_same_stat(mapped)
     }
 
     /// Resolve one [`Modifier`]'s stat lines to GGG stat filters; unmappable lines skipped.

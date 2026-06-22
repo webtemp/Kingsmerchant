@@ -26,6 +26,11 @@
           "type": "explicit"
         },
         {
+          "id": "explicit.stat_700317374",
+          "text": "#% increased Amount Recovered",
+          "type": "explicit"
+        },
+        {
           "id": "explicit.stat_3299347043",
           "text": "# to maximum Life",
           "type": "explicit"

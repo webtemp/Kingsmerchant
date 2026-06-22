@@ -45,7 +45,35 @@ pub fn candidates(stat: &str) -> Vec<Normalized> {
         out.push(all);
     }
 
+    // `increased X` and `reduced X` are the same stat sign-flipped; GGG's data
+    // lists only one direction (e.g. only "#% increased Amount Recovered"), so a
+    // "reduced …" mod would otherwise map to nothing. Offer the swapped, negated
+    // form as a lower-priority fallback — the literal text is still tried first.
+    for c in out.clone() {
+        if let Some(swapped) = swap_increased_reduced(&c) {
+            if !out.iter().any(|e| e.template == swapped.template) {
+                out.push(swapped);
+            }
+        }
+    }
+
     out
+}
+
+/// Swap `increased`⇄`reduced` in a template and negate its rolls, or `None` when
+/// the template carries neither word.
+fn swap_increased_reduced(n: &Normalized) -> Option<Normalized> {
+    let template = if n.template.contains("increased") {
+        n.template.replace("increased", "reduced")
+    } else if n.template.contains("reduced") {
+        n.template.replace("reduced", "increased")
+    } else {
+        return None;
+    };
+    Some(Normalized {
+        template,
+        values: n.values.iter().map(|v| -v).collect(),
+    })
 }
 
 /// Strip a trailing `— Unscalable Value` annotation (any dash) POE2 adds.
@@ -147,6 +175,29 @@ mod tests {
         let r = primary("Gains 0.17(0.15-0.20) Charges per Second — Unscalable Value");
         assert_eq!(r.template, "Gains # Charges per Second");
         assert_eq!(r.values, [0.17]);
+    }
+
+    #[test]
+    fn reduced_offers_increased_negated_fallback() {
+        // GGG lists only "#% increased Amount Recovered"; a "reduced" mod must
+        // still reach it, via the swapped template with the roll negated.
+        let cands = candidates("72(80-70)% reduced Amount Recovered");
+        assert_eq!(cands[0].template, "#% reduced Amount Recovered");
+        let fallback = cands
+            .iter()
+            .find(|c| c.template == "#% increased Amount Recovered")
+            .expect("swapped increased fallback is offered");
+        assert_eq!(fallback.values, [-72.0]);
+    }
+
+    #[test]
+    fn increased_offers_reduced_negated_fallback() {
+        let cands = candidates("15(10-15)% increased Reservation Efficiency");
+        let fallback = cands
+            .iter()
+            .find(|c| c.template == "#% reduced Reservation Efficiency")
+            .expect("swapped reduced fallback is offered");
+        assert_eq!(fallback.values, [-15.0]);
     }
 
     #[test]
