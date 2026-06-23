@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use platform::{HotkeyBindings, HotkeyControl};
 
 use crate::config::Config;
-use crate::model::item_hash;
+use crate::model::{item_hash, normalize_item_text};
 use crate::{Hotkey, CLIPBOARD_TIMEOUT, POLL_INTERVAL};
 
 /// Debounce window for chat macros (swallows duplicate events from multiple event-kbd nodes).
@@ -69,9 +69,15 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
             synthetic_copy = control.snapshot().quick_needs_synthetic_copy(),
             "listening for hotkeys"
         );
-        // Pre-create the injection device so the first copy/macro avoids the ~250ms uinput wait.
-        // Price-check now always synthesizes the copy, so always warm it.
-        std::thread::spawn(platform::warm_up_injection);
+        // Pre-create the injection device so the first macro/copy avoids the ~250ms uinput wait.
+        if control.snapshot().quick_needs_synthetic_copy()
+            || config.f5_command.is_some()
+            || config.macro2_command.is_some()
+        {
+            std::thread::spawn(platform::warm_up_injection);
+        }
+        // The last item we showed, so we only accept a clipboard that actually changed.
+        let last_seen = Arc::new(Mutex::new(platform::read_clipboard_text().unwrap_or(None)));
         // Debounce duplicate device-node echoes (slot 0 = F5, 1 = F2).
         let mut last_macro: [Option<Instant>; 2] = [None, None];
         for event in hotkeys {
@@ -116,34 +122,43 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                 }
                 // Price-check combo: focus check + clipboard poll run off-thread.
                 HotkeyEvent::QuickCopy => {
-                    let (tx, ctx, require_focus) = (tx.clone(), ctx.clone(), require_focus.clone());
+                    let (tx, ctx, last, require_focus, control) = (
+                        tx.clone(),
+                        ctx.clone(),
+                        last_seen.clone(),
+                        require_focus.clone(),
+                        control.clone(),
+                    );
                     std::thread::spawn(move || {
                         if require_focus.load(Ordering::Relaxed) && !platform::is_poe2_active() {
                             tracing::info!("price-check hotkey ignored — POE2 not focused");
                             return;
                         }
+                        // Synthesize the copy BEFORE showing the popup: the popup grabs
+                        // keyboard focus, so a synth Ctrl+C sent afterwards lands on the
+                        // overlay instead of POE2. Only runs for hotkeys rebound off Ctrl+C;
+                        // a Ctrl+C hotkey already copied via the user's own keypress.
+                        if control.snapshot().quick_needs_synthetic_copy() {
+                            if let Err(e) = platform::copy_item_under_cursor() {
+                                tracing::warn!(error = %format!("{e:#}"), "synthetic copy failed");
+                            }
+                        }
                         // Pop the popup now (focus confirmed), before the clipboard poll.
                         let _ = tx.send(Hotkey::CopyStarted);
                         ctx.request_repaint();
 
-                        // Clear the clipboard, then make POE2 re-copy the hovered item. The
-                        // clear blocks until owned, so the synthesized Ctrl+C can't race it; a
-                        // failed copy then leaves the clipboard empty → Missed (retry hint),
-                        // never the previously-copied item.
-                        let _ = platform::write_clipboard_text("");
-                        if let Err(e) = platform::copy_item_under_cursor() {
-                            tracing::warn!(error = %format!("{e:#}"), "copy failed");
-                        }
+                        let prev = last.lock().expect("last_seen lock").clone();
                         let start = Instant::now();
-                        let outcome = if let Some(text) = wait_for_item() {
+                        let outcome = if let Some(text) = wait_for_item(prev.as_deref()) {
                             tracing::info!(
                                 elapsed_ms = start.elapsed().as_millis(),
                                 hash = item_hash(&text),
                                 "clipboard: item → showing (UI de-dups the query)"
                             );
+                            *last.lock().expect("last_seen lock") = Some(text.clone());
                             Hotkey::Item { text }
                         } else {
-                            tracing::info!("clipboard: no item → ignored");
+                            tracing::info!("clipboard: no new item → ignored (POE2 didn't copy)");
                             Hotkey::Missed
                         };
                         let _ = tx.send(outcome);
@@ -225,14 +240,18 @@ pub fn spawn_config_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
     });
 }
 
-/// Poll the clipboard until it holds a parseable POE2 item, or the timeout hits.
-/// The caller clears the clipboard first, so any item that appears is the fresh
-/// copy; nothing appearing (timeout) means POE2 didn't copy → caller shows a hint.
-fn wait_for_item() -> Option<String> {
+/// Poll the clipboard until it holds a parseable POE2 item *different* from the
+/// last-shown one — i.e. POE2 actually copied the newly-hovered item. On timeout
+/// return `None` (→ retry hint) rather than the stale last item, so a failed copy
+/// never silently shows the previous item.
+fn wait_for_item(last_seen: Option<&str>) -> Option<String> {
     let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
+    let last = last_seen.map(normalize_item_text);
     loop {
         if let Ok(Some(text)) = platform::read_clipboard_text() {
-            if parser::parse_item(&text).is_ok() {
+            if parser::parse_item(&text).is_ok()
+                && last.as_deref() != Some(normalize_item_text(&text).as_str())
+            {
                 return Some(text);
             }
         }
