@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use platform::{HotkeyBindings, HotkeyControl};
 
 use crate::config::Config;
-use crate::model::{item_hash, normalize_item_text};
+use crate::model::item_hash;
 use crate::{Hotkey, CLIPBOARD_TIMEOUT, POLL_INTERVAL};
 
 /// Debounce window for chat macros (swallows duplicate events from multiple event-kbd nodes).
@@ -69,15 +69,9 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
             synthetic_copy = control.snapshot().quick_needs_synthetic_copy(),
             "listening for hotkeys"
         );
-        // Pre-create the injection device so the first macro/copy avoids the ~250ms uinput wait.
-        if control.snapshot().quick_needs_synthetic_copy()
-            || config.f5_command.is_some()
-            || config.macro2_command.is_some()
-        {
-            std::thread::spawn(platform::warm_up_injection);
-        }
-        // Shared so the clipboard wait can run OFF this loop, which must not block on the poll.
-        let last_seen = Arc::new(Mutex::new(platform::read_clipboard_text().unwrap_or(None)));
+        // Pre-create the injection device so the first copy/macro avoids the ~250ms uinput wait.
+        // Price-check now always synthesizes the copy, so always warm it.
+        std::thread::spawn(platform::warm_up_injection);
         // Debounce duplicate device-node echoes (slot 0 = F5, 1 = F2).
         let mut last_macro: [Option<Instant>; 2] = [None, None];
         for event in hotkeys {
@@ -122,13 +116,7 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                 }
                 // Price-check combo: focus check + clipboard poll run off-thread.
                 HotkeyEvent::QuickCopy => {
-                    let (tx, ctx, last, require_focus, control) = (
-                        tx.clone(),
-                        ctx.clone(),
-                        last_seen.clone(),
-                        require_focus.clone(),
-                        control.clone(),
-                    );
+                    let (tx, ctx, require_focus) = (tx.clone(), ctx.clone(), require_focus.clone());
                     std::thread::spawn(move || {
                         if require_focus.load(Ordering::Relaxed) && !platform::is_poe2_active() {
                             tracing::info!("price-check hotkey ignored — POE2 not focused");
@@ -138,22 +126,21 @@ pub fn spawn_hotkey_watcher(ctx: egui::Context, tx: Sender<Hotkey>) -> HotkeyHan
                         let _ = tx.send(Hotkey::CopyStarted);
                         ctx.request_repaint();
 
-                        // If the hotkey isn't Ctrl+C, synthesize the copy so the clipboard holds the item.
-                        if control.snapshot().quick_needs_synthetic_copy() {
-                            if let Err(e) = platform::copy_item_under_cursor() {
-                                tracing::warn!(error = %format!("{e:#}"), "synthetic copy failed");
-                            }
+                        // Clear the clipboard, then make POE2 re-copy the hovered item. The
+                        // clear blocks until owned, so the synthesized Ctrl+C can't race it; a
+                        // failed copy then leaves the clipboard empty → Missed (retry hint),
+                        // never the previously-copied item.
+                        let _ = platform::write_clipboard_text("");
+                        if let Err(e) = platform::copy_item_under_cursor() {
+                            tracing::warn!(error = %format!("{e:#}"), "copy failed");
                         }
-
-                        let prev = last.lock().expect("last_seen lock").clone();
                         let start = Instant::now();
-                        let outcome = if let Some(text) = wait_for_item(prev.as_deref()) {
+                        let outcome = if let Some(text) = wait_for_item() {
                             tracing::info!(
                                 elapsed_ms = start.elapsed().as_millis(),
                                 hash = item_hash(&text),
                                 "clipboard: item → showing (UI de-dups the query)"
                             );
-                            *last.lock().expect("last_seen lock") = Some(text.clone());
                             Hotkey::Item { text }
                         } else {
                             tracing::info!("clipboard: no item → ignored");
@@ -238,73 +225,20 @@ pub fn spawn_config_watcher(ctx: egui::Context, tx: Sender<Hotkey>) {
     });
 }
 
-/// Poll the clipboard until it changed and parses as a POE2 item, or the timeout hits.
-fn wait_for_item(last_seen: Option<&str>) -> Option<String> {
+/// Poll the clipboard until it holds a parseable POE2 item, or the timeout hits.
+/// The caller clears the clipboard first, so any item that appears is the fresh
+/// copy; nothing appearing (timeout) means POE2 didn't copy → caller shows a hint.
+fn wait_for_item() -> Option<String> {
     let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
-    let last = last_seen.map(normalize_item_text);
-    // The same item is a re-view; poll the full window so a genuine switch wins.
-    let mut same: Option<String> = None;
     loop {
         if let Ok(Some(text)) = platform::read_clipboard_text() {
-            match clip_step(&text, last.as_deref()) {
-                ClipStep::Different => return Some(text),
-                ClipStep::Same => same = Some(text),
-                ClipStep::NotItem => {}
+            if parser::parse_item(&text).is_ok() {
+                return Some(text);
             }
         }
         if Instant::now() >= deadline {
-            return same;
+            return None;
         }
         std::thread::sleep(POLL_INTERVAL);
-    }
-}
-
-/// What a single clipboard read means relative to the last-seen item.
-#[derive(Debug, PartialEq, Eq)]
-enum ClipStep {
-    Different,
-    Same,
-    NotItem,
-}
-
-/// Classify a clipboard read against the whitespace-normalised last-seen item.
-fn clip_step(text: &str, last_normalized: Option<&str>) -> ClipStep {
-    if parser::parse_item(text).is_err() {
-        return ClipStep::NotItem;
-    }
-    if last_normalized == Some(normalize_item_text(text).as_str()) {
-        ClipStep::Same
-    } else {
-        ClipStep::Different
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{clip_step, ClipStep};
-    use crate::model::normalize_item_text;
-
-    const RING: &str = "Item Class: Rings\nRarity: Rare\nHonour Spiral\nTopaz Ring\n--------\n+30% to Lightning Resistance";
-    const RUNE: &str = "Item Class: Augment\nRarity: Currency\nFarrul's Rune of the Chase\n--------\nStack Size: 1/10\nRune";
-
-    #[test]
-    fn reviewing_the_same_item_is_not_ignored() {
-        let last = normalize_item_text(RING);
-        assert_eq!(clip_step(RING, Some(&last)), ClipStep::Same);
-    }
-
-    #[test]
-    fn a_different_item_is_new() {
-        let last = normalize_item_text(RING);
-        assert_eq!(clip_step(RUNE, Some(&last)), ClipStep::Different);
-        assert_eq!(clip_step(RING, None), ClipStep::Different);
-    }
-
-    #[test]
-    fn non_item_clipboard_is_ignored() {
-        assert_eq!(
-            clip_step("https://example.com/not-an-item", None),
-            ClipStep::NotItem
-        );
     }
 }
