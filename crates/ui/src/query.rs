@@ -52,6 +52,7 @@ impl QuickModeApp {
                 return;
             }
         };
+        self.query_gen = self.query_gen.wrapping_add(1);
         self.icon_url = None;
         self.estimate = None;
         self.estimate_loading = false;
@@ -107,12 +108,13 @@ impl QuickModeApp {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         let text = self.item_text.clone();
+        let gen = self.query_gen;
         self.rt.spawn(async move {
             let result = client
                 .price_estimate(&text)
                 .await
                 .map_err(|e| e.to_string());
-            let _ = tx.send(Msg::Estimate(Box::new(result)));
+            let _ = tx.send((gen, Msg::Estimate(Box::new(result))));
             ctx.request_repaint();
         });
     }
@@ -123,12 +125,13 @@ impl QuickModeApp {
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let gen = self.query_gen;
         self.rt.spawn(async move {
             let result = client
                 .teleport_to_hideout(&token)
                 .await
                 .map_err(|e| e.to_string());
-            let _ = tx.send(Msg::Teleport(result));
+            let _ = tx.send((gen, Msg::Teleport(result)));
             ctx.request_repaint();
         });
     }
@@ -140,9 +143,10 @@ impl QuickModeApp {
         let client = Arc::clone(&self.client);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let gen = self.query_gen;
         self.rt.spawn(async move {
             let status = client.validate_session().await;
-            let _ = tx.send(Msg::SessionChecked(status));
+            let _ = tx.send((gen, Msg::SessionChecked(status)));
             ctx.request_repaint();
         });
     }
@@ -179,6 +183,7 @@ impl QuickModeApp {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         tracing::info!(id = %exchange_id, currency = %name, "poe2scout price check");
+        let gen = self.query_gen;
         self.rt.spawn(async move {
             let result = client
                 .scout_price(&exchange_id, &name)
@@ -187,7 +192,7 @@ impl QuickModeApp {
             if let Err(ref e) = result {
                 tracing::error!(error = %e, "poe2scout price check failed");
             }
-            let _ = tx.send(Msg::Scout(Box::new(result)));
+            let _ = tx.send((gen, Msg::Scout(Box::new(result))));
             ctx.request_repaint();
         });
     }
@@ -202,6 +207,7 @@ impl QuickModeApp {
         let want = self.exchange_want_id.clone();
         let pay = self.pay_currency.clone();
         tracing::info!(want = %want, pay = %pay, "exchange check");
+        let gen = self.query_gen;
         self.rt.spawn(async move {
             let result = client
                 .price_check_exchange(&want, &pay)
@@ -210,13 +216,14 @@ impl QuickModeApp {
             if let Err(ref e) = result {
                 tracing::error!(error = %e, "exchange price check failed");
             }
-            let _ = tx.send(Msg::Exchange(Box::new(result)));
+            let _ = tx.send((gen, Msg::Exchange(Box::new(result))));
             ctx.request_repaint();
         });
     }
 
     /// Re-run the price check for the already-loaded item, keeping current state.
     pub(crate) fn rerun_query(&mut self, ctx: &egui::Context) {
+        self.query_gen = self.query_gen.wrapping_add(1);
         match self.mode {
             PriceMode::Item => {
                 if let Some(item) = self.item.clone() {
@@ -291,6 +298,7 @@ impl QuickModeApp {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         let filters = self.detailed_filters();
+        let gen = self.query_gen;
         self.rt.spawn(async move {
             let result = client
                 .price_check_detailed(&item, &filters, SAMPLE)
@@ -299,7 +307,7 @@ impl QuickModeApp {
             if let Err(ref e) = result {
                 tracing::error!(error = %e, "price check failed");
             }
-            let _ = tx.send(Msg::Result(Box::new(result)));
+            let _ = tx.send((gen, Msg::Result(Box::new(result))));
             ctx.request_repaint();
         });
     }

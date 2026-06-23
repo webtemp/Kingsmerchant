@@ -116,8 +116,8 @@ pub struct QuickModeApp {
     estimate: Option<PriceEstimate>,
     estimate_loading: bool,
     phase: Phase,
-    tx: Sender<Msg>,
-    rx: Receiver<Msg>,
+    tx: Sender<(u64, Msg)>,
+    rx: Receiver<(u64, Msg)>,
     hotkey_rx: Receiver<Hotkey>,
     copy_status: Option<String>,
     hint: Option<String>,
@@ -127,6 +127,11 @@ pub struct QuickModeApp {
     alt_held: bool,
     /// Hash of the last searched item, to de-dup repeated Ctrl+C.
     last_query_hash: Option<u64>,
+    /// Bumped on each new price check. Async results carry the gen they were
+    /// spawned under; a result whose gen is stale (the user moved to another
+    /// item meanwhile) is dropped, so a late response can't overwrite the
+    /// current item's icon/price (the "boots text, body-armour icon" bug).
+    query_gen: u64,
     /// When the loaded item was last queried (cache freshness).
     last_query_at: Option<Instant>,
     /// Polling the clipboard after a detected Ctrl+C; drives the "reading…" spinner.
@@ -216,6 +221,7 @@ impl QuickModeApp {
             ctrl_held: false,
             alt_held: false,
             last_query_hash: None,
+            query_gen: 0,
             last_query_at: None,
             awaiting_copy: false,
             tray,
@@ -453,9 +459,14 @@ impl QuickModeApp {
             }
         }
 
-        while let Ok(msg) = self.rx.try_recv() {
+        while let Ok((gen, msg)) = self.rx.try_recv() {
+            // Drop item-results from a superseded check (user switched items).
+            let fresh = gen == self.query_gen;
             match msg {
                 Msg::Result(result) => {
+                    if !fresh {
+                        continue;
+                    }
                     self.phase = match *result {
                         Ok(pc) => {
                             self.icon_url = pc
@@ -470,6 +481,9 @@ impl QuickModeApp {
                     };
                 }
                 Msg::Estimate(result) => {
+                    if !fresh {
+                        continue;
+                    }
                     self.estimate_loading = false;
                     match *result {
                         Ok(est) => self.estimate = est,
@@ -477,6 +491,9 @@ impl QuickModeApp {
                     }
                 }
                 Msg::Scout(result) => {
+                    if !fresh {
+                        continue;
+                    }
                     self.scout_phase = match *result {
                         Ok(Some(price)) => {
                             if price.icon_url.is_some() {
@@ -498,6 +515,9 @@ impl QuickModeApp {
                     };
                 }
                 Msg::Exchange(result) => {
+                    if !fresh {
+                        continue;
+                    }
                     self.exchange_phase = match *result {
                         Ok(ex) => ExchangePhase::Done(ex),
                         Err(e) => ExchangePhase::Failed(e),
