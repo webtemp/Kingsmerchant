@@ -37,20 +37,14 @@ mod handlers;
 mod input_map;
 mod surface;
 
-/// Minimum spacing between egui-driven repaints (~60fps). egui animations like
-/// spinners and smooth scrolling ask to repaint "immediately" every frame;
-/// without this clamp that runs at the monitor refresh rate (100–150fps here),
-/// pegging the GPU during a long-lived spinner. Frames are ~0.4–2ms now, so
-/// ~90fps costs only a few percent of GPU while keeping scroll/animation smooth
-/// (egui eases mouse-wheel scroll over ~0.1s, so the easing wants a decent
-/// frame rate to look fluid; 30 felt choppy when scrolling Settings).
-const ANIMATION_FRAME: Duration = Duration::from_millis(11);
+/// Minimum spacing between egui-driven repaints (~30fps). egui animations
+/// (spinners, scroll easing) ask to repaint every frame; this clamp keeps that
+/// off the monitor refresh rate so an open popup can't peg the GPU.
+const ANIMATION_FRAME: Duration = Duration::from_millis(33);
 
-/// Minimum spacing between input-driven repaints (~120fps). Pointer/keyboard
-/// input renders at this snappier rate so interaction (hover, scroll, drag)
-/// isn't bound to the animation cap; it only exists to coalesce high-polling-
-/// rate mice. Frames are ~1ms, so this is essentially free.
-const INPUT_FRAME: Duration = Duration::from_millis(8);
+/// Minimum spacing between input-driven repaints (pointer/keyboard); held at the
+/// same ~30fps cap. Also coalesces high-polling-rate mice.
+const INPUT_FRAME: Duration = Duration::from_millis(33);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Which {
