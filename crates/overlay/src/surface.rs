@@ -554,6 +554,47 @@ impl WinSurface {
         Ok(repaint_delay)
     }
 
+    /// Run egui without presenting, only to keep its repaint bookkeeping alive.
+    /// egui fires its repaint callback (which wakes our loop) only when the
+    /// requested delay drops below the viewport's `repaint_delay`, and that delay
+    /// resets to `MAX` only by running a pass. Skip the pass while hidden and the
+    /// delay latches at `ZERO`, so every later `request_repaint` is a silent
+    /// no-op — the loop goes deaf and the popup can never be popped.
+    ///
+    /// Any texture delta the pass produces (notably the font atlas, built on the
+    /// first pass) is uploaded to GL here; otherwise egui counts it delivered and
+    /// a later real paint references an atlas the painter never got — the surface
+    /// renders all black. We never swap or commit, so nothing is presented and no
+    /// frame callback is requested: the surface stays idle.
+    pub(crate) fn pump_egui(&mut self, shared: &mut Shared) -> Result<()> {
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(self.width as f32, LAYOUT_HEIGHT),
+            )),
+            events: std::mem::take(&mut self.events),
+            time: Some(elapsed_seconds()),
+            ..Default::default()
+        };
+        let full = self.egui_ctx.run(raw_input, |_| {});
+        if !full.textures_delta.set.is_empty() || !full.textures_delta.free.is_empty() {
+            if self.gl.is_none() {
+                self.init_gl(shared)?;
+            }
+            let gl = self.gl.as_mut().expect("gl initialised above");
+            gl.context
+                .make_current(&gl.gl_surface)
+                .context("make_current in pump_egui")?;
+            gl.painter.paint_and_update_textures(
+                [self.width, self.height],
+                full.pixels_per_point,
+                &[],
+                &full.textures_delta,
+            );
+        }
+        Ok(())
+    }
+
     /// Take keyboard focus on-demand while shown, drop it when hidden.
     fn apply_keyboard_interactivity(&mut self) {
         if self.applied_kbd == Some(self.shown) {

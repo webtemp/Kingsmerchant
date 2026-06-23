@@ -352,6 +352,33 @@ impl App {
         // Nothing to draw → stay fully idle (no GL, no timer). `pump` may have
         // just shown a surface, in which case we fall through and paint it.
         if !self.needs_draw(Which::Popup) && !self.needs_draw(Which::Settings) {
+            // Keep both egui contexts' repaint bookkeeping alive (without
+            // presenting) so their repaint callback re-arms; otherwise
+            // `repaint_delay` latches at ZERO and the loop goes deaf to every
+            // future ping and the popup can never be popped (see `pump_egui`).
+            let App {
+                popup,
+                settings,
+                conn,
+                compositor,
+                output_state,
+                display,
+                kbd_modifiers,
+                ..
+            } = self;
+            let mut shared = Shared {
+                conn,
+                compositor,
+                output_state,
+                display,
+                kbd_modifiers: *kbd_modifiers,
+            };
+            if let Err(e) = popup.pump_egui(&mut shared) {
+                tracing::warn!(error = %format!("{e:#}"), "popup pump_egui failed");
+            }
+            if let Err(e) = settings.pump_egui(&mut shared) {
+                tracing::warn!(error = %format!("{e:#}"), "settings pump_egui failed");
+            }
             return;
         }
         let now = Instant::now();
