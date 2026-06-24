@@ -74,10 +74,8 @@ fn merge_key(stat: &MappedStat) -> Option<&str> {
 fn merge_same_stat(stats: impl Iterator<Item = MappedStat>) -> Vec<MappedStat> {
     let mut out: Vec<MappedStat> = Vec::new();
     for stat in stats {
-        let pos = merge_key(&stat).and_then(|key| {
-            out.iter()
-                .position(|e| merge_key(e) == Some(key))
-        });
+        let pos =
+            merge_key(&stat).and_then(|key| out.iter().position(|e| merge_key(e) == Some(key)));
         let Some(i) = pos else {
             out.push(stat);
             continue;
@@ -173,10 +171,13 @@ impl StatDefinitions {
     /// Affix mods that resolve to the *same* underlying stat — differing only by
     /// their `explicit`/`crafted`/`fractured`/… source prefix (e.g. a crafted and
     /// a hybrid "#% increased Evasion Rating") — are one stat to a buyer, so they
-    /// collapse into a single filter with the rolls summed. See [`merge_same_stat`].
+    /// collapse into a single filter with the rolls summed. See `merge_same_stat`.
     pub fn map_item(&self, item: &Item) -> Vec<MappedStat> {
         let ctx = LocalContext::for_item(item);
-        let mapped = item.modifiers.iter().flat_map(|m| self.map_modifier(m, ctx));
+        let mapped = item
+            .modifiers
+            .iter()
+            .flat_map(|m| self.map_modifier(m, ctx));
         merge_same_stat(mapped)
     }
 
