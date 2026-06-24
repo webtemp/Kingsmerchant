@@ -25,6 +25,8 @@ pub(super) struct RowData {
     pub(super) hideout_token: Option<String>,
     /// The listing's item for the hover preview; `None` for exchange offers.
     pub(super) item: Option<ItemPreview>,
+    /// Corrupted listing — flagged prominently so its cheap price doesn't mislead.
+    pub(super) corrupted: bool,
 }
 
 pub(super) fn show_results(
@@ -71,6 +73,11 @@ pub(super) fn show_results(
                 whisper: l.whisper.clone(),
                 character: l.account.last_character_name.clone(),
                 hideout_token: l.hideout_token.clone(),
+                corrupted: e
+                    .item
+                    .get("corrupted")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
                 item: Some(item_preview(&e.item)),
             }
         })
@@ -108,6 +115,14 @@ pub(super) fn results_table(
                     });
                     row.col(|ui| {
                         presence_badge(ui, r.presence);
+                        if r.corrupted {
+                            ui.label(
+                                RichText::new("CORRUPTED")
+                                    .small()
+                                    .strong()
+                                    .color(Color32::from_rgb(0xff, 0x5a, 0x5a)),
+                            );
+                        }
                         let lbl = ui.add(egui::Label::new(&r.seller).truncate());
                         // Seller hover only when no item preview competes with it.
                         if r.item.is_none() {

@@ -277,6 +277,7 @@ fn exchange_rows(offers: &[ExchangeOffer], pay: &str) -> Vec<RowData> {
             character: o.character.clone(),
             hideout_token: None,
             item: None,
+            corrupted: false,
         })
         .collect()
 }

@@ -93,6 +93,15 @@ impl QuickModeApp {
         self.price_filter = PriceFilterState::default();
         self.resistance_mode = trade_api::ResistanceMode::default();
         self.filter_dirty = false;
+        // Unidentified items must search the unidentified pool — the trade API
+        // returns identified items by default. Reset to Any when identified.
+        if let Some(m) = self.misc.iter_mut().find(|m| m.key == "identified") {
+            m.state = if item.unidentified {
+                trade_api::MiscState::Exclude
+            } else {
+                trade_api::MiscState::Any
+            };
+        }
         // poeprices ML estimate is rares-only and filter-independent: fetch once per check.
         if item.rarity == Rarity::Rare {
             self.spawn_estimate(ctx);
