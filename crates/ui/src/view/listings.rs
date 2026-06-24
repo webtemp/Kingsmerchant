@@ -8,7 +8,7 @@ use crate::model::fmt_amount;
 use crate::SHOWN;
 
 use super::actions::send_chat_to_poe2;
-use super::item_card::{item_preview, show_item_preview_at_cursor, ItemPreview};
+use super::item_card::{item_preview, pill, show_item_preview_at_cursor, ItemPreview};
 use super::theme::{accent_gold, online_dot as online_dot_color};
 
 const ROW_H: f32 = 26.0;
@@ -25,8 +25,77 @@ pub(super) struct RowData {
     pub(super) hideout_token: Option<String>,
     /// The listing's item for the hover preview; `None` for exchange offers.
     pub(super) item: Option<ItemPreview>,
-    /// Corrupted listing — flagged prominently so its cheap price doesn't mislead.
-    pub(super) corrupted: bool,
+    /// Notable item states (corrupted, unidentified, …) flagged prominently on
+    /// the row so a cheap/odd listing isn't misread.
+    pub(super) states: Vec<ListingState>,
+}
+
+/// A listing's notable state, shown as a coloured tag on its row.
+#[derive(Clone, Copy)]
+pub(super) enum ListingState {
+    Corrupted,
+    Unidentified,
+    Mirrored,
+    Sanctified,
+}
+
+impl ListingState {
+    fn label(self) -> &'static str {
+        match self {
+            ListingState::Corrupted => "CORR",
+            ListingState::Unidentified => "UNIDENT",
+            ListingState::Mirrored => "MIRROR",
+            ListingState::Sanctified => "SANCT",
+        }
+    }
+
+    /// (background, text) — matches the item-card state pills.
+    fn colors(self) -> (Color32, Color32) {
+        match self {
+            ListingState::Corrupted => (
+                Color32::from_rgb(0x6e, 0x1f, 0x1f),
+                Color32::from_rgb(0xff, 0xb3, 0xb3),
+            ),
+            ListingState::Unidentified => (
+                Color32::from_rgb(0x3a, 0x3a, 0x44),
+                Color32::from_rgb(0xd6, 0xd6, 0xde),
+            ),
+            ListingState::Mirrored => (
+                Color32::from_rgb(0x24, 0x3a, 0x6e),
+                Color32::from_rgb(0xc9, 0xd6, 0xff),
+            ),
+            ListingState::Sanctified => (
+                Color32::from_rgb(0x52, 0x2e, 0x6e),
+                Color32::from_rgb(0xe6, 0xcf, 0xff),
+            ),
+        }
+    }
+}
+
+/// Notable states of a listing's item, read from the result JSON. Field names
+/// follow the PoE trade item schema (mirrored items are flagged `duplicated`);
+/// `sanctified` is best-effort and may need the real key confirmed.
+fn listing_states(item: &serde_json::Value) -> Vec<ListingState> {
+    let flag = |k: &str| {
+        item.get(k)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    };
+    let mut out = Vec::new();
+    if flag("corrupted") {
+        out.push(ListingState::Corrupted);
+    }
+    // The field is present and `false` on unidentified items.
+    if item.get("identified").and_then(serde_json::Value::as_bool) == Some(false) {
+        out.push(ListingState::Unidentified);
+    }
+    if flag("duplicated") || flag("mirrored") {
+        out.push(ListingState::Mirrored);
+    }
+    if flag("sanctified") {
+        out.push(ListingState::Sanctified);
+    }
+    out
 }
 
 pub(super) fn show_results(
@@ -73,11 +142,7 @@ pub(super) fn show_results(
                 whisper: l.whisper.clone(),
                 character: l.account.last_character_name.clone(),
                 hideout_token: l.hideout_token.clone(),
-                corrupted: e
-                    .item
-                    .get("corrupted")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
+                states: listing_states(&e.item),
                 item: Some(item_preview(&e.item)),
             }
         })
@@ -115,13 +180,9 @@ pub(super) fn results_table(
                     });
                     row.col(|ui| {
                         presence_badge(ui, r.presence);
-                        if r.corrupted {
-                            ui.label(
-                                RichText::new("CORRUPTED")
-                                    .small()
-                                    .strong()
-                                    .color(Color32::from_rgb(0xff, 0x5a, 0x5a)),
-                            );
+                        for st in &r.states {
+                            let (bg, fg) = st.colors();
+                            pill(ui, st.label(), bg, fg);
                         }
                         let lbl = ui.add(egui::Label::new(&r.seller).truncate());
                         // Seller hover only when no item preview competes with it.

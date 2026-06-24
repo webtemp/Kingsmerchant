@@ -378,7 +378,7 @@ fn badge(ui: &mut egui::Ui, (label, bg, fg): Pill) {
     pill(ui, label, bg, fg);
 }
 
-fn pill(ui: &mut egui::Ui, label: &str, bg: Color32, fg: Color32) {
+pub(super) fn pill(ui: &mut egui::Ui, label: &str, bg: Color32, fg: Color32) {
     egui::Frame::none()
         .fill(bg)
         .rounding(7.0)
